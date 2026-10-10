@@ -1,0 +1,108 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+freecut-timeline = { path = "crates/freecut-timeline" }
+freecut-media = { path = "crates/freecut-media" }
+freecut-render = { path = "crates/freecut-render" }
+freecut-audio = { path = "crates/freecut-audio" }
+freecut-project = { path = "crates/freecut-project" }
+
+anyhow = "1.0.104"
+# Audio output; only the freecut-audio "output" feature enables it.
+cpal = "0.18.2"
+crossbeam-channel = "0.5.17"
+eframe = "0.36.2"
+# Free disk space for export preflight (EX-036); `available_space` only.
+fs4 = { version = "1.1.0", default-features = false }
+glam = "0.34.1"
+ffmpeg-next = { version = "9.0.0", default-features = false, features = [
+  "codec",
+  "format",
+  "filter",
+  "software-resampling",
+  "software-scaling",
+] }
+# Portable transcendental functions: the CPU colour stack's math is
+# bit-identical on every OS (README C52).
+libm = "0.2.16"
+image = { version = "0.25.9", default-features = false, features = [
+  "bmp",
+  "gif",
+  "jpeg",
+  "png",
+  "tiff",
+  "webp",
+] }
+parking_lot = "0.12.5"
+# Text layout and shaping (pre-1.0: pinned exactly, used only behind
+# freecut_render::text). fontique comes through `parley::fontique`.
+parley = { version = "=0.12.0", default-features = false, features = ["system", "complex-scripts"] }
+rfd = "0.17.2"
+# Lock-free SPSC ring between the audio feeder thread and the device callback.
+rtrb = "0.4.0"
+# Glyph rasterization; must resolve to parley's skrifa.
+swash = "=0.2.10"
+serde = { version = "1.0.229", features = ["derive"] }
+# Never `arbitrary_precision` or `raw_value`: the project format is canonical JSON.
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+serde_path_to_error = "0.1.20"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+# Grapheme and word segmentation (UAX #29) for text animation units.
+unicode-segmentation = "1.13.3"
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
+# Vector path filling for text boxes, bubbles and decorations (pre-1.0:
+# pinned exactly; the version swash already uses).
+zeno = "=0.3.3"
+
+# Test-only
+# Headless UI snapshots of the app window (MIT OR Apache-2.0); pinned to
+# the egui version, renders through wgpu without a window.
+egui_kittest = { version = "=0.36.2", features = ["eframe", "wgpu"] }
+pretty_assertions = "1.4.1"
+proptest = "1.12.0"
+tempfile = "3.27.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# Every unsafe block carries a `// SAFETY:` comment.
+undocumented_unsafe_blocks = "deny"
+# Allowed only with #[allow] and an invariant comment (tests are exempt via clippy.toml).
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "warn"
+
+[profile.dev]
+# Line numbers in backtraces are enough day to day; full debug info for every
+# crate and test binary pushed target/ past 50 GB.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+# Dependencies (decoders, egui, wgpu) are unusably slow unoptimized, and their
+# debug info is the bulk of target/.
+opt-level = 2
+debug = false
+
+[profile.dev.package.freecut-render]
+# The CPU compositor (preview and export) loops over pixels, and the text
+# engine shapes and rasterizes glyphs.
+opt-level = 2
+
+[profile.dev.package.freecut-app]
+# Waveform and timeline drawing loop over columns every frame.
+opt-level = 2
