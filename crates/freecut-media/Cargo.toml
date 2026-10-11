@@ -1,0 +1,33 @@
+[package]
+name = "freecut-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["ffmpeg"]
+# Everything that links FFmpeg (probe, decode, thumbnails, peaks). Without it
+# the crate still provides the FFmpeg-free parts: `CancelToken`, the error
+# types and `fingerprint`.
+ffmpeg = ["dep:ffmpeg-next", "dep:image"]
+
+[dependencies]
+freecut-timeline.workspace = true
+
+ffmpeg-next = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+thiserror.workspace = true
+tracing.workspace = true
+xxhash-rust.workspace = true
+
+[dev-dependencies]
+ffmpeg-next.workspace = true
+image.workspace = true
+pretty_assertions.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
