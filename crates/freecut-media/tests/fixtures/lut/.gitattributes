@@ -1,0 +1,3 @@
+# Keep LUT fixtures byte for byte: crlf_bom.cube needs its CRLF line ends and
+# BOM, latin1_title.cube its Latin-1 bytes, and line numbers are asserted.
+* -text

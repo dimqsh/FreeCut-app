@@ -1,0 +1,10 @@
+# FreeCut test fixture: rejected, a comma as the decimal mark
+0 1023
+0 0 0
+0 0 0
+0 0 0
+0 0 0
+0 0 0
+0 0 0
+0 0 0
+0,5 0,5 0,5

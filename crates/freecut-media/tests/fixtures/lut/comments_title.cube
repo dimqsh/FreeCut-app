@@ -1,0 +1,18 @@
+# FreeCut test fixture: comments everywhere and keywords FreeCut skips
+   # an indented comment
+TITLE "Warm #2 (FreeCut)" # the hash inside the quotes is kept
+LUT_IN_VIDEO_RANGE
+LUT_3D_SIZE 2 # two points per axis
+FREECUT_NOTE 1 2 3
+
+# data starts here
+0 0 0
+1 0 0 # red corner
+0 1 0
+# a comment between data lines
+1 1 0
+0 0 1
+1 0 1
+0 1 1
+1 1 1
+# trailing comment

@@ -1,0 +1,11 @@
+# FreeCut test fixture: the older input-range form of a 0-2 domain
+LUT_3D_SIZE 2
+LUT_3D_INPUT_RANGE 0 2
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+0 0 1
+1 0 1
+0 1 1
+1 1 1

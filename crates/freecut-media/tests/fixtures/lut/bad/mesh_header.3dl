@@ -1,0 +1,4 @@
+# FreeCut test fixture: rejected, a header keyword before the mesh
+3DMESH
+Mesh 1 10
+0 1023

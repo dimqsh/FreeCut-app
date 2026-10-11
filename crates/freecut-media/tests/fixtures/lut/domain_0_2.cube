@@ -1,0 +1,12 @@
+# FreeCut test fixture: identity table over a 0-2 domain
+LUT_3D_SIZE 2
+DOMAIN_MIN 0 0 0
+DOMAIN_MAX 2 2 2
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+0 0 1
+1 0 1
+0 1 1
+1 1 1

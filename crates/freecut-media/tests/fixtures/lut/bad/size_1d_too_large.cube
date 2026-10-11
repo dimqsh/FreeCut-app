@@ -1,0 +1,4 @@
+# FreeCut test fixture: rejected, a 1D size of 65537
+LUT_1D_SIZE 65537
+0 0 0
+1 1 1

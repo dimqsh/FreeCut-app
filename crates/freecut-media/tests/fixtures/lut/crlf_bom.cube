@@ -1,0 +1,15 @@
+﻿# FreeCut test fixture: BOM, CRLF, tabs, trailing spaces, blank lines
+TITLE "FreeCut CRLF"   
+
+LUT_3D_SIZE	2  
+
+0 0 0 	
+1 0 0 	
+0 1 0 	
+1 1 0 	
+
+0 0 1
+1 0 1
+0 1 1
+1 1 1
+

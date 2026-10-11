@@ -1,0 +1,12 @@
+# FreeCut test fixture: identity, 2 points per axis
+TITLE "FreeCut identity 2"
+LUT_3D_SIZE 2
+
+0.0 0.0 0.0
+1.0 0.0 0.0
+0.0 1.0 0.0
+1.0 1.0 0.0
+0.0 0.0 1.0
+1.0 0.0 1.0
+0.0 1.0 1.0
+1.0 1.0 1.0

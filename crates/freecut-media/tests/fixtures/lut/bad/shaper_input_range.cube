@@ -1,0 +1,15 @@
+# FreeCut test fixture: rejected, a shaper with its own 3D input range
+LUT_1D_SIZE 2
+LUT_3D_SIZE 2
+LUT_1D_INPUT_RANGE 0 2
+LUT_3D_INPUT_RANGE 0 0.5
+0 0 0
+1 1 1
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+0 0 1
+1 0 1
+0 1 1
+1 1 1

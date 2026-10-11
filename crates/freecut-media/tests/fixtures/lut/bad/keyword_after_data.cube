@@ -1,0 +1,11 @@
+# FreeCut test fixture: rejected, a keyword after the data
+LUT_3D_SIZE 2
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+TITLE "late"
+0 0 1
+1 0 1
+0 1 1
+1 1 1

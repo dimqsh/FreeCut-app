@@ -1,0 +1,5 @@
+# FreeCut test fixture: rejected, data with no size keyword
+TITLE "no size"
+
+0 0 0
+1 1 1

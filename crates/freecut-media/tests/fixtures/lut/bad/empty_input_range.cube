@@ -1,0 +1,11 @@
+# FreeCut test fixture: rejected, an input range of zero width
+LUT_3D_SIZE 2
+LUT_3D_INPUT_RANGE 1 1
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+0 0 1
+1 0 1
+0 1 1
+1 1 1

@@ -1,0 +1,11 @@
+# FreeCut test fixture: rejected, two 3D sizes
+LUT_3D_SIZE 2
+LUT_3D_SIZE 2
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+0 0 1
+1 0 1
+0 1 1
+1 1 1

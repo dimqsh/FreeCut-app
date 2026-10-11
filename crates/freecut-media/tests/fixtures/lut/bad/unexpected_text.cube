@@ -1,0 +1,11 @@
+# FreeCut test fixture: rejected, a line of plain words
+LUT_3D_SIZE 2
+hello world
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+0 0 1
+1 0 1
+0 1 1
+1 1 1

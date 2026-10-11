@@ -1,0 +1,10 @@
+# FreeCut test fixture: rejected, a float too large for 32 bits
+0 1023
+0.0 0.0 0.0
+1.0e39 0.0 0.0
+0.0 0.0 0.0
+0.0 0.0 0.0
+0.0 0.0 0.0
+0.0 0.0 0.0
+0.0 0.0 0.0
+0.0 0.0 0.0

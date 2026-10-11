@@ -1,0 +1,12 @@
+# FreeCut test fixture: rejected, a green domain of zero width
+LUT_3D_SIZE 2
+DOMAIN_MIN 0 0.5 0
+DOMAIN_MAX 1 0.5 1
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+0 0 1
+1 0 1
+0 1 1
+1 1 1

@@ -1,0 +1,11 @@
+# FreeCut test fixture: rejected, a 3D size of 257
+# a comment
+LUT_3D_SIZE 257
+0 0 0
+1 0 0
+0 1 0
+1 1 0
+0 0 1
+1 0 1
+0 1 1
+1 1 1
