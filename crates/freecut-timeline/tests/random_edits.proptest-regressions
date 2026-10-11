@@ -1,0 +1,12 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc fa73716fb812ea1988c4f59106f06b1aaa56345b08489e7e8e506a24a66c51c9 # shrinks to ops = [(BeginGesture, Never), (Insert { asset: 2, src: 0, len: 1, at: 0, track: 0 }, Never), (Move { pick: 0, count: 1, delta: 1, shift: 0 }, Never), (Delete { pick: 0, count: 1, ripple: false }, Never), (AddTrack { kind: 0 }, Never)]
+cc 600721ebd3469a31d65e925e5af5f00722e3eb3dff2a35ad7661b6891a587af1 # shrinks to ops = [(RemoveMedia { pick: 0, with_clips: false }, Never), (RemoveMedia { pick: 0, with_clips: false }, Never), (RemoveMedia { pick: 0, with_clips: false }, Never), (Insert { asset: 0, src: 0, len: 1, at: 0, track: 0 }, Never), (Insert { asset: 0, src: 0, len: 1, at: 0, track: 0 }, Never), (Insert { asset: 0, src: 0, len: 1, at: 0, track: 0 }, Never), (Import { frames: 1, video: false }, Never)]
+cc 843dc8172ac18b7b85f47d2fbf04d22446b2847094988bde1775974d56b471b7 # shrinks to ops = [(RemoveMedia { pick: 124, with_clips: false }, Never), (Insert { asset: 2, src: 0, len: 1, at: 34, track: 1 }, Never), (AddStream { pick: 221, stream: 0 }, Never), (Insert { asset: 2, src: 0, len: 1, at: 0, track: 0 }, Never), (Insert { asset: 0, src: 32, len: 1, at: 0, track: 0 }, Never), (Insert { asset: 0, src: 48, len: 1, at: 0, track: 0 }, Never), (Insert { asset: 0, src: 0, len: 1, at: 0, track: 0 }, Never), (Stream { pick: 29295, count: 2, which: 1 }, Never)]
+cc 22b5792813dbc14a376a53dbd08cd0da5960291ba95fef55834d0d597d4a3ba1 # shrinks to ops = [(Extract { pick: 199, default_stream: false }, Never), (Relink { pick: 104, frames: 1 }, Never), (Insert { asset: 3, src: 0, len: 2, at: 0, track: 0 }, Never), (AddStream { pick: 31611, stream: 0 }, Never)]
+cc b69dd06f0df74e61170b928b23143eca3a89553ac2deba9f75a7d704bd28a48b # shrinks to ops = [(InsertText { at: 0, len: 1, track: 0 }, Never), (Anim { pick: 0, count: 1, slot: 0, preset: 0, len: 0, value: 461519898 }, Never)]
+cc 82e10bb0f515f23dcc7f59b879cd6ef229730b59a06b59736111ff2645494ae1 # shrinks to ops = [(InsertText { at: 0, len: 1, track: 0 }, Never), (Anim { pick: 0, count: 1, slot: 0, preset: 0, len: 0, value: -1308594369 }, Never)]
