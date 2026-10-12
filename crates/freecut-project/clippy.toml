@@ -1,0 +1,9 @@
+# Crate-level clippy.toml replaces the root one, so repeat its keys.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# DTOs must serialize deterministically.
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "use BTreeMap for deterministic output" },
+  { path = "std::collections::HashSet", reason = "use BTreeSet for deterministic output" },
+]
