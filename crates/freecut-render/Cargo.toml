@@ -1,0 +1,35 @@
+[package]
+name = "freecut-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["media"]
+# A ready-made `LayerImages` backed by freecut-media decoders (links FFmpeg).
+media = ["freecut-media/ffmpeg"]
+
+[dependencies]
+freecut-media = { workspace = true, default-features = false }
+freecut-timeline.workspace = true
+
+libm.workspace = true
+parley.workspace = true
+swash.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+unicode-segmentation.workspace = true
+xxhash-rust.workspace = true
+zeno.workspace = true
+
+[dev-dependencies]
+# Golden PNGs of styled text.
+image.workspace = true
+pretty_assertions.workspace = true
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
