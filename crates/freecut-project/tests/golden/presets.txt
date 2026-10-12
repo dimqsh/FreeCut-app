@@ -1,0 +1,706 @@
+# Preset poses at 0/25/50/75/100 % of the slot, Intensity 50, seed 0, lengths in
+# each channel's unit (em, se, degrees, travel distances). Fields at rest are left
+# out. Presets with seeded or line-relative channels add units 1 and 2 of a line
+# 1.5 em high whose centre is (1.5 - unit, 0.25) em away, and seeded loops that
+# move only at moments (Flicker, Sparkle) add when in the cycle each moment falls.
+fc.clip.combined.pop-fade combined   0%: sx=0.000000 sy=0.000000
+fc.clip.combined.pop-fade combined  25%: sx=1.056424 sy=1.056424
+fc.clip.combined.pop-fade combined  50%: rest
+fc.clip.combined.pop-fade combined  75%: opacity=0.949074
+fc.clip.combined.pop-fade combined 100%: opacity=0.000000
+fc.clip.combined.slide-through combined   0%: tx=-1.000000
+fc.clip.combined.slide-through combined  25%: tx=-0.067076
+fc.clip.combined.slide-through combined  50%: tx=0.050000
+fc.clip.combined.slide-through combined  75%: tx=0.167076
+fc.clip.combined.slide-through combined 100%: tx=1.100000
+fc.clip.combined.spin-through combined   0%: sx=0.500000 sy=0.500000 rot=-180.000000
+fc.clip.combined.spin-through combined  25%: sx=0.974537 sy=0.974537 rot=-34.166667
+fc.clip.combined.spin-through combined  50%: rot=180.000000
+fc.clip.combined.spin-through combined  75%: sx=0.974537 sy=0.974537 rot=394.166667
+fc.clip.combined.spin-through combined 100%: sx=0.500000 sy=0.500000 rot=540.000000
+fc.clip.combined.zoom-through combined   0%: sx=0.600000 sy=0.600000 opacity=0.000000
+fc.clip.combined.zoom-through combined  25%: sx=0.965010 sy=0.965010
+fc.clip.combined.zoom-through combined  50%: sx=1.050000 sy=1.050000
+fc.clip.combined.zoom-through combined  75%: sx=1.134990 sy=1.134990
+fc.clip.combined.zoom-through combined 100%: sx=1.500000 sy=1.500000 opacity=0.000000
+fc.clip.drift.pan drift   0%: rest
+fc.clip.drift.pan drift  25%: tx=0.012500
+fc.clip.drift.pan drift  50%: tx=0.025000
+fc.clip.drift.pan drift  75%: tx=0.037500
+fc.clip.drift.pan drift 100%: tx=0.050000
+fc.clip.drift.zoom-in drift   0%: rest
+fc.clip.drift.zoom-in drift  25%: sx=1.014645 sy=1.014645
+fc.clip.drift.zoom-in drift  50%: sx=1.050000 sy=1.050000
+fc.clip.drift.zoom-in drift  75%: sx=1.085355 sy=1.085355
+fc.clip.drift.zoom-in drift 100%: sx=1.100000 sy=1.100000
+fc.clip.drift.zoom-out drift   0%: sx=1.100000 sy=1.100000
+fc.clip.drift.zoom-out drift  25%: sx=1.085355 sy=1.085355
+fc.clip.drift.zoom-out drift  50%: sx=1.050000 sy=1.050000
+fc.clip.drift.zoom-out drift  75%: sx=1.014645 sy=1.014645
+fc.clip.drift.zoom-out drift 100%: rest
+fc.clip.in.blur in   0%: opacity=0.000000 blur=0.020000
+fc.clip.in.blur in  25%: opacity=0.625000 blur=0.011250
+fc.clip.in.blur in  50%: blur=0.005000
+fc.clip.in.blur in  75%: blur=0.001250
+fc.clip.in.blur in 100%: rest
+fc.clip.in.blur out   0%: rest
+fc.clip.in.blur out  25%: blur=0.001250
+fc.clip.in.blur out  50%: blur=0.005000
+fc.clip.in.blur out  75%: opacity=0.625000 blur=0.011250
+fc.clip.in.blur out 100%: opacity=0.000000 blur=0.020000
+fc.clip.in.drop in   0%: ty=-0.200000
+fc.clip.in.drop in  25%: ty=-0.105469
+fc.clip.in.drop in  50%: ty=-0.046875
+fc.clip.in.drop in  75%: ty=-0.005469
+fc.clip.in.drop in 100%: rest
+fc.clip.in.drop out   0%: rest
+fc.clip.in.drop out  25%: ty=-0.005469
+fc.clip.in.drop out  50%: ty=-0.046875
+fc.clip.in.drop out  75%: ty=-0.105469
+fc.clip.in.drop out 100%: ty=-0.200000
+fc.clip.in.fade in   0%: opacity=0.000000
+fc.clip.in.fade in  25%: opacity=0.437500
+fc.clip.in.fade in  50%: opacity=0.750000
+fc.clip.in.fade in  75%: opacity=0.937500
+fc.clip.in.fade in 100%: rest
+fc.clip.in.fade out   0%: rest
+fc.clip.in.fade out  25%: opacity=0.937500
+fc.clip.in.fade out  50%: opacity=0.750000
+fc.clip.in.fade out  75%: opacity=0.437500
+fc.clip.in.fade out 100%: opacity=0.000000
+fc.clip.in.flash in   0%: opacity=0.000000 tint=1.000000
+fc.clip.in.flash in  25%: tint=0.228516
+fc.clip.in.flash in  50%: rest
+fc.clip.in.flash in  75%: rest
+fc.clip.in.flash in 100%: rest
+fc.clip.in.flash out   0%: rest
+fc.clip.in.flash out  25%: rest
+fc.clip.in.flash out  50%: rest
+fc.clip.in.flash out  75%: tint=0.228516
+fc.clip.in.flash out 100%: opacity=0.000000 tint=1.000000
+fc.clip.in.flip in   0%: turn_y=90.000000
+fc.clip.in.flip in  25%: turn_y=50.625000
+fc.clip.in.flip in  50%: turn_y=22.500000
+fc.clip.in.flip in  75%: turn_y=5.625000
+fc.clip.in.flip in 100%: rest
+fc.clip.in.flip out   0%: rest
+fc.clip.in.flip out  25%: turn_y=-5.625000
+fc.clip.in.flip out  50%: turn_y=-22.500000
+fc.clip.in.flip out  75%: turn_y=-50.625000
+fc.clip.in.flip out 100%: turn_y=-90.000000
+fc.clip.in.grow in   0%: sx=0.600000 sy=0.600000 opacity=0.000000
+fc.clip.in.grow in  25%: sx=0.831250 sy=0.831250 opacity=0.771484
+fc.clip.in.grow in  50%: sx=0.950000 sy=0.950000
+fc.clip.in.grow in  75%: sx=0.993750 sy=0.993750
+fc.clip.in.grow in 100%: rest
+fc.clip.in.grow out   0%: rest
+fc.clip.in.grow out  25%: sx=0.993750 sy=0.993750
+fc.clip.in.grow out  50%: sx=0.950000 sy=0.950000
+fc.clip.in.grow out  75%: sx=0.831250 sy=0.831250 opacity=0.771484
+fc.clip.in.grow out 100%: sx=0.600000 sy=0.600000 opacity=0.000000
+fc.clip.in.pop in   0%: sx=0.000000 sy=0.000000
+fc.clip.in.pop in  25%: sx=0.558179 sy=0.558179
+fc.clip.in.pop in  50%: sx=1.084185 sy=1.084185
+fc.clip.in.pop in  75%: sx=1.115723 sy=1.115723
+fc.clip.in.pop in 100%: rest
+fc.clip.in.pop out   0%: rest
+fc.clip.in.pop out  25%: sx=1.115723 sy=1.115723
+fc.clip.in.pop out  50%: sx=1.084185 sy=1.084185
+fc.clip.in.pop out  75%: sx=0.558179 sy=0.558179
+fc.clip.in.pop out 100%: sx=0.000000 sy=0.000000
+fc.clip.in.rise in   0%: ty=0.120000 opacity=0.000000
+fc.clip.in.rise in  25%: ty=0.046485 opacity=0.949074
+fc.clip.in.rise in  50%: ty=-0.007555
+fc.clip.in.rise in  75%: ty=-0.006650
+fc.clip.in.rise in 100%: rest
+fc.clip.in.rise out   0%: rest
+fc.clip.in.rise out  25%: ty=-0.006650
+fc.clip.in.rise out  50%: ty=-0.007555
+fc.clip.in.rise out  75%: ty=0.046485 opacity=0.949074
+fc.clip.in.rise out 100%: ty=0.120000 opacity=0.000000
+fc.clip.in.shake in   0%: opacity=0.000000
+fc.clip.in.shake in  25%: tx=0.001251
+fc.clip.in.shake in  50%: tx=-0.001251
+fc.clip.in.shake in  75%: tx=0.001251
+fc.clip.in.shake in 100%: rest
+fc.clip.in.shake out   0%: rest
+fc.clip.in.shake out  25%: tx=0.001251
+fc.clip.in.shake out  50%: tx=-0.001251
+fc.clip.in.shake out  75%: tx=0.001251
+fc.clip.in.shake out 100%: opacity=0.000000
+fc.clip.in.shrink in   0%: sx=1.400000 sy=1.400000 opacity=0.000000
+fc.clip.in.shrink in  25%: sx=1.168750 sy=1.168750 opacity=0.771484
+fc.clip.in.shrink in  50%: sx=1.050000 sy=1.050000
+fc.clip.in.shrink in  75%: sx=1.006250 sy=1.006250
+fc.clip.in.shrink in 100%: rest
+fc.clip.in.shrink out   0%: rest
+fc.clip.in.shrink out  25%: sx=1.006250 sy=1.006250
+fc.clip.in.shrink out  50%: sx=1.050000 sy=1.050000
+fc.clip.in.shrink out  75%: sx=1.168750 sy=1.168750 opacity=0.771484
+fc.clip.in.shrink out 100%: sx=1.400000 sy=1.400000 opacity=0.000000
+fc.clip.in.slide in   0%: tx=-1.000000
+fc.clip.in.slide in  25%: tx=-0.421875
+fc.clip.in.slide in  50%: tx=-0.125000
+fc.clip.in.slide in  75%: tx=-0.015625
+fc.clip.in.slide in 100%: rest
+fc.clip.in.slide out   0%: rest
+fc.clip.in.slide out  25%: tx=0.015625
+fc.clip.in.slide out  50%: tx=0.125000
+fc.clip.in.slide out  75%: tx=0.421875
+fc.clip.in.slide out 100%: tx=1.000000
+fc.clip.in.spin in   0%: sx=0.500000 sy=0.500000 rot=-180.000000
+fc.clip.in.spin in  25%: sx=0.789062 sy=0.789062 rot=-75.937500
+fc.clip.in.spin in  50%: sx=0.937500 sy=0.937500 rot=-22.500000
+fc.clip.in.spin in  75%: sx=0.992188 sy=0.992188 rot=-2.812500
+fc.clip.in.spin in 100%: rest
+fc.clip.in.spin out   0%: rest
+fc.clip.in.spin out  25%: sx=0.992188 sy=0.992188 rot=-2.812500
+fc.clip.in.spin out  50%: sx=0.937500 sy=0.937500 rot=-22.500000
+fc.clip.in.spin out  75%: sx=0.789062 sy=0.789062 rot=-75.937500
+fc.clip.in.spin out 100%: sx=0.500000 sy=0.500000 rot=-180.000000
+fc.clip.in.squash in   0%: sy=0.000000
+fc.clip.in.squash in  25%: sx=0.845703 sy=0.964355
+fc.clip.in.squash in  50%: sx=0.877778 sy=1.146296
+fc.clip.in.squash in  75%: sx=1.094907 sy=0.857639
+fc.clip.in.squash in 100%: rest
+fc.clip.in.squash out   0%: rest
+fc.clip.in.squash out  25%: sx=1.094907 sy=0.857639
+fc.clip.in.squash out  50%: sx=0.877778 sy=1.146296
+fc.clip.in.squash out  75%: sx=0.845703 sy=0.964355
+fc.clip.in.squash out 100%: sy=0.000000
+fc.clip.in.stretch in   0%: sx=1.600000 sy=0.600000
+fc.clip.in.stretch in  25%: sx=1.286072 sy=0.809285
+fc.clip.in.stretch in  50%: sx=1.002185 sy=0.998543
+fc.clip.in.stretch in  75%: sx=0.948397 sy=1.034402
+fc.clip.in.stretch in 100%: rest
+fc.clip.in.stretch out   0%: rest
+fc.clip.in.stretch out  25%: sx=0.948397 sy=1.034402
+fc.clip.in.stretch out  50%: sx=1.002185 sy=0.998543
+fc.clip.in.stretch out  75%: sx=1.286072 sy=0.809285
+fc.clip.in.stretch out 100%: sx=1.600000 sy=0.600000
+fc.clip.in.swing in   0%: rot=-60.000000
+fc.clip.in.swing in  25%: rot=-25.194444
+fc.clip.in.swing in  50%: rot=3.777778
+fc.clip.in.swing in  75%: rot=5.554687
+fc.clip.in.swing in 100%: rest
+fc.clip.in.swing out   0%: rest
+fc.clip.in.swing out  25%: rot=-5.554687
+fc.clip.in.swing out  50%: rot=-3.777778
+fc.clip.in.swing out  75%: rot=25.194444
+fc.clip.in.swing out 100%: rot=60.000000
+fc.clip.in.wipe in   0%: reveal=0.000000
+fc.clip.in.wipe in  25%: reveal=0.146447
+fc.clip.in.wipe in  50%: reveal=0.500000
+fc.clip.in.wipe in  75%: reveal=0.853553
+fc.clip.in.wipe in 100%: rest
+fc.clip.in.wipe out   0%: rest
+fc.clip.in.wipe out  25%: reveal=0.853553
+fc.clip.in.wipe out  50%: reveal=0.500000
+fc.clip.in.wipe out  75%: reveal=0.146447
+fc.clip.in.wipe out 100%: reveal=0.000000
+fc.clip.loop.bounce loop   0%: rest
+fc.clip.loop.bounce loop  25%: ty=-0.037500
+fc.clip.loop.bounce loop  50%: ty=-0.050000
+fc.clip.loop.bounce loop  75%: ty=-0.037500
+fc.clip.loop.bounce loop 100%: rest
+fc.clip.loop.float loop   0%: rest
+fc.clip.loop.float loop  25%: ty=-0.020000
+fc.clip.loop.float loop  50%: rest
+fc.clip.loop.float loop  75%: ty=0.020000
+fc.clip.loop.float loop 100%: rest
+fc.clip.loop.heartbeat loop   0%: rest
+fc.clip.loop.heartbeat loop  25%: sx=1.025000 sy=1.025000
+fc.clip.loop.heartbeat loop  50%: rest
+fc.clip.loop.heartbeat loop  75%: rest
+fc.clip.loop.heartbeat loop 100%: rest
+fc.clip.loop.jitter loop   0%: tx=-0.004740 ty=0.000455 rot=-0.414799
+fc.clip.loop.jitter loop  25%: tx=0.005072 ty=0.001251 rot=0.453810
+fc.clip.loop.jitter loop  50%: tx=-0.008888 ty=-0.000151 rot=-0.238865
+fc.clip.loop.jitter loop  75%: tx=0.004503 ty=-0.000516 rot=0.487428
+fc.clip.loop.jitter loop 100%: tx=-0.004740 ty=0.000455 rot=-0.414799
+fc.clip.loop.jitter loop unit 1   0%: tx=-0.000650 ty=-0.004405 rot=-0.148241
+fc.clip.loop.jitter loop unit 1  25%: tx=0.001343 ty=0.005357 rot=0.678502
+fc.clip.loop.jitter loop unit 1  50%: tx=-0.002727 ty=-0.006630 rot=-0.625887
+fc.clip.loop.jitter loop unit 1  75%: tx=0.003445 ty=0.005344 rot=0.122671
+fc.clip.loop.jitter loop unit 1 100%: tx=-0.000650 ty=-0.004405 rot=-0.148241
+fc.clip.loop.jitter loop unit 2   0%: tx=-0.002993 ty=0.004602 rot=0.667133
+fc.clip.loop.jitter loop unit 2  25%: tx=0.001281 ty=-0.009088 rot=-1.145743
+fc.clip.loop.jitter loop unit 2  50%: tx=0.000493 ty=0.007513 rot=1.119722
+fc.clip.loop.jitter loop unit 2  75%: tx=-0.000908 ty=-0.003964 rot=-0.824172
+fc.clip.loop.jitter loop unit 2 100%: tx=-0.002993 ty=0.004602 rot=0.667133
+fc.clip.loop.pendulum loop   0%: rest
+fc.clip.loop.pendulum loop  25%: rot=8.000000
+fc.clip.loop.pendulum loop  50%: rest
+fc.clip.loop.pendulum loop  75%: rot=-8.000000
+fc.clip.loop.pendulum loop 100%: rest
+fc.clip.loop.rotate-zoom loop   0%: sx=0.950000 sy=0.950000
+fc.clip.loop.rotate-zoom loop  25%: rot=6.000000
+fc.clip.loop.rotate-zoom loop  50%: sx=1.050000 sy=1.050000
+fc.clip.loop.rotate-zoom loop  75%: rot=-6.000000
+fc.clip.loop.rotate-zoom loop 100%: sx=0.950000 sy=0.950000
+fc.clip.loop.spin loop   0%: rest
+fc.clip.loop.spin loop  25%: rot=90.000000
+fc.clip.loop.spin loop  50%: rot=180.000000
+fc.clip.loop.spin loop  75%: rot=270.000000
+fc.clip.loop.spin loop 100%: rot=360.000000
+fc.in.blur in   0%: opacity=0.000000 blur=0.400000
+fc.in.blur in  25%: opacity=0.625000 blur=0.225000
+fc.in.blur in  50%: blur=0.100000
+fc.in.blur in  75%: blur=0.025000
+fc.in.blur in 100%: rest
+fc.in.blur out   0%: rest
+fc.in.blur out  25%: blur=0.025000
+fc.in.blur out  50%: blur=0.100000
+fc.in.blur out  75%: opacity=0.625000 blur=0.225000
+fc.in.blur out 100%: opacity=0.000000 blur=0.400000
+fc.in.bounce in   0%: ty=-2.000000
+fc.in.bounce in  25%: ty=-1.054688
+fc.in.bounce in  50%: ty=-0.468750
+fc.in.bounce in  75%: ty=-0.054688
+fc.in.bounce in 100%: rest
+fc.in.bounce out   0%: rest
+fc.in.bounce out  25%: ty=-0.054688
+fc.in.bounce out  50%: ty=-0.468750
+fc.in.bounce out  75%: ty=-1.054688
+fc.in.bounce out 100%: ty=-2.000000
+fc.in.decode in   0%: decode=1.000000
+fc.in.decode in  25%: decode=1.000000
+fc.in.decode in  50%: decode=1.000000
+fc.in.decode in  75%: decode=1.000000
+fc.in.decode in 100%: rest
+fc.in.decode out   0%: rest
+fc.in.decode out  25%: decode=1.000000
+fc.in.decode out  50%: decode=1.000000
+fc.in.decode out  75%: decode=1.000000
+fc.in.decode out 100%: decode=1.000000
+fc.in.drop in   0%: ty=-1.500000
+fc.in.drop in  25%: ty=-1.247539
+fc.in.drop in  50%: ty=-0.459288
+fc.in.drop in  75%: ty=-0.137642
+fc.in.drop in 100%: rest
+fc.in.drop out   0%: rest
+fc.in.drop out  25%: ty=-0.137642
+fc.in.drop out  50%: ty=-0.459288
+fc.in.drop out  75%: ty=-1.247539
+fc.in.drop out 100%: ty=-1.500000
+fc.in.fade in   0%: opacity=0.000000
+fc.in.fade in  25%: opacity=0.437500
+fc.in.fade in  50%: opacity=0.750000
+fc.in.fade in  75%: opacity=0.937500
+fc.in.fade in 100%: rest
+fc.in.fade out   0%: rest
+fc.in.fade out  25%: opacity=0.937500
+fc.in.fade out  50%: opacity=0.750000
+fc.in.fade out  75%: opacity=0.437500
+fc.in.fade out 100%: opacity=0.000000
+fc.in.flip-open in   0%: turn_x=90.000000
+fc.in.flip-open in  25%: turn_x=50.625000
+fc.in.flip-open in  50%: turn_x=22.500000
+fc.in.flip-open in  75%: turn_x=5.625000
+fc.in.flip-open in 100%: rest
+fc.in.flip-open out   0%: rest
+fc.in.flip-open out  25%: turn_x=5.625000
+fc.in.flip-open out  50%: turn_x=22.500000
+fc.in.flip-open out  75%: turn_x=50.625000
+fc.in.flip-open out 100%: turn_x=90.000000
+fc.in.focus-pull in   0%: sx=1.100000 sy=1.100000 blur=0.300000
+fc.in.focus-pull in  25%: sx=1.056250 sy=1.056250 blur=0.168750
+fc.in.focus-pull in  50%: sx=1.025000 sy=1.025000 blur=0.075000
+fc.in.focus-pull in  75%: sx=1.006250 sy=1.006250 blur=0.018750
+fc.in.focus-pull in 100%: rest
+fc.in.focus-pull out   0%: rest
+fc.in.focus-pull out  25%: sx=1.006250 sy=1.006250 blur=0.018750
+fc.in.focus-pull out  50%: sx=1.025000 sy=1.025000 blur=0.075000
+fc.in.focus-pull out  75%: sx=1.056250 sy=1.056250 blur=0.168750
+fc.in.focus-pull out 100%: sx=1.100000 sy=1.100000 blur=0.300000
+fc.in.letter-blur in   0%: opacity=0.000000 blur=0.300000
+fc.in.letter-blur in  25%: opacity=0.437500 blur=0.168750
+fc.in.letter-blur in  50%: opacity=0.750000 blur=0.075000
+fc.in.letter-blur in  75%: opacity=0.937500 blur=0.018750
+fc.in.letter-blur in 100%: rest
+fc.in.letter-blur out   0%: rest
+fc.in.letter-blur out  25%: opacity=0.937500 blur=0.018750
+fc.in.letter-blur out  50%: opacity=0.750000 blur=0.075000
+fc.in.letter-blur out  75%: opacity=0.437500 blur=0.168750
+fc.in.letter-blur out 100%: opacity=0.000000 blur=0.300000
+fc.in.letter-drop in   0%: ty=-0.800000
+fc.in.letter-drop in  25%: ty=-0.665354
+fc.in.letter-drop in  50%: ty=-0.244954
+fc.in.letter-drop in  75%: ty=-0.073409
+fc.in.letter-drop in 100%: rest
+fc.in.letter-drop out   0%: rest
+fc.in.letter-drop out  25%: ty=-0.073409
+fc.in.letter-drop out  50%: ty=-0.244954
+fc.in.letter-drop out  75%: ty=-0.665354
+fc.in.letter-drop out 100%: ty=-0.800000
+fc.in.letter-fade in   0%: opacity=0.000000
+fc.in.letter-fade in  25%: opacity=0.437500
+fc.in.letter-fade in  50%: opacity=0.750000
+fc.in.letter-fade in  75%: opacity=0.937500
+fc.in.letter-fade in 100%: rest
+fc.in.letter-fade out   0%: rest
+fc.in.letter-fade out  25%: opacity=0.937500
+fc.in.letter-fade out  50%: opacity=0.750000
+fc.in.letter-fade out  75%: opacity=0.437500
+fc.in.letter-fade out 100%: opacity=0.000000
+fc.in.letter-pop in   0%: sx=0.000000 sy=0.000000
+fc.in.letter-pop in  25%: sx=0.520897 sy=0.520897
+fc.in.letter-pop in  50%: sx=1.069868 sy=1.069868
+fc.in.letter-pop in  75%: sx=1.172012 sy=1.172012
+fc.in.letter-pop in 100%: rest
+fc.in.letter-pop out   0%: rest
+fc.in.letter-pop out  25%: sx=1.172012 sy=1.172012
+fc.in.letter-pop out  50%: sx=1.069868 sy=1.069868
+fc.in.letter-pop out  75%: sx=0.520897 sy=0.520897
+fc.in.letter-pop out 100%: sx=0.000000 sy=0.000000
+fc.in.letter-rise in   0%: ty=0.600000 opacity=0.000000
+fc.in.letter-rise in  25%: ty=0.253125 opacity=0.578125
+fc.in.letter-rise in  50%: ty=0.075000 opacity=0.875000
+fc.in.letter-rise in  75%: ty=0.009375 opacity=0.984375
+fc.in.letter-rise in 100%: rest
+fc.in.letter-rise out   0%: rest
+fc.in.letter-rise out  25%: ty=0.009375 opacity=0.984375
+fc.in.letter-rise out  50%: ty=0.075000 opacity=0.875000
+fc.in.letter-rise out  75%: ty=0.253125 opacity=0.578125
+fc.in.letter-rise out 100%: ty=0.600000 opacity=0.000000
+fc.in.letter-spin in   0%: rot=180.000000 opacity=0.000000
+fc.in.letter-spin in  25%: rot=101.250000 opacity=0.437500
+fc.in.letter-spin in  50%: rot=45.000000 opacity=0.750000
+fc.in.letter-spin in  75%: rot=11.250000 opacity=0.937500
+fc.in.letter-spin in 100%: rest
+fc.in.letter-spin out   0%: rest
+fc.in.letter-spin out  25%: rot=11.250000 opacity=0.937500
+fc.in.letter-spin out  50%: rot=45.000000 opacity=0.750000
+fc.in.letter-spin out  75%: rot=101.250000 opacity=0.437500
+fc.in.letter-spin out 100%: rot=180.000000 opacity=0.000000
+fc.in.marker-sweep in   0%: opacity=0.000000 reveal=0.000000
+fc.in.marker-sweep in  25%: opacity=0.000000 reveal=0.625000
+fc.in.marker-sweep in  50%: opacity=0.000000
+fc.in.marker-sweep in  75%: opacity=0.375000
+fc.in.marker-sweep in 100%: rest
+fc.in.marker-sweep out   0%: rest
+fc.in.marker-sweep out  25%: opacity=0.375000
+fc.in.marker-sweep out  50%: opacity=0.000000
+fc.in.marker-sweep out  75%: opacity=0.000000 reveal=0.625000
+fc.in.marker-sweep out 100%: opacity=0.000000 reveal=0.000000
+fc.in.pop in   0%: sx=0.000000 sy=0.000000
+fc.in.pop in  25%: sx=0.509585 sy=0.509585
+fc.in.pop in  50%: sx=1.028846 sy=1.028846
+fc.in.pop in  75%: sx=1.129009 sy=1.129009
+fc.in.pop in 100%: rest
+fc.in.pop out   0%: rest
+fc.in.pop out  25%: sx=1.129009 sy=1.129009
+fc.in.pop out  50%: sx=1.028846 sy=1.028846
+fc.in.pop out  75%: sx=0.509585 sy=0.509585
+fc.in.pop out 100%: sx=0.000000 sy=0.000000
+fc.in.rise in   0%: ty=1.000000 opacity=0.000000
+fc.in.rise in  25%: ty=0.421875 opacity=0.771484
+fc.in.rise in  50%: ty=0.125000
+fc.in.rise in  75%: ty=0.015625
+fc.in.rise in 100%: rest
+fc.in.rise out   0%: rest
+fc.in.rise out  25%: ty=0.015625
+fc.in.rise out  50%: ty=0.125000
+fc.in.rise out  75%: ty=0.421875 opacity=0.771484
+fc.in.rise out 100%: ty=1.000000 opacity=0.000000
+fc.in.scatter in   0%: tx=1.238457 ty=-0.541193 rot=-30.809759 opacity=0.000000
+fc.in.scatter in  25%: tx=0.696632 ty=-0.304421 rot=-17.330490 opacity=0.437500
+fc.in.scatter in  50%: tx=0.309614 ty=-0.135298 rot=-7.702440 opacity=0.750000
+fc.in.scatter in  75%: tx=0.077404 ty=-0.033825 rot=-1.925610 opacity=0.937500
+fc.in.scatter in 100%: rest
+fc.in.scatter in unit 1   0%: tx=-0.991692 ty=-0.800385 rot=11.553084 opacity=0.000000
+fc.in.scatter in unit 1  25%: tx=-0.557827 ty=-0.450216 rot=6.498609 opacity=0.437500
+fc.in.scatter in unit 1  50%: tx=-0.247923 ty=-0.200096 rot=2.888271 opacity=0.750000
+fc.in.scatter in unit 1  75%: tx=-0.061981 ty=-0.050024 rot=0.722068 opacity=0.937500
+fc.in.scatter in unit 1 100%: rest
+fc.in.scatter in unit 2   0%: tx=-1.123646 ty=-0.985447 rot=22.190286 opacity=0.000000
+fc.in.scatter in unit 2  25%: tx=-0.632051 ty=-0.554314 rot=12.482036 opacity=0.437500
+fc.in.scatter in unit 2  50%: tx=-0.280912 ty=-0.246362 rot=5.547572 opacity=0.750000
+fc.in.scatter in unit 2  75%: tx=-0.070228 ty=-0.061590 rot=1.386893 opacity=0.937500
+fc.in.scatter in unit 2 100%: rest
+fc.in.scatter out   0%: rest
+fc.in.scatter out  25%: tx=0.077404 ty=-0.033825 rot=-1.925610 opacity=0.937500
+fc.in.scatter out  50%: tx=0.309614 ty=-0.135298 rot=-7.702440 opacity=0.750000
+fc.in.scatter out  75%: tx=0.696632 ty=-0.304421 rot=-17.330490 opacity=0.437500
+fc.in.scatter out 100%: tx=1.238457 ty=-0.541193 rot=-30.809759 opacity=0.000000
+fc.in.scatter out unit 1   0%: rest
+fc.in.scatter out unit 1  25%: tx=-0.061981 ty=-0.050024 rot=0.722068 opacity=0.937500
+fc.in.scatter out unit 1  50%: tx=-0.247923 ty=-0.200096 rot=2.888271 opacity=0.750000
+fc.in.scatter out unit 1  75%: tx=-0.557827 ty=-0.450216 rot=6.498609 opacity=0.437500
+fc.in.scatter out unit 1 100%: tx=-0.991692 ty=-0.800385 rot=11.553084 opacity=0.000000
+fc.in.scatter out unit 2   0%: rest
+fc.in.scatter out unit 2  25%: tx=-0.070228 ty=-0.061590 rot=1.386893 opacity=0.937500
+fc.in.scatter out unit 2  50%: tx=-0.280912 ty=-0.246362 rot=5.547572 opacity=0.750000
+fc.in.scatter out unit 2  75%: tx=-0.632051 ty=-0.554314 rot=12.482036 opacity=0.437500
+fc.in.scatter out unit 2 100%: tx=-1.123646 ty=-0.985447 rot=22.190286 opacity=0.000000
+fc.in.slide in   0%: tx=-1.000000
+fc.in.slide in  25%: tx=-0.421875
+fc.in.slide in  50%: tx=-0.125000
+fc.in.slide in  75%: tx=-0.015625
+fc.in.slide in 100%: rest
+fc.in.slide out   0%: rest
+fc.in.slide out  25%: tx=0.015625
+fc.in.slide out  50%: tx=0.125000
+fc.in.slide out  75%: tx=0.421875
+fc.in.slide out 100%: tx=1.000000
+fc.in.spin in   0%: sx=0.600000 sy=0.600000 rot=-90.000000
+fc.in.spin in  25%: sx=0.831250 sy=0.831250 rot=-37.968750
+fc.in.spin in  50%: sx=0.950000 sy=0.950000 rot=-11.250000
+fc.in.spin in  75%: sx=0.993750 sy=0.993750 rot=-1.406250
+fc.in.spin in 100%: rest
+fc.in.spin out   0%: rest
+fc.in.spin out  25%: sx=0.993750 sy=0.993750 rot=-1.406250
+fc.in.spin out  50%: sx=0.950000 sy=0.950000 rot=-11.250000
+fc.in.spin out  75%: sx=0.831250 sy=0.831250 rot=-37.968750
+fc.in.spin out 100%: sx=0.600000 sy=0.600000 rot=-90.000000
+fc.in.spread in   0%: opacity=0.000000
+fc.in.spread in  25%: opacity=0.437500
+fc.in.spread in  50%: opacity=0.750000
+fc.in.spread in  75%: opacity=0.937500
+fc.in.spread in 100%: rest
+fc.in.spread in unit 1   0%: tx=0.300000 ty=0.150000 opacity=0.000000
+fc.in.spread in unit 1  25%: tx=0.168750 ty=0.084375 opacity=0.437500
+fc.in.spread in unit 1  50%: tx=0.075000 ty=0.037500 opacity=0.750000
+fc.in.spread in unit 1  75%: tx=0.018750 ty=0.009375 opacity=0.937500
+fc.in.spread in unit 1 100%: rest
+fc.in.spread in unit 2   0%: tx=-0.300000 ty=0.150000 opacity=0.000000
+fc.in.spread in unit 2  25%: tx=-0.168750 ty=0.084375 opacity=0.437500
+fc.in.spread in unit 2  50%: tx=-0.075000 ty=0.037500 opacity=0.750000
+fc.in.spread in unit 2  75%: tx=-0.018750 ty=0.009375 opacity=0.937500
+fc.in.spread in unit 2 100%: rest
+fc.in.spread out   0%: rest
+fc.in.spread out  25%: opacity=0.937500
+fc.in.spread out  50%: opacity=0.750000
+fc.in.spread out  75%: opacity=0.437500
+fc.in.spread out 100%: opacity=0.000000
+fc.in.spread out unit 1   0%: rest
+fc.in.spread out unit 1  25%: tx=0.018750 ty=0.009375 opacity=0.937500
+fc.in.spread out unit 1  50%: tx=0.075000 ty=0.037500 opacity=0.750000
+fc.in.spread out unit 1  75%: tx=0.168750 ty=0.084375 opacity=0.437500
+fc.in.spread out unit 1 100%: tx=0.300000 ty=0.150000 opacity=0.000000
+fc.in.spread out unit 2   0%: rest
+fc.in.spread out unit 2  25%: tx=-0.018750 ty=0.009375 opacity=0.937500
+fc.in.spread out unit 2  50%: tx=-0.075000 ty=0.037500 opacity=0.750000
+fc.in.spread out unit 2  75%: tx=-0.168750 ty=0.084375 opacity=0.437500
+fc.in.spread out unit 2 100%: tx=-0.300000 ty=0.150000 opacity=0.000000
+fc.in.typewriter in   0%: opacity=0.000000
+fc.in.typewriter in  25%: rest
+fc.in.typewriter in  50%: rest
+fc.in.typewriter in  75%: rest
+fc.in.typewriter in 100%: rest
+fc.in.typewriter out   0%: rest
+fc.in.typewriter out  25%: rest
+fc.in.typewriter out  50%: rest
+fc.in.typewriter out  75%: rest
+fc.in.typewriter out 100%: opacity=0.000000
+fc.in.wipe in   0%: reveal=0.000000
+fc.in.wipe in  25%: reveal=0.146447
+fc.in.wipe in  50%: reveal=0.500000
+fc.in.wipe in  75%: reveal=0.853553
+fc.in.wipe in 100%: rest
+fc.in.wipe out   0%: rest
+fc.in.wipe out  25%: reveal=0.853553
+fc.in.wipe out  50%: reveal=0.500000
+fc.in.wipe out  75%: reveal=0.146447
+fc.in.wipe out 100%: reveal=0.000000
+fc.in.word-rise in   0%: ty=1.200000 line_clip=1.000000
+fc.in.word-rise in  25%: ty=0.506250 line_clip=1.000000
+fc.in.word-rise in  50%: ty=0.150000 line_clip=1.000000
+fc.in.word-rise in  75%: ty=0.018750 line_clip=1.000000
+fc.in.word-rise in 100%: rest
+fc.in.word-rise in unit 1   0%: ty=1.500000 line_clip=1.000000
+fc.in.word-rise in unit 1  25%: ty=0.632812 line_clip=1.000000
+fc.in.word-rise in unit 1  50%: ty=0.187500 line_clip=1.000000
+fc.in.word-rise in unit 1  75%: ty=0.023438 line_clip=1.000000
+fc.in.word-rise in unit 1 100%: rest
+fc.in.word-rise in unit 2   0%: ty=1.500000 line_clip=1.000000
+fc.in.word-rise in unit 2  25%: ty=0.632812 line_clip=1.000000
+fc.in.word-rise in unit 2  50%: ty=0.187500 line_clip=1.000000
+fc.in.word-rise in unit 2  75%: ty=0.023438 line_clip=1.000000
+fc.in.word-rise in unit 2 100%: rest
+fc.in.word-rise out   0%: rest
+fc.in.word-rise out  25%: ty=0.018750 line_clip=1.000000
+fc.in.word-rise out  50%: ty=0.150000 line_clip=1.000000
+fc.in.word-rise out  75%: ty=0.506250 line_clip=1.000000
+fc.in.word-rise out 100%: ty=1.200000 line_clip=1.000000
+fc.in.word-rise out unit 1   0%: rest
+fc.in.word-rise out unit 1  25%: ty=0.023438 line_clip=1.000000
+fc.in.word-rise out unit 1  50%: ty=0.187500 line_clip=1.000000
+fc.in.word-rise out unit 1  75%: ty=0.632812 line_clip=1.000000
+fc.in.word-rise out unit 1 100%: ty=1.500000 line_clip=1.000000
+fc.in.word-rise out unit 2   0%: rest
+fc.in.word-rise out unit 2  25%: ty=0.023438 line_clip=1.000000
+fc.in.word-rise out unit 2  50%: ty=0.187500 line_clip=1.000000
+fc.in.word-rise out unit 2  75%: ty=0.632812 line_clip=1.000000
+fc.in.word-rise out unit 2 100%: ty=1.500000 line_clip=1.000000
+fc.in.word-slide in   0%: tx=-1.000000 opacity=0.000000
+fc.in.word-slide in  25%: tx=-0.562500 opacity=0.437500
+fc.in.word-slide in  50%: tx=-0.250000 opacity=0.750000
+fc.in.word-slide in  75%: tx=-0.062500 opacity=0.937500
+fc.in.word-slide in 100%: rest
+fc.in.word-slide out   0%: rest
+fc.in.word-slide out  25%: tx=0.062500 opacity=0.937500
+fc.in.word-slide out  50%: tx=0.250000 opacity=0.750000
+fc.in.word-slide out  75%: tx=0.562500 opacity=0.437500
+fc.in.word-slide out 100%: tx=1.000000 opacity=0.000000
+fc.in.zoom-in in   0%: sx=0.500000 sy=0.500000 opacity=0.000000
+fc.in.zoom-in in  25%: sx=0.789062 sy=0.789062 opacity=0.771484
+fc.in.zoom-in in  50%: sx=0.937500 sy=0.937500
+fc.in.zoom-in in  75%: sx=0.992188 sy=0.992188
+fc.in.zoom-in in 100%: rest
+fc.in.zoom-in out   0%: rest
+fc.in.zoom-in out  25%: sx=0.992188 sy=0.992188
+fc.in.zoom-in out  50%: sx=0.937500 sy=0.937500
+fc.in.zoom-in out  75%: sx=0.789062 sy=0.789062 opacity=0.771484
+fc.in.zoom-in out 100%: sx=0.500000 sy=0.500000 opacity=0.000000
+fc.in.zoom-out in   0%: sx=1.500000 sy=1.500000 opacity=0.000000
+fc.in.zoom-out in  25%: sx=1.210938 sy=1.210938 opacity=0.771484
+fc.in.zoom-out in  50%: sx=1.062500 sy=1.062500
+fc.in.zoom-out in  75%: sx=1.007812 sy=1.007812
+fc.in.zoom-out in 100%: rest
+fc.in.zoom-out out   0%: rest
+fc.in.zoom-out out  25%: sx=1.007812 sy=1.007812
+fc.in.zoom-out out  50%: sx=1.062500 sy=1.062500
+fc.in.zoom-out out  75%: sx=1.210938 sy=1.210938 opacity=0.771484
+fc.in.zoom-out out 100%: sx=1.500000 sy=1.500000 opacity=0.000000
+fc.loop.breathing-glow loop   0%: rest
+fc.loop.breathing-glow loop  25%: glow=0.650000
+fc.loop.breathing-glow loop  50%: glow=0.300000
+fc.loop.breathing-glow loop  75%: glow=0.650000
+fc.loop.breathing-glow loop 100%: rest
+fc.loop.flicker loop   0%: rest
+fc.loop.flicker loop  25%: rest
+fc.loop.flicker loop  50%: rest
+fc.loop.flicker loop  75%: rest
+fc.loop.flicker loop 100%: rest
+fc.loop.flicker loop unit 1   0%: rest
+fc.loop.flicker loop unit 1  25%: rest
+fc.loop.flicker loop unit 1  50%: rest
+fc.loop.flicker loop unit 1  75%: rest
+fc.loop.flicker loop unit 1 100%: rest
+fc.loop.flicker loop unit 2   0%: rest
+fc.loop.flicker loop unit 2  25%: rest
+fc.loop.flicker loop unit 2  50%: rest
+fc.loop.flicker loop unit 2  75%: rest
+fc.loop.flicker loop unit 2 100%: rest
+fc.loop.flicker loop unit 0 moves at 578 ms for 67 ms, middle: opacity=0.400000
+fc.loop.flicker loop unit 1 moves at 390 ms for 66 ms, middle: opacity=0.400000
+fc.loop.flicker loop unit 2 moves at 560 ms for 67 ms, middle: opacity=0.400000
+fc.loop.float loop   0%: rest
+fc.loop.float loop  25%: ty=-0.150000
+fc.loop.float loop  50%: rest
+fc.loop.float loop  75%: ty=0.150000
+fc.loop.float loop 100%: rest
+fc.loop.heartbeat loop   0%: rest
+fc.loop.heartbeat loop  25%: sx=1.025000 sy=1.025000
+fc.loop.heartbeat loop  50%: rest
+fc.loop.heartbeat loop  75%: rest
+fc.loop.heartbeat loop 100%: rest
+fc.loop.hop loop   0%: rest
+fc.loop.hop loop  25%: rest
+fc.loop.hop loop  50%: rest
+fc.loop.hop loop  75%: rest
+fc.loop.hop loop 100%: rest
+fc.loop.hue-cycle loop   0%: rest
+fc.loop.hue-cycle loop  25%: hue=90.000000
+fc.loop.hue-cycle loop  50%: hue=180.000000
+fc.loop.hue-cycle loop  75%: hue=270.000000
+fc.loop.hue-cycle loop 100%: hue=360.000000
+fc.loop.jelly loop   0%: rest
+fc.loop.jelly loop  25%: sx=1.100000 sy=0.900000
+fc.loop.jelly loop  50%: rest
+fc.loop.jelly loop  75%: sx=0.900000 sy=1.100000
+fc.loop.jelly loop 100%: rest
+fc.loop.pulse loop   0%: rest
+fc.loop.pulse loop  25%: sx=1.030000 sy=1.030000
+fc.loop.pulse loop  50%: sx=1.060000 sy=1.060000
+fc.loop.pulse loop  75%: sx=1.030000 sy=1.030000
+fc.loop.pulse loop 100%: rest
+fc.loop.shake loop   0%: tx=-0.028437 ty=0.002732
+fc.loop.shake loop  25%: tx=0.030432 ty=0.007505
+fc.loop.shake loop  50%: tx=-0.053326 ty=-0.000906
+fc.loop.shake loop  75%: tx=0.027019 ty=-0.003098
+fc.loop.shake loop 100%: tx=-0.028437 ty=0.002732
+fc.loop.shake loop unit 1   0%: tx=-0.003899 ty=-0.026433
+fc.loop.shake loop unit 1  25%: tx=0.008055 ty=0.032142
+fc.loop.shake loop unit 1  50%: tx=-0.016359 ty=-0.039780
+fc.loop.shake loop unit 1  75%: tx=0.020672 ty=0.032064
+fc.loop.shake loop unit 1 100%: tx=-0.003899 ty=-0.026433
+fc.loop.shake loop unit 2   0%: tx=-0.017958 ty=0.027612
+fc.loop.shake loop unit 2  25%: tx=0.007689 ty=-0.054529
+fc.loop.shake loop unit 2  50%: tx=0.002959 ty=0.045075
+fc.loop.shake loop unit 2  75%: tx=-0.005449 ty=-0.023782
+fc.loop.shake loop unit 2 100%: tx=-0.017958 ty=0.027612
+fc.loop.shimmer loop   0%: rest
+fc.loop.shimmer loop  25%: rest
+fc.loop.shimmer loop  50%: rest
+fc.loop.shimmer loop  75%: rest
+fc.loop.shimmer loop 100%: rest
+fc.loop.sparkle loop   0%: rest
+fc.loop.sparkle loop  25%: rest
+fc.loop.sparkle loop  50%: rest
+fc.loop.sparkle loop  75%: rest
+fc.loop.sparkle loop 100%: rest
+fc.loop.sparkle loop unit 1   0%: rest
+fc.loop.sparkle loop unit 1  25%: rest
+fc.loop.sparkle loop unit 1  50%: rest
+fc.loop.sparkle loop unit 1  75%: rest
+fc.loop.sparkle loop unit 1 100%: rest
+fc.loop.sparkle loop unit 2   0%: rest
+fc.loop.sparkle loop unit 2  25%: rest
+fc.loop.sparkle loop unit 2  50%: rest
+fc.loop.sparkle loop unit 2  75%: sx=1.169838 sy=1.169838
+fc.loop.sparkle loop unit 2 100%: rest
+fc.loop.sparkle loop unit 0 moves at 1071 ms for 200 ms, middle: sx=1.199979 sy=1.199979
+fc.loop.sparkle loop unit 1 moves at 1606 ms for 200 ms, middle: sx=1.199992 sy=1.199992
+fc.loop.sparkle loop unit 2 moves at 1375 ms for 200 ms, middle: sx=1.199992 sy=1.199992
+fc.loop.swing loop   0%: rest
+fc.loop.swing loop  25%: rot=8.000000
+fc.loop.swing loop  50%: rest
+fc.loop.swing loop  75%: rot=-8.000000
+fc.loop.swing loop 100%: rest
+fc.loop.wave loop   0%: rest
+fc.loop.wave loop  25%: ty=-0.250000
+fc.loop.wave loop  50%: rest
+fc.loop.wave loop  75%: ty=0.250000
+fc.loop.wave loop 100%: rest
+fc.loop.wiggle loop   0%: rot=-1.659195
+fc.loop.wiggle loop  25%: rot=1.815242
+fc.loop.wiggle loop  50%: rot=-0.955461
+fc.loop.wiggle loop  75%: rot=1.949713
+fc.loop.wiggle loop 100%: rot=-1.659195
+fc.loop.wiggle loop unit 1   0%: rot=-0.592962
+fc.loop.wiggle loop unit 1  25%: rot=2.714008
+fc.loop.wiggle loop unit 1  50%: rot=-2.503547
+fc.loop.wiggle loop unit 1  75%: rot=0.490685
+fc.loop.wiggle loop unit 1 100%: rot=-0.592962
+fc.loop.wiggle loop unit 2   0%: rot=2.668531
+fc.loop.wiggle loop unit 2  25%: rot=-4.582973
+fc.loop.wiggle loop unit 2  50%: rot=4.478887
+fc.loop.wiggle loop unit 2  75%: rot=-3.296688
+fc.loop.wiggle loop unit 2 100%: rot=2.668531
+fc.loop.wobble loop   0%: rest
+fc.loop.wobble loop  25%: rot=4.000000
+fc.loop.wobble loop  50%: rest
+fc.loop.wobble loop  75%: rot=-4.000000
+fc.loop.wobble loop 100%: rest
+fc.out.erase out   0%: rest
+fc.out.erase out  25%: opacity=0.000000
+fc.out.erase out  50%: opacity=0.000000
+fc.out.erase out  75%: opacity=0.000000
+fc.out.erase out 100%: opacity=0.000000
+fc.out.fall-away out   0%: rest
+fc.out.fall-away out  25%: ty=0.125000 rot=-1.444207
+fc.out.fall-away out  50%: ty=0.500000 rot=-5.776830
+fc.out.fall-away out  75%: ty=1.125000 rot=-12.997867 opacity=0.771484
+fc.out.fall-away out 100%: ty=2.000000 rot=-23.107319 opacity=0.000000
+fc.out.fall-away out unit 1   0%: rest
+fc.out.fall-away out unit 1  25%: ty=0.125000 rot=0.541551
+fc.out.fall-away out unit 1  50%: ty=0.500000 rot=2.166203
+fc.out.fall-away out unit 1  75%: ty=1.125000 rot=4.873957 opacity=0.771484
+fc.out.fall-away out unit 1 100%: ty=2.000000 rot=8.664813 opacity=0.000000
+fc.out.fall-away out unit 2   0%: rest
+fc.out.fall-away out unit 2  25%: ty=0.125000 rot=1.040170
+fc.out.fall-away out unit 2  50%: ty=0.500000 rot=4.160679
+fc.out.fall-away out unit 2  75%: ty=1.125000 rot=9.361527 opacity=0.771484
+fc.out.fall-away out unit 2 100%: ty=2.000000 rot=16.642715 opacity=0.000000

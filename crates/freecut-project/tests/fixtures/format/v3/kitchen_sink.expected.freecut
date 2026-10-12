@@ -1,0 +1,808 @@
+{
+  "format": "freecut-project",
+  "format_version": 10,
+  "app": "freecut 0.1.0",
+  "ids_next": 100,
+  "document": {
+    "root": 1,
+    "settings": {
+      "canvas": {
+        "width": 1080,
+        "height": 1920
+      },
+      "frame_rate": {
+        "num": 30000,
+        "den": 1001,
+        "x_rate": 1
+      },
+      "sample_rate": 44100,
+      "match_first_clip": true
+    },
+    "library": [
+      {
+        "id": 10,
+        "source": {
+          "type": "file"
+        },
+        "path": {
+          "absolute": "/Users/me/Movies/Beach Day/IMG_0412.MOV",
+          "relative": "../Movies/Beach Day/IMG_0412.MOV"
+        },
+        "info": {
+          "container": "mov,mp4,m4a,3gp,3g2,mj2",
+          "default_video": 0,
+          "duration": 2354352000,
+          "video": [
+            {
+              "index": 0,
+              "codec": "h264",
+              "width": 1440,
+              "height": 1080,
+              "sar": {
+                "num": 4,
+                "den": 3
+              },
+              "rotation": "none",
+              "mirrored": true,
+              "rate": {
+                "num": 30000,
+                "den": 1001
+              },
+              "variable_rate": false,
+              "has_alpha": true,
+              "bit_depth": 10,
+              "start": 0,
+              "duration": 2354352000
+            },
+            {
+              "index": 1,
+              "codec": "h264",
+              "width": 1920,
+              "height": 1080,
+              "sar": {
+                "num": 1,
+                "den": 1
+              },
+              "rotation": "cw90",
+              "mirrored": false,
+              "rate": null,
+              "variable_rate": true,
+              "has_alpha": false,
+              "bit_depth": 8,
+              "start": -1000,
+              "duration": 2354352000,
+              "x_stream": "rotated"
+            },
+            {
+              "index": 2,
+              "codec": "hevc",
+              "width": 1920,
+              "height": 1080,
+              "sar": {
+                "num": 1,
+                "den": 1
+              },
+              "rotation": "cw180",
+              "mirrored": false,
+              "rate": {
+                "num": 24,
+                "den": 1
+              },
+              "variable_rate": false,
+              "has_alpha": false,
+              "bit_depth": 8,
+              "start": 0,
+              "duration": 2354352000
+            },
+            {
+              "index": 3,
+              "codec": "h264",
+              "width": 1920,
+              "height": 1080,
+              "sar": {
+                "num": 1,
+                "den": 1
+              },
+              "rotation": "cw270",
+              "mirrored": false,
+              "rate": {
+                "num": 30000,
+                "den": 1001
+              },
+              "variable_rate": false,
+              "has_alpha": false,
+              "bit_depth": 8,
+              "start": 0,
+              "duration": 2354352000
+            }
+          ],
+          "audio": [
+            {
+              "index": 4,
+              "codec": "aac",
+              "sample_rate": 48000,
+              "channels": 2,
+              "start": -14700,
+              "duration": 2354352000,
+              "duration_exact": false,
+              "default": false,
+              "language": null,
+              "title": null,
+              "layout": null
+            },
+            {
+              "index": 5,
+              "codec": "pcm_s24le",
+              "sample_rate": 96000,
+              "channels": 6,
+              "start": 0,
+              "duration": 2354352000,
+              "duration_exact": true,
+              "default": false,
+              "language": null,
+              "title": null,
+              "layout": null
+            }
+          ],
+          "still": null
+        },
+        "fingerprint": {
+          "size": 734003200,
+          "head_tail": "fedcba9876543210",
+          "duration": 2354352000
+        },
+        "display_name": "Beach · day 1 \"wide\"\t🎬",
+        "x_media": {
+          "proxy": "none"
+        }
+      },
+      {
+        "id": 11,
+        "source": {
+          "type": "file"
+        },
+        "path": {
+          "absolute": "C:\\Users\\me\\Music\\song.mp3",
+          "relative": null
+        },
+        "info": {
+          "container": "mp3",
+          "default_video": null,
+          "duration": 3000000000,
+          "video": [],
+          "audio": [
+            {
+              "index": 0,
+              "codec": "mp3",
+              "sample_rate": 44100,
+              "channels": 2,
+              "start": 0,
+              "duration": 3000000000,
+              "duration_exact": true,
+              "default": false,
+              "language": null,
+              "title": null,
+              "layout": null
+            }
+          ],
+          "still": null
+        },
+        "fingerprint": null,
+        "display_name": null
+      },
+      {
+        "id": 12,
+        "source": {
+          "type": "file"
+        },
+        "path": {
+          "absolute": "/Users/me/Pictures/sunset.png",
+          "relative": "../Pictures/sunset.png"
+        },
+        "info": {
+          "container": "png_pipe",
+          "default_video": null,
+          "duration": 0,
+          "video": [],
+          "audio": [],
+          "still": {
+            "width": 4000,
+            "height": 3000
+          }
+        },
+        "fingerprint": {
+          "size": 12345,
+          "head_tail": "0000000000000007",
+          "duration": 0
+        },
+        "display_name": ""
+      },
+      {
+        "id": 13,
+        "source": {
+          "type": "audio-of",
+          "media": 10,
+          "stream": 5,
+          "x_source": "left channel"
+        },
+        "path": {
+          "absolute": "/Users/me/Movies/Beach Day/IMG_0412.MOV",
+          "relative": "../Movies/Beach Day/IMG_0412.MOV"
+        },
+        "info": {
+          "container": "mov,mp4,m4a,3gp,3g2,mj2",
+          "default_video": null,
+          "duration": 2354352000,
+          "video": [],
+          "audio": [
+            {
+              "index": 5,
+              "codec": "pcm_s24le",
+              "sample_rate": 96000,
+              "channels": 6,
+              "start": 0,
+              "duration": 2354352000,
+              "duration_exact": true,
+              "default": false,
+              "language": null,
+              "title": null,
+              "layout": null
+            }
+          ],
+          "still": null
+        },
+        "fingerprint": {
+          "size": 734003200,
+          "head_tail": "fedcba9876543210",
+          "duration": 2354352000
+        },
+        "display_name": "Beach (audio)"
+      }
+    ],
+    "sequences": [
+      {
+        "id": 1,
+        "flags": {
+          "main_magnet": true,
+          "follow_main": true,
+          "follow_kinds": [
+            "video-overlay",
+            "text",
+            "sticker",
+            "effect",
+            "adjustment",
+            "music",
+            "sound-effect",
+            "speech",
+            "other-audio"
+          ]
+        },
+        "visual": [
+          {
+            "id": 20,
+            "kind": "video",
+            "header": {
+              "name": "Main",
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 40,
+                "range": {
+                  "start": 0,
+                  "duration": 2118916800
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 10,
+                  "kind": "video",
+                  "source": {
+                    "start": 235435200,
+                    "duration": 2118916800,
+                    "x_src": 7
+                  },
+                  "stream": null
+                },
+                "enabled": true,
+                "name": "Intro \"take\" 1 \\ ✂",
+                "group": 90,
+                "link": 91,
+                "audio": {
+                  "type": "detached",
+                  "link": 91,
+                  "x_detached": "resync later"
+                },
+                "x_clip": {
+                  "keyframes": []
+                }
+              },
+              {
+                "id": 41,
+                "range": {
+                  "start": 2118916800,
+                  "duration": 1412611200
+                },
+                "content": {
+                  "type": "image",
+                  "asset": 12
+                },
+                "enabled": false,
+                "name": null,
+                "group": 90,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                }
+              }
+            ]
+          },
+          {
+            "id": 21,
+            "kind": "video",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": true,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 42,
+                "range": {
+                  "start": 4708704000,
+                  "duration": 706305600
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 10,
+                  "kind": "video",
+                  "source": {
+                    "start": 0,
+                    "duration": 706305600
+                  },
+                  "stream": null
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "active",
+                  "gain": "-inf",
+                  "gain_keys": [],
+                  "muted": false,
+                  "fade_in": 0,
+                  "fade_in_curve": "linear",
+                  "fade_out": 0,
+                  "fade_out_curve": "linear"
+                },
+                "transform": {
+                  "position": {
+                    "x": 250000,
+                    "y": -125000,
+                    "x_unit": "canvas"
+                  },
+                  "scale": 5000,
+                  "rotation": -4550,
+                  "flip_h": true,
+                  "flip_v": false,
+                  "opacity": 750,
+                  "x_anchor": [
+                    0,
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": 22,
+            "kind": "text",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": true
+            },
+            "clips": [
+              {
+                "id": 43,
+                "range": {
+                  "start": 0,
+                  "duration": 1059458400
+                },
+                "content": {
+                  "type": "text",
+                  "text": "Beach day\n\"Sunset\" ☀️ \\ tab\there",
+                  "style": {
+                    "font": {
+                      "family": "DejaVu Serif",
+                      "x_weight": 700
+                    },
+                    "size": 9650,
+                    "fill": {
+                      "type": "solid",
+                      "color": "#FF8000C0"
+                    },
+                    "bold": false,
+                    "italic": true,
+                    "underline": false,
+                    "strike": false,
+                    "case": "as-typed",
+                    "letter_spacing": 0,
+                    "x_outline": {
+                      "width": 300
+                    }
+                  },
+                  "layout": {
+                    "align": "right",
+                    "justify": false,
+                    "box_width": 72000,
+                    "line_spacing": 1250,
+                    "v_anchor": "middle",
+                    "x_anchor": "top"
+                  },
+                  "origin": "manual",
+                  "x_spans": []
+                },
+                "enabled": true,
+                "name": "Title",
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                },
+                "transform": {
+                  "position": {
+                    "x": 0,
+                    "y": -350000
+                  },
+                  "scale": 10000,
+                  "rotation": 37000,
+                  "flip_h": false,
+                  "flip_v": false,
+                  "opacity": 1000
+                }
+              },
+              {
+                "id": 51,
+                "range": {
+                  "start": 1412611200,
+                  "duration": 706305600
+                },
+                "content": {
+                  "type": "text",
+                  "text": "Your text",
+                  "style": {
+                    "font": {
+                      "family": "Noto Sans"
+                    },
+                    "size": 6400,
+                    "fill": {
+                      "type": "solid",
+                      "color": "#FFFFFFFF"
+                    },
+                    "bold": true,
+                    "italic": false,
+                    "underline": false,
+                    "strike": false,
+                    "case": "as-typed",
+                    "letter_spacing": 0
+                  },
+                  "layout": {
+                    "align": "center",
+                    "justify": false,
+                    "box_width": null,
+                    "line_spacing": 1000,
+                    "v_anchor": "middle"
+                  },
+                  "origin": "manual"
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                }
+              }
+            ]
+          },
+          {
+            "id": 23,
+            "kind": "sticker",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 44,
+                "range": {
+                  "start": 117717600,
+                  "duration": 470870400
+                },
+                "content": {
+                  "type": "generated",
+                  "kind": "sticker"
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                },
+                "transform": {
+                  "position": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "scale": 10000,
+                  "rotation": 0,
+                  "flip_h": false,
+                  "flip_v": true,
+                  "opacity": 1000
+                }
+              }
+            ]
+          },
+          {
+            "id": 24,
+            "kind": "effect",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 45,
+                "range": {
+                  "start": 235435200,
+                  "duration": 470870400
+                },
+                "content": {
+                  "type": "generated",
+                  "kind": "effect"
+                },
+                "enabled": false,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                }
+              }
+            ]
+          },
+          {
+            "id": 25,
+            "kind": "adjustment",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 46,
+                "range": {
+                  "start": 0,
+                  "duration": 3531528000
+                },
+                "content": {
+                  "type": "generated",
+                  "kind": "adjustment"
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                }
+              }
+            ]
+          }
+        ],
+        "audio": [
+          {
+            "id": 26,
+            "kind": "audio",
+            "header": {
+              "name": null,
+              "muted": true,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 47,
+                "range": {
+                  "start": 0,
+                  "duration": 2118916800
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 10,
+                  "kind": "audio",
+                  "source": {
+                    "start": 235435200,
+                    "duration": 2118916800
+                  },
+                  "stream": null
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": 91,
+                "audio": {
+                  "type": "active",
+                  "gain": 350,
+                  "gain_keys": [],
+                  "muted": false,
+                  "fade_in": 117717600,
+                  "fade_in_curve": "linear",
+                  "fade_out": 0,
+                  "fade_out_curve": "linear"
+                }
+              }
+            ]
+          },
+          {
+            "id": 27,
+            "kind": "audio",
+            "header": {
+              "name": "Música 🎵",
+              "muted": false,
+              "hidden": false,
+              "locked": false,
+              "x_header": true
+            },
+            "clips": [
+              {
+                "id": 48,
+                "range": {
+                  "start": 706305600,
+                  "duration": 2825222400
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 11,
+                  "kind": "audio",
+                  "source": {
+                    "start": 0,
+                    "duration": 2825222400
+                  },
+                  "stream": null
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "active",
+                  "gain": -1250,
+                  "gain_keys": [],
+                  "muted": true,
+                  "fade_in": 706305600,
+                  "fade_in_curve": "linear",
+                  "fade_out": 4708704000,
+                  "fade_out_curve": "linear",
+                  "x_pan": -30
+                }
+              },
+              {
+                "id": 50,
+                "range": {
+                  "start": 3766963200,
+                  "duration": 941740800
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 13,
+                  "kind": "audio",
+                  "source": {
+                    "start": 470870400,
+                    "duration": 941740800
+                  },
+                  "stream": null
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "active",
+                  "gain": -6000,
+                  "gain_keys": [],
+                  "muted": false,
+                  "fade_in": 0,
+                  "fade_in_curve": "linear",
+                  "fade_out": 0,
+                  "fade_out_curve": "linear"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "flags": {
+          "main_magnet": false,
+          "follow_main": true,
+          "follow_kinds": [
+            "video-overlay",
+            "text",
+            "sticker",
+            "effect",
+            "adjustment",
+            "music",
+            "sound-effect",
+            "speech",
+            "other-audio"
+          ]
+        },
+        "visual": [
+          {
+            "id": 30,
+            "kind": "video",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 49,
+                "range": {
+                  "start": 353152800,
+                  "duration": 470870400
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 10,
+                  "kind": "video",
+                  "source": {
+                    "start": 117717600,
+                    "duration": 470870400
+                  },
+                  "stream": null
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "detached",
+                  "link": 92
+                }
+              }
+            ]
+          }
+        ],
+        "audio": []
+      }
+    ],
+    "x_doc": "document level"
+  },
+  "export": null,
+  "x_future_root": {
+    "n": -5,
+    "nested": [
+      1,
+      "two",
+      null,
+      true
+    ]
+  }
+}
