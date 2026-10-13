@@ -1,0 +1,43 @@
+[package]
+name = "freecut-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "FreeCut desktop video editor"
+
+[[bin]]
+name = "freecut"
+path = "src/main.rs"
+
+[features]
+default = ["record"]
+# Microphone capture for voiceover recording (AU-027). Without it the
+# recorder panel opens in its Waiting state and says this build can't
+# record.
+record = ["freecut-audio/record"]
+
+[dependencies]
+# Playback (`output`) and decoding (`media`) always; microphones only with
+# the app's `record` feature.
+freecut-audio = { workspace = true, default-features = false, features = ["media", "output"] }
+freecut-media.workspace = true
+freecut-project.workspace = true
+freecut-render.workspace = true
+freecut-timeline.workspace = true
+
+anyhow.workspace = true
+crossbeam-channel.workspace = true
+eframe.workspace = true
+fs4.workspace = true
+rfd.workspace = true
+# Preferences (UI-018): settings.json, unknown keys kept as they are.
+serde_json.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
