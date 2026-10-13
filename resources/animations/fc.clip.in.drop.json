@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.clip.in.drop",
+  "kind": "entrance",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 700,
+  "easing": "bounce-out",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "translate_y",
+      "curve": { "type": "eased" },
+      "amplitude": -0.2,
+      "unit": "se",
+      "scales_with_intensity": true
+    }
+  ]
+}

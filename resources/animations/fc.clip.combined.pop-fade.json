@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "fc.clip.combined.pop-fade",
+  "kind": "combined",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 5000,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "scale",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, -1.0], [0.18, 0.0], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    },
+    {
+      "property": "scale",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 0.0], [0.18, 0.15], [0.3, 0.0], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "opacity",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 0.0], [0.7, 0.0], [1.0, -1.0]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    }
+  ]
+}

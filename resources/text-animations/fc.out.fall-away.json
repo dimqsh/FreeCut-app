@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "fc.out.fall-away",
+  "kind": "exit",
+  "units": ["letter", "word"],
+  "directions": null,
+  "default_duration_ms": 900,
+  "easing": "ease-in-quad",
+  "pivot": "anchor",
+  "defaults": { "overlap": 600, "order": "random", "pace_ms": null },
+  "channels": [
+    {
+      "property": "translate_y",
+      "curve": { "type": "eased" },
+      "amplitude": 2.0,
+      "unit": "em",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "opacity",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 0.0], [0.6, 0.0], [1.0, 1.0]],
+        "eased": false
+      },
+      "amplitude": -1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    },
+    {
+      "property": "random.rotate",
+      "curve": { "type": "eased" },
+      "amplitude": 30.0,
+      "unit": "deg",
+      "scales_with_intensity": true
+    }
+  ]
+}

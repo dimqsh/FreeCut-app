@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "fc.in.drop",
+  "kind": "entrance",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 600,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "translate_y",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, -1.0], [0.2, -0.8889], [0.35, -0.6597], [0.47, -0.3864], [0.55, -0.1597], [0.6, 0.0], [0.68, -0.064], [0.8, -0.1], [0.92, -0.064], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": 1.5,
+      "unit": "em",
+      "scales_with_intensity": true
+    }
+  ]
+}

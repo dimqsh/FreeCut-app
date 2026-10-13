@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "fc.loop.flicker",
+  "kind": "loop",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 1000,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "flicker.opacity",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 1.0]],
+        "eased": false
+      },
+      "amplitude": 0.6,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.in.fade",
+  "kind": "entrance",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 500,
+  "easing": "ease-out-quad",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "opacity",
+      "curve": { "type": "eased" },
+      "amplitude": -1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "fc.in.spread",
+  "kind": "entrance",
+  "units": ["letter"],
+  "directions": null,
+  "default_duration_ms": 600,
+  "easing": "ease-out-quad",
+  "pivot": "anchor",
+  "defaults": { "overlap": 1000, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "opacity",
+      "curve": { "type": "eased" },
+      "amplitude": -1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    },
+    {
+      "property": "toward_line_center",
+      "curve": { "type": "eased" },
+      "amplitude": 0.6,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    }
+  ]
+}

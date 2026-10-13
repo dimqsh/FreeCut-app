@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "fc.clip.loop.heartbeat",
+  "kind": "loop",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 1000,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "scale",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 0.0], [0.1, 0.08], [0.2, 0.0], [0.3, 0.05], [0.4, 0.0], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    }
+  ]
+}

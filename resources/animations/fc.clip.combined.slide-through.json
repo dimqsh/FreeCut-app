@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "fc.clip.combined.slide-through",
+  "kind": "combined",
+  "units": null,
+  "directions": ["left", "right", "up", "down"],
+  "default_duration_ms": 5000,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "translate_x",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, -1.0], [0.3, 0.0], [0.7, 0.1], [1.0, 1.1]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "travel",
+      "scales_with_intensity": false
+    }
+  ]
+}

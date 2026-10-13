@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "fc.loop.shimmer",
+  "kind": "loop",
+  "units": ["letter"],
+  "directions": null,
+  "default_duration_ms": 1500,
+  "easing": "linear",
+  "pivot": "anchor",
+  "defaults": { "overlap": 0, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "style.lightness",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 0.0], [0.1, 1.0], [0.2, 0.0], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": 0.4,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.clip.loop.float",
+  "kind": "loop",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 2400,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "translate_y",
+      "curve": { "type": "sine" },
+      "amplitude": -0.02,
+      "unit": "se",
+      "scales_with_intensity": true
+    }
+  ]
+}

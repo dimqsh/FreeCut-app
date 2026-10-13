@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "id": "fc.clip.combined.spin-through",
+  "kind": "combined",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 5000,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "rotate",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, -180.0], [0.3, 0.0], [0.7, 360.0], [1.0, 540.0]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "deg",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "scale",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, -0.5], [0.3, 0.0], [0.7, 0.0], [1.0, -0.5]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    }
+  ]
+}

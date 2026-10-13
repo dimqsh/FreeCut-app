@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "fc.clip.loop.jitter",
+  "kind": "loop",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 1000,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "jitter.translate_x",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 1.0]],
+        "eased": false
+      },
+      "amplitude": 0.01,
+      "unit": "se",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "jitter.translate_y",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 1.0]],
+        "eased": false
+      },
+      "amplitude": 0.01,
+      "unit": "se",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "jitter.rotate",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 1.0]],
+        "eased": false
+      },
+      "amplitude": 1.5,
+      "unit": "deg",
+      "scales_with_intensity": true
+    }
+  ]
+}

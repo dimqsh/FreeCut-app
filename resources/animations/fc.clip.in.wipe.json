@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.clip.in.wipe",
+  "kind": "entrance",
+  "units": null,
+  "directions": ["left", "right", "up", "down"],
+  "default_duration_ms": 500,
+  "easing": "ease-in-out-sine",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "reveal",
+      "curve": { "type": "eased" },
+      "amplitude": -1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.clip.in.flip",
+  "kind": "entrance",
+  "units": null,
+  "directions": ["left", "right", "up", "down"],
+  "default_duration_ms": 500,
+  "easing": "ease-out-quad",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "turn_from_side",
+      "curve": { "type": "eased" },
+      "amplitude": 90.0,
+      "unit": "deg",
+      "scales_with_intensity": false
+    }
+  ]
+}

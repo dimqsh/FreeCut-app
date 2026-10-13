@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.loop.wobble",
+  "kind": "loop",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 1200,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "rotate",
+      "curve": { "type": "sine" },
+      "amplitude": 4.0,
+      "unit": "deg",
+      "scales_with_intensity": true
+    }
+  ]
+}

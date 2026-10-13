@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "fc.clip.drift.zoom-in",
+  "kind": "drift",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 5000,
+  "easing": "ease-in-out-sine",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "scale",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 0.0], [1.0, 1.0]],
+        "eased": true
+      },
+      "amplitude": 0.1,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    }
+  ]
+}

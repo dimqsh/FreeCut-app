@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "id": "fc.in.letter-pop",
+  "kind": "entrance",
+  "units": ["letter", "word"],
+  "directions": null,
+  "default_duration_ms": 700,
+  "easing": "linear",
+  "pivot": "anchor",
+  "defaults": { "overlap": 600, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "scale",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, -1.0], [0.65, 0.0], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    },
+    {
+      "property": "scale",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 0.0], [0.65, 0.2], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    }
+  ]
+}

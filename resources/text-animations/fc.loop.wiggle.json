@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "fc.loop.wiggle",
+  "kind": "loop",
+  "units": ["letter"],
+  "directions": null,
+  "default_duration_ms": 1000,
+  "easing": "linear",
+  "pivot": "anchor",
+  "defaults": { "overlap": 0, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "jitter.rotate",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 1.0]],
+        "eased": false
+      },
+      "amplitude": 6.0,
+      "unit": "deg",
+      "scales_with_intensity": true
+    }
+  ]
+}

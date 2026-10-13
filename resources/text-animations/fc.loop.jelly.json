@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "fc.loop.jelly",
+  "kind": "loop",
+  "units": ["letter"],
+  "directions": null,
+  "default_duration_ms": 800,
+  "easing": "linear",
+  "pivot": "anchor",
+  "defaults": { "overlap": 400, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "scale_x",
+      "curve": { "type": "sine" },
+      "amplitude": 0.1,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "scale_y",
+      "curve": { "type": "sine" },
+      "amplitude": -0.1,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "fc.in.letter-blur",
+  "kind": "entrance",
+  "units": ["letter", "word"],
+  "directions": null,
+  "default_duration_ms": 800,
+  "easing": "ease-out-quad",
+  "pivot": "anchor",
+  "defaults": { "overlap": 700, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "blur",
+      "curve": { "type": "eased" },
+      "amplitude": 0.3,
+      "unit": "em",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "opacity",
+      "curve": { "type": "eased" },
+      "amplitude": -1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "id": "fc.in.zoom-out",
+  "kind": "entrance",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 500,
+  "easing": "ease-out-cubic",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "scale",
+      "curve": { "type": "eased" },
+      "amplitude": 0.5,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "opacity",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 1.0], [0.4, 0.0], [1.0, 0.0]],
+        "eased": false
+      },
+      "amplitude": -1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    }
+  ]
+}

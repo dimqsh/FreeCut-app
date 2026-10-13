@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "id": "fc.in.marker-sweep",
+  "kind": "entrance",
+  "units": ["line"],
+  "directions": null,
+  "default_duration_ms": 900,
+  "easing": "linear",
+  "pivot": "anchor",
+  "defaults": { "overlap": 700, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "reveal",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, -1.0], [0.5, 0.0], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    },
+    {
+      "property": "opacity",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, -1.0], [0.5, -1.0], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": 1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    }
+  ]
+}

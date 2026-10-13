@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "fc.loop.hop",
+  "kind": "loop",
+  "units": ["letter"],
+  "directions": null,
+  "default_duration_ms": 1600,
+  "easing": "linear",
+  "pivot": "anchor",
+  "defaults": { "overlap": 0, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "translate_y",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 0.0], [0.0625, 0.75], [0.125, 1.0], [0.1875, 0.75], [0.25, 0.0], [1.0, 0.0]],
+        "eased": true
+      },
+      "amplitude": -0.4,
+      "unit": "em",
+      "scales_with_intensity": true
+    }
+  ]
+}

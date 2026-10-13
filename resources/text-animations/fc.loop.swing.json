@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.loop.swing",
+  "kind": "loop",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 1600,
+  "easing": "linear",
+  "pivot": "top-center",
+  "channels": [
+    {
+      "property": "rotate",
+      "curve": { "type": "sine" },
+      "amplitude": 8.0,
+      "unit": "deg",
+      "scales_with_intensity": true
+    }
+  ]
+}

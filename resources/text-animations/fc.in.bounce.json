@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.in.bounce",
+  "kind": "entrance",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 800,
+  "easing": "bounce-out",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "translate_y",
+      "curve": { "type": "eased" },
+      "amplitude": -2.0,
+      "unit": "em",
+      "scales_with_intensity": true
+    }
+  ]
+}

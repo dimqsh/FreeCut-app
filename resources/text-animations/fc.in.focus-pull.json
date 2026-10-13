@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "id": "fc.in.focus-pull",
+  "kind": "entrance",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 600,
+  "easing": "ease-out-quad",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "blur",
+      "curve": { "type": "eased" },
+      "amplitude": 0.3,
+      "unit": "em",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "scale",
+      "curve": { "type": "eased" },
+      "amplitude": 0.1,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    }
+  ]
+}

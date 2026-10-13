@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "id": "fc.clip.loop.rotate-zoom",
+  "kind": "loop",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 2000,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "rotate",
+      "curve": { "type": "sine" },
+      "amplitude": 6.0,
+      "unit": "deg",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "scale",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, -1.0], [0.03, -0.9823], [0.1, -0.809], [0.2, -0.309], [0.3, 0.309], [0.4, 0.809], [0.5, 1.0], [0.6, 0.809], [0.7, 0.309], [0.8, -0.309], [0.9, -0.809], [0.97, -0.9823], [1.0, -1.0]],
+        "eased": true
+      },
+      "amplitude": 0.05,
+      "unit": "ratio",
+      "scales_with_intensity": true
+    }
+  ]
+}

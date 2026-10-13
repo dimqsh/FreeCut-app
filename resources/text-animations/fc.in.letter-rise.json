@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "fc.in.letter-rise",
+  "kind": "entrance",
+  "units": ["letter", "word"],
+  "directions": null,
+  "default_duration_ms": 800,
+  "easing": "ease-out-cubic",
+  "pivot": "anchor",
+  "defaults": { "overlap": 600, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "translate_y",
+      "curve": { "type": "eased" },
+      "amplitude": 0.6,
+      "unit": "em",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "opacity",
+      "curve": { "type": "eased" },
+      "amplitude": -1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    }
+  ]
+}

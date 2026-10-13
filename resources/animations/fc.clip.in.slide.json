@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.clip.in.slide",
+  "kind": "entrance",
+  "units": null,
+  "directions": ["left", "right", "up", "down"],
+  "default_duration_ms": 500,
+  "easing": "ease-out-cubic",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "translate_x",
+      "curve": { "type": "eased" },
+      "amplitude": -1.0,
+      "unit": "travel",
+      "scales_with_intensity": false
+    }
+  ]
+}

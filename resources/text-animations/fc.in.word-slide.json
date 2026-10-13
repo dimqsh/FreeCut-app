@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "fc.in.word-slide",
+  "kind": "entrance",
+  "units": ["word", "line"],
+  "directions": ["left", "right", "up", "down"],
+  "default_duration_ms": 600,
+  "easing": "ease-out-quad",
+  "pivot": "anchor",
+  "defaults": { "overlap": 500, "order": "forward", "pace_ms": null },
+  "channels": [
+    {
+      "property": "translate_x",
+      "curve": { "type": "eased" },
+      "amplitude": -1.0,
+      "unit": "em",
+      "scales_with_intensity": true
+    },
+    {
+      "property": "opacity",
+      "curve": { "type": "eased" },
+      "amplitude": -1.0,
+      "unit": "ratio",
+      "scales_with_intensity": false
+    }
+  ]
+}

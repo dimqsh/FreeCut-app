@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "id": "fc.in.flip-open",
+  "kind": "entrance",
+  "units": null,
+  "directions": null,
+  "default_duration_ms": 500,
+  "easing": "ease-out-quad",
+  "pivot": "bottom-center",
+  "channels": [
+    {
+      "property": "turn_x",
+      "curve": { "type": "eased" },
+      "amplitude": 90.0,
+      "unit": "deg",
+      "scales_with_intensity": false
+    }
+  ]
+}

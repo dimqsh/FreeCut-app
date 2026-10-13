@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "id": "fc.clip.drift.pan",
+  "kind": "drift",
+  "units": null,
+  "directions": ["right", "left", "up", "down"],
+  "default_duration_ms": 5000,
+  "easing": "linear",
+  "pivot": "anchor",
+  "channels": [
+    {
+      "property": "translate_x",
+      "curve": {
+        "type": "sampled",
+        "points": [[0.0, 0.0], [1.0, 1.0]],
+        "eased": true
+      },
+      "amplitude": -0.05,
+      "unit": "se",
+      "scales_with_intensity": true
+    }
+  ]
+}
