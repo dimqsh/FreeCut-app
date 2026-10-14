@@ -601,6 +601,8 @@ fn closing_deletes_the_session() {
     let last = fake.requests().pop().unwrap();
     assert_eq!(last.method, freecut_cloud::transport::Method::Delete);
     assert_eq!(last.session.as_deref(), Some("fake-session-1"));
+    // F10: the close names the negotiated revision too.
+    assert_eq!(last.protocol.as_deref(), Some("2025-11-25"));
     assert_eq!(p.server_info(), None);
 }
 

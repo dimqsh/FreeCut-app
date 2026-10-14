@@ -684,11 +684,10 @@ impl McpClient {
     /// Ends the session with `DELETE` (on disconnect and quit; best effort,
     /// 2 s). The next call starts a new session.
     pub fn close(&self) {
-        let session = {
+        let (session, protocol) = {
             let mut s = self.lock();
-            s.protocol = None;
             s.server = None;
-            s.id.take()
+            (s.id.take(), s.protocol.take())
         };
         let Some(id) = session else {
             return;
@@ -700,6 +699,10 @@ impl McpClient {
         let mut request = HttpRequest::get(self.endpoint.clone(), CallLimits::CLOSE)
             .header("mcp-session-id", id)
             .with_bearer(token);
+        // Every request after initialization names the revision (review F10).
+        if let Some(version) = protocol {
+            request = request.header("mcp-protocol-version", version);
+        }
         request.method = Method::Delete;
         if let Err(e) = self.transport.send(request, &cancel) {
             tracing::debug!(error = %e, "could not close the mcp session");
@@ -971,8 +974,10 @@ impl McpClient {
                 .feed(&chunk[..n])
                 .map_err(|e| McpError::protocol(e.to_string()))?;
             for event in events {
-                if event.data.trim().is_empty() {
-                    continue; // priming or keep-alive event
+                // JSON-RPC messages come as `message` events; other types
+                // are not ours to read (review F10).
+                if event.event != "message" || event.data.trim().is_empty() {
+                    continue; // another event type, or a priming/keep-alive event
                 }
                 tracing::trace!(target: WIRE_TARGET, data = %redact::body(event.data.as_bytes()), "mcp event");
                 let value: Value = serde_json::from_str(&event.data)
@@ -1334,6 +1339,58 @@ mod tests {
             parse_initialize(&json!({"protocolVersion": "2024-11-05"})),
             Err(McpError::UnsupportedVersion("2024-11-05".into()))
         );
+    }
+
+    /// Answers initialize with JSON and everything else with a fixed SSE body.
+    #[derive(Debug)]
+    struct FixedStream(&'static str);
+
+    impl HttpTransport for FixedStream {
+        fn send(
+            &self,
+            request: HttpRequest,
+            _: &CancelToken,
+        ) -> Result<HttpResponse, TransportError> {
+            let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
+            Ok(match body["method"].as_str() {
+                Some("initialize") => HttpResponse::new(
+                    200,
+                    vec![("content-type".into(), "application/json".into())],
+                    json!({"jsonrpc": "2.0", "id": body["id"], "result": {"protocolVersion": "2025-11-25"}})
+                        .to_string()
+                        .into_bytes(),
+                ),
+                Some("notifications/initialized") => HttpResponse::new(202, Vec::new(), Vec::new()),
+                _ => HttpResponse::new(
+                    200,
+                    vec![("content-type".into(), "text/event-stream".into())],
+                    self.0.as_bytes().to_vec(),
+                ),
+            })
+        }
+    }
+
+    /// F10: an event of another type carrying a response-shaped message is
+    /// not read as the answer.
+    #[test]
+    fn events_of_other_types_are_skipped() {
+        let stream = "event: endpoint\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"decoy\"}]}}\n\n\
+                      data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"real\"}]}}\n\n";
+        let c = McpClient::new(
+            "https://mcp.example.test/mcp",
+            Arc::new(FixedStream(stream)),
+            Arc::new(StaticToken(Secret::new("t"))),
+            Arc::new(crate::transport::SystemWaiter),
+            "0.1.0",
+        );
+        let out = c
+            .call_tool(
+                &crate::provider::higgsfield::allow::MODELS_EXPLORE,
+                json!({}),
+                &CancelToken::new(),
+            )
+            .unwrap();
+        assert_eq!(out.texts, vec!["real"]);
     }
 
     #[test]

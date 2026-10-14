@@ -316,7 +316,10 @@ byte: `Error::HostNotFound`, `Error::ConnectionFailed`, `Error::Timeout(Resolve 
 (`InvalidCertificate`, `NoCertificatesPresented`; other rustls errors can occur mid-stream and
 count as `MaybeSent`), and `Error::Io`
 whose kind is `ConnectionRefused`, `NetworkUnreachable`, `HostUnreachable` or
-`AddrNotAvailable`. Everything else is `MaybeSent`. A test pins this table against ureq's error
+`AddrNotAvailable`. Everything else is `MaybeSent`. The `io::ErrorKind` rule assumes those four
+kinds come only from `connect(2)`; once a connection is up, a broken one reports a reset, a
+broken pipe or a timeout, which are `MaybeSent` (review F7). The cancel gate's refusal
+(review M3) is the one other `NotSent` case. A test pins this table against ureq's error
 enum, so a ureq upgrade that adds variants fails the build until they are classified.
 
 Further transport rules for paid calls:
