@@ -14,14 +14,14 @@ use crate::catalogue::{Catalogue, parse_listing};
 use crate::credits::Credits;
 use crate::error::{CloudError, classify, quoted};
 use crate::guard::{self, PreflightGuard, QuoteRequest};
-use crate::mcp::{CallClass, McpClient, McpError, TokenSource, ToolInfo, ToolOutput, schema};
+use crate::mcp::{McpClient, ServerInfo, TokenSource, ToolInfo, schema};
 use crate::oauth::discovery::AuthPolicy;
 use crate::provider::{
     Adjustment, GenerationProvider, Operation, Quote, QuoteOutcome, ServiceInfo, ServiceQuestion,
     StartedRun, Unavailable,
 };
 use crate::secret::ProviderId;
-use crate::transport::{CallLimits, HttpTransport, Waiter};
+use crate::transport::{HttpTransport, Waiter};
 
 /// "The only official connector URL" (Higgsfield help center).
 pub const ENDPOINT: &str = "https://mcp.higgsfield.ai/mcp";
@@ -94,9 +94,10 @@ impl HiggsfieldProvider {
         }
     }
 
-    /// The MCP client.
-    pub fn mcp(&self) -> &McpClient {
-        &self.mcp
+    /// What the server said about itself in the last handshake (for the
+    /// debug view; its `instructions` are never acted on).
+    pub fn server_info(&self) -> Option<ServerInfo> {
+        self.mcp.server()
     }
 
     /// The preflight guard's state.
@@ -134,22 +135,6 @@ impl HiggsfieldProvider {
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
             .unwrap_or_default())
-    }
-
-    /// Calls an allow-listed tool with its listed class and limits.
-    fn call_free(
-        &self,
-        name: &str,
-        arguments: Value,
-        cancel: &CancelToken,
-    ) -> Result<ToolOutput, McpError> {
-        let Some(tool) = allow::lookup(name).filter(|t| t.class == CallClass::Free) else {
-            return Err(McpError::Protocol {
-                detail: format!("{name} is not a free allow-listed tool"),
-            });
-        };
-        self.mcp
-            .call_tool(name, arguments, tool.class, tool.limits, cancel)
     }
 }
 
@@ -192,7 +177,8 @@ impl GenerationProvider for HiggsfieldProvider {
                     args["after"] = Value::String(cursor.clone());
                 }
                 let output = self
-                    .call_free("models_explore", args, cancel)
+                    .mcp
+                    .call_tool(&allow::MODELS_EXPLORE, args, cancel)
                     .map_err(|e| classify(&e))?;
                 let listing = output.value().ok_or_else(|| CloudError::Protocol {
                     detail: "empty model listing".into(),
@@ -243,55 +229,50 @@ impl GenerationProvider for HiggsfieldProvider {
             what: e.to_string(),
         })?;
         let tools = self.tools(cancel)?;
-        let Some(tool) = tools.get(call.tool) else {
+        let Some(tool) = tools.get(call.tool.name()) else {
             return Ok(QuoteOutcome::NotAvailable(Unavailable::ToolMissing {
-                tool: call.tool.to_owned(),
+                tool: call.tool.name().to_owned(),
             }));
         };
         if !guard::schema_offers_get_cost(&tool.input_schema) {
             return Ok(QuoteOutcome::NotAvailable(Unavailable::NoEstimate));
         }
-        if self.guard.is_blocked(call.tool) {
+        if self.guard.is_blocked(call.tool.name()) {
             return Ok(QuoteOutcome::NotAvailable(Unavailable::PreflightStopped));
         }
-        let request =
-            QuoteRequest::new(call.tool, call.arguments).map_err(|e| CloudError::GuardRefused {
+        let request = QuoteRequest::new(call.tool.name(), call.arguments).map_err(|e| {
+            CloudError::GuardRefused {
                 detail: e.to_string(),
-            })?;
+            }
+        })?;
         schema::validate(&tool.input_schema, request.arguments()).map_err(|v| {
             CloudError::SchemaDrift {
-                tool: call.tool.to_owned(),
+                tool: call.tool.name().to_owned(),
                 detail: v.to_string(),
             }
         })?;
         let output = self
             .mcp
-            .call_tool(
-                request.tool(),
-                request.arguments().clone(),
-                CallClass::Preflight,
-                CallLimits::PREFLIGHT,
-                cancel,
-            )
+            .check_cost(call.tool, &request, cancel)
             .map_err(|e| classify(&e))?;
         let answer = output.value().ok_or_else(|| CloudError::Protocol {
             detail: "empty cost answer".into(),
         })?;
         let job_ids = guard::job_ids_in(&answer);
         if !job_ids.is_empty() {
-            self.guard.block(call.tool);
+            self.guard.block(call.tool.name());
             tracing::warn!(
-                tool = call.tool,
+                tool = call.tool.name(),
                 jobs = job_ids.len(),
                 "a cost check started a run; cost checks for this tool are off until restart"
             );
             return Ok(QuoteOutcome::StartedRun(StartedRun {
-                tool: call.tool.to_owned(),
+                tool: call.tool.name().to_owned(),
                 job_ids,
                 arguments: request.arguments().clone(),
             }));
         }
-        parse_quote_answer(&answer, call.tool, request.arguments())
+        parse_quote_answer(&answer, call.tool.name(), request.arguments())
     }
 }
 

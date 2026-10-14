@@ -106,6 +106,7 @@ struct State {
     handlers: BTreeMap<String, ToolHandler>,
     stream: StreamMode,
     faults: VecDeque<Fault>,
+    method_faults: BTreeMap<String, Fault>,
     before_response: Vec<Value>,
     log: Vec<Recorded>,
     routes: BTreeMap<(String, String), RouteHandler>,
@@ -153,6 +154,7 @@ impl FakeService {
                 handlers: BTreeMap::new(),
                 stream: StreamMode::Json,
                 faults: VecDeque::new(),
+                method_faults: BTreeMap::new(),
                 before_response: Vec::new(),
                 log: Vec::new(),
                 routes: BTreeMap::new(),
@@ -221,6 +223,17 @@ impl FakeService {
     /// Injects a fault into the next request (queued in order).
     pub fn push_fault(&self, fault: Fault) {
         self.lock().faults.push_back(fault);
+    }
+
+    /// Answers every MCP message with JSON-RPC `method` with `fault` (after
+    /// recording it), until cleared with [`FakeService::clear_method_faults`].
+    pub fn fail_method(&self, method: &str, fault: Fault) {
+        self.lock().method_faults.insert(method.to_owned(), fault);
+    }
+
+    /// Removes every [`FakeService::fail_method`] rule.
+    pub fn clear_method_faults(&self) {
+        self.lock().method_faults.clear();
     }
 
     /// Serves `url` (query ignored) for `method` with `handler(request)`.
@@ -528,6 +541,11 @@ impl HttpTransport for FakeService {
         }
         let rec = record(&request);
         self.lock().log.push(rec.clone());
+        let fault = fault.or_else(|| {
+            let s = self.lock();
+            rec.rpc_method()
+                .and_then(|m| s.method_faults.get(m).cloned())
+        });
         let is_mcp = strip_query(&rec.url) == self.lock().mcp_url;
         let answer = if is_mcp {
             self.answer_mcp(&rec)?

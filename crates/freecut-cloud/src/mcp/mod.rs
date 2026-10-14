@@ -27,7 +27,7 @@ use freecut_media::cancel::CancelToken;
 use serde_json::{Value, json};
 
 use crate::error::{CloudError, NotAcceptedReason};
-use crate::guard::{self, GuardViolation};
+use crate::guard::{self, GuardViolation, QuoteRequest};
 use crate::oauth::discovery::{BearerChallenge, parse_bearer_challenge};
 use crate::redact;
 use crate::secret::Secret;
@@ -55,7 +55,88 @@ const MAX_EXCERPT_BYTES: usize = 2 * 1024;
 const MAX_RETRIES: u32 = 3;
 const MAX_TOOL_PAGES: usize = 50;
 
-/// How a call may be retried or resent (§4.5).
+/// A tool FreeCut may call, with the rules the transport applies to it
+/// (§4.5, §6.3). Only this crate's allow lists can create one, so a caller
+/// can neither choose a call's class nor name an unlisted tool:
+///
+/// ```compile_fail
+/// use freecut_cloud::mcp::AllowedTool;
+/// use freecut_cloud::transport::CallLimits;
+/// // Not possible outside freecut-cloud: the constructors are crate-private.
+/// static FREE_GENERATION: AllowedTool =
+///     AllowedTool::free("generate_image", CallLimits::READ, "a bypass");
+/// ```
+#[derive(Debug, PartialEq, Eq)]
+pub struct AllowedTool {
+    name: &'static str,
+    class: CallClass,
+    cost_preflight: bool,
+    limits: CallLimits,
+    used_for: &'static str,
+}
+
+impl AllowedTool {
+    /// A free, read-only tool: retried and resent as §4.5 allows.
+    pub(crate) const fn free(
+        name: &'static str,
+        limits: CallLimits,
+        used_for: &'static str,
+    ) -> AllowedTool {
+        AllowedTool {
+            name,
+            class: CallClass::Free,
+            cost_preflight: false,
+            limits,
+            used_for,
+        }
+    }
+
+    /// A tool that spends money or must happen at most once: never retried
+    /// or resent. `cost_preflight` says whether it offers `get_cost`.
+    pub(crate) const fn paid(
+        name: &'static str,
+        limits: CallLimits,
+        cost_preflight: bool,
+        used_for: &'static str,
+    ) -> AllowedTool {
+        AllowedTool {
+            name,
+            class: CallClass::Paid,
+            cost_preflight,
+            limits,
+            used_for,
+        }
+    }
+
+    /// The tool name.
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// [`CallClass::Free`] or [`CallClass::Paid`]; cost checks of a paid tool
+    /// go through [`McpClient::check_cost`] instead.
+    pub fn class(&self) -> CallClass {
+        self.class
+    }
+
+    /// Whether the tool offers a `get_cost` preflight.
+    pub fn has_cost_preflight(&self) -> bool {
+        self.cost_preflight
+    }
+
+    /// The timeouts of an ordinary call.
+    pub fn limits(&self) -> CallLimits {
+        self.limits
+    }
+
+    /// The feature that uses it.
+    pub fn used_for(&self) -> &'static str {
+        self.used_for
+    }
+}
+
+/// How a call may be retried or resent (§4.5). Taken from the tool's
+/// [`AllowedTool`] entry, never chosen by a caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallClass {
     /// Read-only and free.
@@ -295,6 +376,9 @@ struct Outgoing<'a> {
     method: &'a str,
     params: Option<Value>,
     kind: Kind,
+    /// Part of the handshake: a session `404` here means the handshake
+    /// failed, and must never start another one (which would recurse).
+    in_handshake: bool,
 }
 
 #[derive(Debug)]
@@ -383,6 +467,7 @@ impl McpClient {
                 method: "initialize",
                 params: Some(params),
                 kind: Kind::Request,
+                in_handshake: true,
             },
             CallClass::Free,
             CallLimits::READ,
@@ -402,16 +487,25 @@ impl McpClient {
             s.protocol = Some(info.protocol_version.clone());
             s.server = Some(info.clone());
         }
-        self.exchange(
+        let notified = self.exchange(
             &Outgoing {
                 method: "notifications/initialized",
                 params: None,
                 kind: Kind::Notification,
+                in_handshake: true,
             },
             CallClass::Free,
             CallLimits::READ,
             cancel,
-        )?;
+        );
+        if let Err(e) = notified {
+            // The handshake did not finish: the next call starts a new one.
+            let mut s = self.lock();
+            s.id = None;
+            s.protocol = None;
+            s.server = None;
+            return Err(e);
+        }
         tracing::debug!(server = %info.name, version = %info.version, protocol = %info.protocol_version, "mcp session started");
         Ok(info)
     }
@@ -440,6 +534,7 @@ impl McpClient {
                         method: "tools/list",
                         params,
                         kind: Kind::Request,
+                        in_handshake: false,
                     },
                     CallClass::Free,
                     CallLimits::READ,
@@ -476,12 +571,49 @@ impl McpClient {
         Err(McpError::protocol("tools/list did not end"))
     }
 
-    /// Calls a tool (§4.3). `class` decides the retry rules; `limits` the
-    /// timeouts.
+    /// Calls an allow-listed tool (§4.3). Its class and timeouts come from
+    /// the allow list: a paid tool is never retried or resent.
     ///
     /// # Errors
     /// [`McpError`]; a result with `isError: true` is [`McpError::Tool`].
     pub fn call_tool(
+        &self,
+        tool: &'static AllowedTool,
+        arguments: Value,
+        cancel: &CancelToken,
+    ) -> Result<ToolOutput, McpError> {
+        self.call(tool.name, arguments, tool.class, tool.limits, cancel)
+    }
+
+    /// Sends a cost check (§4.7) for a paid tool that offers one. The
+    /// arguments can only come from a [`QuoteRequest`], which always carries
+    /// `get_cost: true`; the check is retried only while nothing was sent.
+    ///
+    /// # Errors
+    /// [`McpError::Guard`] when the tool offers no cost check or the request
+    /// is for another tool; otherwise as [`McpClient::call_tool`].
+    pub fn check_cost(
+        &self,
+        tool: &'static AllowedTool,
+        quote: &QuoteRequest,
+        cancel: &CancelToken,
+    ) -> Result<ToolOutput, McpError> {
+        if !tool.cost_preflight {
+            return Err(McpError::Guard(GuardViolation::NoCostCheck));
+        }
+        if quote.tool() != tool.name {
+            return Err(McpError::Guard(GuardViolation::OtherTool));
+        }
+        self.call(
+            tool.name,
+            quote.arguments().clone(),
+            CallClass::Preflight,
+            CallLimits::PREFLIGHT,
+            cancel,
+        )
+    }
+
+    fn call(
         &self,
         name: &str,
         arguments: Value,
@@ -499,6 +631,7 @@ impl McpClient {
                 method: "tools/call",
                 params: Some(json!({ "name": name, "arguments": arguments })),
                 kind: Kind::Request,
+                in_handshake: false,
             },
             class,
             limits,
@@ -567,7 +700,7 @@ impl McpClient {
                         return Err(McpError::NotAccepted(NotAcceptedReason::Unauthorized));
                     }
                 }
-                McpError::SessionExpired if !reinitialized && out.method != "initialize" => {
+                McpError::SessionExpired if !reinitialized && !out.in_handshake => {
                     reinitialized = true;
                     let renewed = self.initialize(cancel);
                     if !class.resends_after_refusal() {

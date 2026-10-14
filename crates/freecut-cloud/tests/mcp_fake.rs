@@ -8,13 +8,16 @@ mod common;
 use std::sync::Arc;
 
 use common::{
-    SwapToken, fake_higgsfield, fixture, fixture_json, golden, image_op, provider, video_op,
+    SwapToken, fake_higgsfield, fixture, fixture_json, golden, image_op, mcp_client, provider,
+    video_op,
 };
 use freecut_cloud::CancelToken;
 use freecut_cloud::credits::Credits;
 use freecut_cloud::error::{CloudError, NotAcceptedReason, SubmitError, submit_disposition};
 use freecut_cloud::fake::{Fault, StreamMode, ToolReply};
-use freecut_cloud::mcp::{CallClass, McpError, StaticToken};
+use freecut_cloud::guard::QuoteRequest;
+use freecut_cloud::mcp::{McpClient, McpError, StaticToken};
+use freecut_cloud::provider::higgsfield::allow;
 use freecut_cloud::provider::{GenerationProvider, Operation, QuoteOutcome, Unavailable};
 use freecut_cloud::secret::Secret;
 use freecut_cloud::transport::CallLimits;
@@ -83,7 +86,7 @@ fn connect_runs_the_handshake_and_keeps_only_allowed_tools() {
         assert_eq!(r.bearer.as_deref(), Some("t1"));
     }
     // The server's instructions are kept for the debug view only.
-    assert!(p.mcp().server().unwrap().instructions.is_some());
+    assert!(p.server_info().unwrap().instructions.is_some());
 }
 
 #[test]
@@ -291,13 +294,18 @@ fn a_session_404_on_a_cost_check_reopens_the_session_but_does_not_resend() {
         })
     );
     assert_eq!(fake.calls_to("generate_image").len(), 1);
-    assert_eq!(p.mcp().session_id().as_deref(), Some("fake-session-3"));
     // The user's next Check cost works on the new session.
     assert!(matches!(
         p.quote(&image_op(), &cancel),
         Ok(QuoteOutcome::Quote(_))
     ));
     assert_eq!(fake.calls_to("generate_image").len(), 2);
+    let checks: Vec<_> = fake
+        .requests()
+        .into_iter()
+        .filter(|r| r.tool() == Some("generate_image"))
+        .collect();
+    assert_eq!(checks[1].session.as_deref(), Some("fake-session-3"));
 }
 
 #[test]
@@ -536,7 +544,7 @@ fn closing_deletes_the_session() {
     let last = fake.requests().pop().unwrap();
     assert_eq!(last.method, freecut_cloud::transport::Method::Delete);
     assert_eq!(last.session.as_deref(), Some("fake-session-1"));
-    assert_eq!(p.mcp().session_id(), None);
+    assert_eq!(p.server_info(), None);
 }
 
 // ---- Paid calls: never more than one submission (CG-010) ----
@@ -552,20 +560,12 @@ fn paid_fake() -> freecut_cloud::fake::FakeService {
     fake
 }
 
-fn paid_call(
-    fake: &freecut_cloud::fake::FakeService,
-    tokens: Arc<dyn freecut_cloud::mcp::TokenSource>,
-) -> Result<(), McpError> {
-    let (p, _) = provider(fake, tokens);
-    let args = json!({"params": {"model": "gpt_image_2_5", "prompt": "x", "count": 1}});
-    p.mcp()
-        .call_tool(
-            "generate_image",
-            args,
-            CallClass::Paid,
-            CallLimits::PAID,
-            &CancelToken::new(),
-        )
+fn image_args() -> Value {
+    json!({"params": {"model": "gpt_image_2_5", "prompt": "x", "count": 1}})
+}
+
+fn submit(c: &McpClient) -> Result<(), McpError> {
+    c.call_tool(&allow::GENERATE_IMAGE, image_args(), &CancelToken::new())
         .map(|_| ())
 }
 
@@ -575,20 +575,10 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     // The table of §13: each scripted failure at the paid request itself.
     let at_call = |fault: Fault| {
         let fake = paid_fake();
-        let (p, _) = provider(&fake, token("t1"));
-        p.connect(&CancelToken::new()).unwrap();
+        let c = mcp_client(&fake, token("t1"));
+        c.initialize(&CancelToken::new()).unwrap();
         fake.push_fault(fault);
-        let args = json!({"params": {"model": "gpt_image_2_5", "prompt": "x", "count": 1}});
-        let err = p
-            .mcp()
-            .call_tool(
-                "generate_image",
-                args,
-                CallClass::Paid,
-                CallLimits::PAID,
-                &CancelToken::new(),
-            )
-            .unwrap_err();
+        let err = submit(&c).unwrap_err();
         (
             submit_disposition(&err),
             fake.calls_to("generate_image").len(),
@@ -622,20 +612,11 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     // 401: renewed, not resent.
     let fake = paid_fake();
     let tokens = SwapToken::new("t1", Some("t2"));
-    let (p, _) = provider(&fake, tokens.clone());
-    p.connect(&CancelToken::new()).unwrap();
+    let c = mcp_client(&fake, tokens.clone());
+    c.initialize(&CancelToken::new()).unwrap();
     fake.reject_token("t1");
     fake.accept_token("t2");
-    let err = p
-        .mcp()
-        .call_tool(
-            "generate_image",
-            json!({"params": {"model": "m"}}),
-            CallClass::Paid,
-            CallLimits::PAID,
-            &CancelToken::new(),
-        )
-        .unwrap_err();
+    let err = submit(&c).unwrap_err();
     assert!(matches!(
         submit_disposition(&err),
         Rejected(CloudError::NotAccepted {
@@ -647,19 +628,10 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
 
     // Session 404: a new session, not resent.
     let fake = paid_fake();
-    let (p, _) = provider(&fake, token("t1"));
-    p.connect(&CancelToken::new()).unwrap();
+    let c = mcp_client(&fake, token("t1"));
+    c.initialize(&CancelToken::new()).unwrap();
     fake.expire_sessions();
-    let err = p
-        .mcp()
-        .call_tool(
-            "generate_image",
-            json!({"params": {"model": "m"}}),
-            CallClass::Paid,
-            CallLimits::PAID,
-            &CancelToken::new(),
-        )
-        .unwrap_err();
+    let err = submit(&c).unwrap_err();
     assert!(matches!(
         submit_disposition(&err),
         Rejected(CloudError::NotAccepted {
@@ -671,12 +643,129 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     // A failed handshake before the call: the call was never sent.
     let fake = paid_fake();
     fake.push_fault(Fault::DropAfterSend); // initialize's answer is lost
-    let err = paid_call(&fake, token("t1")).unwrap_err();
+    let err = submit(&mcp_client(&fake, token("t1"))).unwrap_err();
     assert!(
         matches!(submit_disposition(&err), NotSent(CloudError::NoAnswer)),
         "{err:?}"
     );
     assert!(fake.calls_to("generate_image").is_empty());
+}
+
+/// R1: a `404` to `notifications/initialized` ends the handshake. It must not
+/// start another one (which recursed until the stack overflowed).
+#[test]
+fn a_session_404_during_the_handshake_fails_once_instead_of_recursing() {
+    let fake = paid_fake();
+    fake.fail_method(
+        "notifications/initialized",
+        Fault::Status(404, "unknown session".into()),
+    );
+    let c = mcp_client(&fake, token("t1"));
+    let err = submit(&c).unwrap_err();
+    assert!(
+        matches!(submit_disposition(&err), SubmitError::NotSent(_)),
+        "{err:?}"
+    );
+    assert_eq!(
+        methods(&fake),
+        vec!["initialize", "notifications/initialized"]
+    );
+    assert!(fake.calls_to("generate_image").is_empty());
+    assert_eq!(c.session_id(), None);
+
+    // The same through the provider: connect fails once, nothing is listed.
+    let fake = fake_higgsfield();
+    fake.fail_method(
+        "notifications/initialized",
+        Fault::Status(404, "unknown session".into()),
+    );
+    let (p, _) = provider(&fake, token("t1"));
+    assert!(p.connect(&CancelToken::new()).is_err());
+    assert_eq!(
+        methods(&fake),
+        vec!["initialize", "notifications/initialized"]
+    );
+
+    // Once the server behaves, the next call starts a fresh handshake.
+    fake.clear_method_faults();
+    p.connect(&CancelToken::new()).unwrap();
+    assert_eq!(methods(&fake)[2], "initialize");
+}
+
+/// R2: whatever fails, no API path retries or resends a tool the allow list
+/// marks paid, and its cost checks go out once per Check cost.
+#[test]
+fn no_api_path_retries_or_resends_a_paid_tool() {
+    use freecut_cloud::fake::FakeService;
+    use freecut_cloud::mcp::CallClass;
+    let paid: Vec<_> = allow::ALLOW_LIST
+        .iter()
+        .copied()
+        .filter(|t| t.class() == CallClass::Paid)
+        .collect();
+    assert!(paid.len() >= 4);
+    type Inject = Box<dyn Fn(&FakeService)>;
+    let faults: Vec<Inject> = vec![
+        Box::new(|f| f.push_fault(Fault::Status(503, "unavailable".into()))),
+        Box::new(|f| f.push_fault(Fault::Status(429, "slow down".into()))),
+        Box::new(|f| f.push_fault(Fault::DropAfterSend)),
+        Box::new(|f| f.expire_sessions()),
+        Box::new(|f| {
+            f.reject_token("t1");
+            f.accept_token("t2");
+        }),
+    ];
+    let ready = || {
+        let fake = fake_higgsfield();
+        // This test sends paid calls on purpose.
+        for tool in allow::ALLOW_LIST {
+            fake.on_tool(tool.name(), |_| ToolReply::Json(json!({"ok": true})));
+        }
+        let c = mcp_client(&fake, SwapToken::new("t1", Some("t2")));
+        c.initialize(&CancelToken::new()).unwrap();
+        (fake, c)
+    };
+    for tool in paid {
+        for (i, inject) in faults.iter().enumerate() {
+            let (fake, c) = ready();
+            inject(&fake);
+            let _ = c.call_tool(tool, json!({"params": {"model": "m"}}), &CancelToken::new());
+            assert_eq!(
+                fake.calls_to(tool.name()).len(),
+                1,
+                "{} fault {i}",
+                tool.name()
+            );
+
+            if tool.has_cost_preflight() {
+                let (fake, c) = ready();
+                inject(&fake);
+                let quote =
+                    QuoteRequest::new(tool.name(), json!({"params": {"model": "m"}})).unwrap();
+                let _ = c.check_cost(tool, &quote, &CancelToken::new());
+                let sent = fake.calls_to(tool.name());
+                assert_eq!(sent.len(), 1, "check of {} fault {i}", tool.name());
+                assert_eq!(sent[0]["params"]["get_cost"], json!(true));
+            }
+        }
+    }
+}
+
+#[test]
+fn cost_checks_are_refused_for_tools_without_one_or_for_another_tool() {
+    let fake = fake_higgsfield();
+    let c = mcp_client(&fake, token("t1"));
+    let quote = QuoteRequest::new("media_confirm", json!({"params": {}})).unwrap();
+    assert!(matches!(
+        c.check_cost(&allow::MEDIA_CONFIRM, &quote, &CancelToken::new()),
+        Err(McpError::Guard(_))
+    ));
+    let quote = QuoteRequest::new("generate_video", json!({"params": {}})).unwrap();
+    assert!(matches!(
+        c.check_cost(&allow::GENERATE_IMAGE, &quote, &CancelToken::new()),
+        Err(McpError::Guard(_))
+    ));
+    assert!(fake.requests().is_empty());
 }
 
 fn fault_strategy() -> impl Strategy<Value = Fault> {
@@ -708,9 +797,8 @@ proptest! {
         if sse {
             fake.set_stream(StreamMode::Sse { chunk: 5 });
         }
-        let tokens = SwapToken::new("t1", Some("t2"));
-        let (p, _) = provider(&fake, tokens);
-        let _ = p.connect(&CancelToken::new());
+        let c = mcp_client(&fake, SwapToken::new("t1", Some("t2")));
+        let _ = c.initialize(&CancelToken::new());
         if expire {
             fake.expire_sessions();
         }
@@ -721,17 +809,11 @@ proptest! {
         for f in faults {
             fake.push_fault(f);
         }
-        let result = p.mcp().call_tool(
-            "generate_image",
-            json!({"params": {"model": "gpt_image_2_5", "prompt": "x", "count": 1}}),
-            CallClass::Paid,
-            CallLimits::PAID,
-            &CancelToken::new(),
-        );
+        let result = submit(&c);
         let submissions = fake.calls_to("generate_image").len();
         prop_assert!(submissions <= 1, "{} submissions", submissions);
         match result {
-            Ok(_) => prop_assert_eq!(submissions, 1),
+            Ok(()) => prop_assert_eq!(submissions, 1),
             Err(e) => {
                 if submissions == 0 {
                     prop_assert!(matches!(submit_disposition(&e), SubmitError::NotSent(_)), "{:?}", e);

@@ -1061,7 +1061,15 @@ Other notes:
   CDLA-Permissive-2.0) stays in `Cargo.lock` only as `rustls-platform-verifier`'s wasm32
   dependency; no FreeCut target builds it.
 - **A failed handshake before a call** reports that call as not sent; a session `404` on a paid
-  call or preflight is *not accepted* even if opening the new session then fails.
+  call or preflight is *not accepted* even if opening the new session then fails. A `404` to
+  `initialize` or `notifications/initialized` ends the handshake: it never starts another one
+  (review R1; before the fix it recursed until the stack overflowed).
+- **The call class comes from the allow list (review R2).** `McpClient::call_tool` takes an
+  `&'static AllowedTool`, which only `freecut-cloud`'s allow list can create, and reads the
+  class and timeouts from it; an unlisted tool cannot be named. Cost checks go only through
+  `McpClient::check_cost(tool, &QuoteRequest)`, for tools that offer one. The provider does not
+  expose its MCP client (only `server_info()` for the debug view). §14's H1 contract
+  `McpClient::{initialize, list_tools, call_tool}` gains `check_cost`.
 - **Device sign-in (§5.2, §5.4).** Registration asks for the device grant only when the server
   advertises a device endpoint and grant; if that registration is refused, FreeCut registers
   again without it (browser sign-in stays the main path) and reports whether *Use a code

@@ -10,13 +10,11 @@
 use freecut_timeline::time::{TICKS_PER_SECOND, Tick};
 use serde_json::{Map, Value, json};
 
+use super::allow::{GENERATE_IMAGE, GENERATE_VIDEO};
 use crate::catalogue::{DurationSpec, ModelInfo, OutputKind, ParamKind, ParamSpec};
+use crate::mcp::AllowedTool;
 use crate::provider::{ImageRequest, Operation, ParamValue, VideoMode, VideoRequest, WholeSeconds};
 
-/// The image tool.
-pub const IMAGE_TOOL: &str = "generate_image";
-/// The video tool.
-pub const VIDEO_TOOL: &str = "generate_video";
 /// The longest prompt FreeCut sends, in characters (CG-006).
 pub const MAX_PROMPT_CHARS: usize = 4_000;
 /// The most variants per run (CG-006).
@@ -45,11 +43,11 @@ const RESERVED: &[&str] = &[
 /// setting.
 const VIDEO_FIELDS: &[&str] = &["duration", "resolution", "mode", "extension_mode"];
 
-/// A tool name and its arguments.
+/// An allow-listed tool and its arguments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolCall {
     /// The tool.
-    pub tool: &'static str,
+    pub tool: &'static AllowedTool,
     /// Its arguments (`{"params": {...}}`).
     pub arguments: Value,
 }
@@ -182,7 +180,7 @@ fn image_call(r: &ImageRequest, model: &ModelInfo) -> Result<ToolCall, MapError>
     aspect(&mut params, model, r.aspect.as_ref())?;
     settings(&mut params, model, &r.params, &[])?;
     Ok(ToolCall {
-        tool: IMAGE_TOOL,
+        tool: &GENERATE_IMAGE,
         arguments: json!({ "params": params }),
     })
 }
@@ -265,7 +263,7 @@ fn video_call(r: &VideoRequest, model: &ModelInfo) -> Result<ToolCall, MapError>
     video_fields.extend(audio_param);
     settings(&mut params, model, &r.params, &video_fields)?;
     Ok(ToolCall {
-        tool: VIDEO_TOOL,
+        tool: &GENERATE_VIDEO,
         arguments: json!({ "params": params }),
     })
 }
@@ -471,7 +469,7 @@ mod tests {
         assert_eq!(
             call(Operation::Image(r)).unwrap(),
             ToolCall {
-                tool: IMAGE_TOOL,
+                tool: &GENERATE_IMAGE,
                 arguments: json!({"params": {
                     "model": "img", "prompt": "a red apple", "count": 1, "aspect_ratio": "1:1", "quality": "high",
                     "medias": [{"value": "123e4567-e89b-12d3-a456-426614174000", "role": "image_references"}]

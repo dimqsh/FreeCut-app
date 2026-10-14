@@ -9,7 +9,7 @@ use freecut_cloud::CancelToken;
 use freecut_cloud::catalogue::ModelId;
 use freecut_cloud::error::CloudError;
 use freecut_cloud::fake::{FakeService, ToolReply};
-use freecut_cloud::mcp::{TokenPurpose, TokenSource};
+use freecut_cloud::mcp::{McpClient, TokenPurpose, TokenSource};
 use freecut_cloud::provider::higgsfield::{ENDPOINT, HiggsfieldProvider};
 use freecut_cloud::provider::{
     Aspect, ImageRequest, Operation, ParamValues, VideoMode, VideoRequest, WholeSeconds,
@@ -144,6 +144,17 @@ pub fn provider(
         "0.1.0",
     );
     (provider, waiter)
+}
+
+/// A bare MCP client on the fake, for calls below the provider.
+pub fn mcp_client(fake: &FakeService, tokens: Arc<dyn TokenSource>) -> McpClient {
+    McpClient::new(
+        ENDPOINT,
+        Arc::new(fake.clone()),
+        tokens,
+        Arc::new(NoWait::default()),
+        "0.1.0",
+    )
 }
 
 pub fn image_op() -> Operation {

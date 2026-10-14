@@ -6,8 +6,9 @@
 //!
 //! 1. [`QuoteRequest`] is the only way to build a check, and it always sets
 //!    the flag; [`verify_outgoing_preflight`] re-reads the serialized request
-//!    and refuses to send one without it (the MCP client calls it for every
-//!    [`CallClass::Preflight`](crate::mcp::CallClass::Preflight));
+//!    and refuses to send one without it; checks go out only through
+//!    [`McpClient::check_cost`](crate::mcp::McpClient::check_cost), which
+//!    takes a `QuoteRequest` and calls this for every one;
 //! 2. a check is sent only while the tool's live schema still offers
 //!    `get_cost` as a boolean ([`schema_offers_get_cost`]);
 //! 3. checks are retried only while nothing was sent (the MCP client's
@@ -39,6 +40,12 @@ pub enum GuardViolation {
     /// The outgoing message is not JSON.
     #[error("the outgoing cost check cannot be read back")]
     Unreadable,
+    /// The tool offers no cost check.
+    #[error("the tool offers no cost check")]
+    NoCostCheck,
+    /// The cost check was built for another tool.
+    #[error("the cost check was built for another tool")]
+    OtherTool,
 }
 
 /// A cost check's arguments. The only constructor sets `get_cost: true`.

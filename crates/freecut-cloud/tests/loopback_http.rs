@@ -18,10 +18,12 @@ use std::time::{Duration, Instant};
 use common::NoWait;
 use freecut_cloud::CancelToken;
 use freecut_cloud::error::{CloudError, SubmitError, submit_disposition};
+use freecut_cloud::guard::QuoteRequest;
 use freecut_cloud::http::{TransportConfig, UreqTransport};
-use freecut_cloud::mcp::{CallClass, McpClient, StaticToken};
+use freecut_cloud::mcp::{McpClient, StaticToken};
+use freecut_cloud::provider::higgsfield::allow;
 use freecut_cloud::secret::Secret;
-use freecut_cloud::transport::{CallLimits, SendState};
+use freecut_cloud::transport::SendState;
 use serde_json::{Value, json};
 
 /// What the scripted server does with one request.
@@ -164,14 +166,8 @@ fn client(url: &str) -> McpClient {
 fn paid(client: &McpClient, cancel: &CancelToken) -> Result<Value, freecut_cloud::mcp::McpError> {
     client
         .call_tool(
-            "generate_image",
+            &allow::GENERATE_IMAGE,
             json!({"params": {"model": "m", "prompt": "x"}}),
-            CallClass::Paid,
-            CallLimits {
-                connect: Duration::from_secs(2),
-                total: Duration::from_secs(5),
-                fresh_connection: true,
-            },
             cancel,
         )
         .map(|o| o.value().unwrap_or(Value::Null))
@@ -187,14 +183,9 @@ fn json_answers_over_real_http() {
         )
     }));
     let c = client(&server.url);
+    let quote = QuoteRequest::new("generate_image", json!({"params": {"model": "m"}})).unwrap();
     let out = c
-        .call_tool(
-            "generate_image",
-            json!({"params": {"model": "m", "get_cost": true}}),
-            CallClass::Preflight,
-            CallLimits::PREFLIGHT,
-            &CancelToken::new(),
-        )
+        .check_cost(&allow::GENERATE_IMAGE, &quote, &CancelToken::new())
         .unwrap();
     assert_eq!(out.value(), Some(json!({"cost": {"credits": 2}})));
     let requests = server.requests.lock().unwrap();
@@ -228,10 +219,8 @@ fn sse_answers_arrive_in_pieces() {
     let c = client(&server.url);
     let out = c
         .call_tool(
-            "models_explore",
+            &allow::MODELS_EXPLORE,
             json!({"action": "list"}),
-            CallClass::Free,
-            CallLimits::READ,
             &CancelToken::new(),
         )
         .unwrap();

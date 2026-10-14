@@ -189,8 +189,8 @@ fn checked_quote_args(op: &Operation) -> Value {
     let c = catalogue();
     let model = c.get(op.model().as_str()).unwrap();
     let call = tool_call(op, model).unwrap();
-    let quote = QuoteRequest::new(call.tool, call.arguments).unwrap();
-    let tool_schema = schema(call.tool);
+    let quote = QuoteRequest::new(call.tool.name(), call.arguments).unwrap();
+    let tool_schema = schema(call.tool.name());
     assert!(schema_offers_get_cost(&tool_schema));
     validate(&tool_schema, quote.arguments()).unwrap();
     quote.arguments().clone()
