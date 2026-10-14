@@ -541,6 +541,50 @@ fn a_keychain_that_locks_during_a_refresh_never_brings_back_the_old_token() {
     assert_eq!(*sent.lock().unwrap(), vec!["rt-1", "rt-2"]);
 }
 
+/// R17: the app keeps one TokenManager per provider id for its whole run
+/// and gives the same one to every provider it creates. After a refused
+/// store write, a reconnect (a new provider) still refreshes with rt-2;
+/// rt-1 is never sent again.
+#[test]
+fn a_new_provider_on_the_same_token_manager_never_sends_the_old_token() {
+    let fake = signed_out_service();
+    let (manager, clock, store) = signed_in_with_store(&fake, 0, 100);
+    for t in ["at-2", "at-3"] {
+        fake.accept_token(t);
+    }
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let log = sent.clone();
+    let keychain = store.clone();
+    fake.on_route(Method::Post, TOKEN, move |req| {
+        let mut log = log.lock().unwrap();
+        log.push(
+            req.body["refresh_token"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        // The keychain refuses the rotated tokens and stays locked.
+        keychain.entries().set_locked(true);
+        let n = log.len() + 1;
+        (
+            200,
+            token_answer(&format!("at-{n}"), Some(&format!("rt-{n}")), 100),
+        )
+    });
+    let cancel = CancelToken::new();
+    let tokens: Arc<dyn TokenSource> = manager.clone();
+
+    *clock.0.lock().unwrap() = 90;
+    let (first, _) = provider(&fake, tokens.clone());
+    first.connect(&cancel).unwrap();
+    drop(first);
+
+    *clock.0.lock().unwrap() = 180;
+    let (second, _) = provider(&fake, tokens.clone());
+    second.connect(&cancel).unwrap();
+    assert_eq!(*sent.lock().unwrap(), vec!["rt-1", "rt-2"]);
+}
+
 #[test]
 fn invalid_grant_is_sign_in_expired_and_deletes_nothing() {
     let fake = signed_out_service();

@@ -463,6 +463,10 @@ pub trait SecretStore: Send + Sync {
   buffer, request bodies after sending, token and device answers after parsing, the
   `Authorization` value it builds), but not copies made inside `ureq`, `http` or rustls, nor
   buffers a growing `Vec` left behind while reading an answer.
+- **One `TokenManager` per provider id for the app's whole run** (review R17), shared by every
+  provider the app creates and by the sign-in and disconnect UI. The refresh lock, the count of
+  sign-in changes and the refreshed tokens the store refused all live in that one instance; a
+  second one would send the superseded refresh token again.
 - Refresh when fewer than 60 s remain, and before any paid submission when fewer than 5 minutes
   remain. A `401` on a free call triggers one refresh and one resend; a `401` on a paid
   submission triggers the refresh but **not** a resend (the run becomes *Not accepted*, CG-010).
@@ -982,6 +986,9 @@ README).
     calls into `freecut-cloud`. Test: the UI thread's cancel path returns without a call into
     the client.
   - **One `PreflightGuard` per app run**, shared by every provider the worker creates (R6).
+  - **One `TokenManager` per provider id per app run**, the same `Arc<dyn TokenSource>` for every
+    provider and for the sign-in and disconnect UI (R17). Acceptance test:
+    `a_new_provider_on_the_same_token_manager_never_sends_the_old_token`.
 
 ### H3 — AI edit actions on clips
 

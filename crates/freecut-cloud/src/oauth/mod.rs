@@ -721,8 +721,16 @@ fn store_failed(e: SecretError) -> CloudError {
 }
 
 /// Supplies tokens from a [`SecretStore`], refreshing OAuth tokens when they
-/// near expiry or after a `401` (§5.6). Reads the store right before each
-/// request; nothing is cached between requests except the server metadata.
+/// near expiry or after a `401` (§5.6). It reads the store before each
+/// request, and keeps in memory the server metadata and any refreshed tokens
+/// the store refused (until a write succeeds).
+///
+/// **One per provider id for the app's whole run** (review R17). The app
+/// passes the same `Arc` to every provider it creates (reconnect, account
+/// switch) and to the sign-in and disconnect UI. A second instance would read
+/// the superseded refresh token from the store and send it, could refresh
+/// the same token at the same moment as this one, and would not see this
+/// one's sign-in changes.
 pub struct TokenManager {
     provider: ProviderId,
     store: Arc<dyn SecretStore>,
@@ -753,7 +761,8 @@ impl fmt::Debug for TokenManager {
 }
 
 impl TokenManager {
-    /// A manager for `provider`'s credential in `store`.
+    /// A manager for `provider`'s credential in `store`. Create one per
+    /// provider id per app run (see [`TokenManager`]).
     pub fn new(
         provider: ProviderId,
         store: Arc<dyn SecretStore>,
