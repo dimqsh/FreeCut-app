@@ -780,7 +780,8 @@ patterns, then falls back to `ServiceError` with the message.
 | Tool missing | `NotOffered` | "Not offered by the service right now." | action disabled | after Refresh |
 | `401` or session `404` on a paid submission | `NotAccepted` | "Higgsfield did not accept the run (sign-in or session renewed). Press Run again." | *Not accepted* (CG-010) | by the user, on a fresh sheet |
 | Unexpected response shape | `Protocol` | "Unexpected answer from Higgsfield." + details in the log | free calls: *Failed*; a paid submission: **always** *Outcome unknown* | — |
-| Anything else | `ServiceError { message }` | the message, quoted | *Failed* | by the user |
+| JSON-RPC error on a paid submission | classified as above (credits, content, …) | the classified text | *Rejected* (*Failed*) only for codes that prove the method never ran: -32700, -32600, -32601, -32602; any other code (-32603, -32000..-32099, …) is *Outcome unknown*, reason kept (review M2) | by the user |
+| Anything else | `ServiceError { message }` | the message, quoted | *Failed*. On a paid submission: a 4xx answer or a tool error result is *Rejected* (a tool error that names job ids is *Outcome unknown*); a 5xx is *Outcome unknown* | by the user |
 
 Whether credits were charged for a failed run is reported only when the service says so.
 Messages from the service are shown as plain quoted text; no links in them are made clickable.

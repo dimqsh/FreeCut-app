@@ -705,6 +705,55 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     assert!(fake.calls_to("generate_image").is_empty());
 }
 
+/// M2: a JSON-RPC error on a paid call is "rejected" only for the codes that
+/// prove the method never ran; anything else is an unknown outcome.
+#[test]
+fn json_rpc_errors_on_paid_calls_are_unknown_unless_the_code_proves_nothing_ran() {
+    use SubmitError::*;
+    for (code, message, rejected) in [
+        (-32603, "Internal error", false),
+        (-32000, "Insufficient credits", false),
+        (-32001, "Upstream timeout", false),
+        (-32602, "Invalid params: count", true),
+        (-32601, "Method not found", true),
+    ] {
+        let fake = fake_higgsfield();
+        fake.on_tool("generate_image", move |_| {
+            ToolReply::RpcError(code, message.into())
+        });
+        let c = mcp_client(&fake, token("t1"));
+        let err = submit(&c).unwrap_err();
+        let d = submit_disposition(&err);
+        if rejected {
+            assert!(matches!(d, Rejected(_)), "{code}: {d:?}");
+        } else {
+            assert!(matches!(d, OutcomeUnknown(_)), "{code}: {d:?}");
+        }
+        assert_eq!(fake.calls_to("generate_image").len(), 1, "{code}");
+    }
+    // The reason survives inside the unknown outcome.
+    let fake = fake_higgsfield();
+    fake.on_tool("generate_image", |_| {
+        ToolReply::RpcError(-32000, "Insufficient credits".into())
+    });
+    let err = submit(&mcp_client(&fake, token("t1"))).unwrap_err();
+    assert_eq!(
+        submit_disposition(&err),
+        OutcomeUnknown(CloudError::InsufficientCredits)
+    );
+
+    // And a cost check answered with such an error fails closed (M1).
+    let fake = fake_higgsfield();
+    fake.on_tool("generate_image", |_| {
+        ToolReply::RpcError(-32603, "Internal error".into())
+    });
+    let (p, _) = provider(&fake, token("t1"));
+    assert!(matches!(
+        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        QuoteOutcome::PossiblyStarted(_)
+    ));
+}
+
 /// R1: a `404` to `notifications/initialized` ends the handshake. It must not
 /// start another one (which recursed until the stack overflowed).
 #[test]

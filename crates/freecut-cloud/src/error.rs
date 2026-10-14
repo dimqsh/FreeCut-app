@@ -8,6 +8,7 @@
 
 use serde_json::Value;
 
+use crate::guard::job_ids_in;
 use crate::mcp::McpError;
 use crate::transport::{SendState, TransportErrorKind};
 
@@ -227,10 +228,19 @@ fn classify_status(status: u16, excerpt: &str) -> CloudError {
     }
 }
 
+/// JSON-RPC error codes that prove the method never ran: the server could
+/// not parse the message (-32700), the message was not a valid request
+/// (-32600), the method does not exist (-32601), or the parameters were
+/// refused before the tool was called (-32602; MCP uses it for unknown
+/// tools and invalid arguments). Every other code, -32603 *internal error*
+/// and the server-defined -32000..-32099 included, says nothing about
+/// whether a job was created (review M2).
+pub const REJECTING_RPC_CODES: &[i64] = &[-32700, -32600, -32601, -32602];
+
 /// Where a paid submission's failure leaves the run (CG-010). Only failures
-/// that provably happened before sending are `NotSent`; anything the service
-/// answered with a refusal is `Rejected`; everything else is
-/// `OutcomeUnknown`.
+/// that provably happened before sending are `NotSent`; refusals that prove
+/// nothing ran are `Rejected`; everything else is `OutcomeUnknown`, with the
+/// classified reason kept for the message.
 pub fn submit_disposition(err: &McpError) -> SubmitError {
     match err {
         McpError::Transport(e) => match e.send {
@@ -250,9 +260,26 @@ pub fn submit_disposition(err: &McpError) -> SubmitError {
         McpError::Unauthorized { .. }
         | McpError::Forbidden { .. }
         | McpError::SessionExpired
-        | McpError::NotAccepted(_)
-        | McpError::Rpc(_)
-        | McpError::Tool { .. } => SubmitError::Rejected(classify(err)),
+        | McpError::NotAccepted(_) => SubmitError::Rejected(classify(err)),
+        McpError::Rpc(e) => {
+            if REJECTING_RPC_CODES.contains(&e.code) {
+                SubmitError::Rejected(classify(err))
+            } else {
+                SubmitError::OutcomeUnknown(classify(err))
+            }
+        }
+        // The tool answered with an error result: the service explains a
+        // refusal. One that names job ids may have created them anyway.
+        McpError::Tool { structured, .. } => {
+            if structured
+                .as_ref()
+                .is_some_and(|v| !job_ids_in(v).is_empty())
+            {
+                SubmitError::OutcomeUnknown(classify(err))
+            } else {
+                SubmitError::Rejected(classify(err))
+            }
+        }
         McpError::Http { status, .. } => {
             if *status >= 500 {
                 // A server or gateway error says nothing about whether the
@@ -527,13 +554,36 @@ mod tests {
             d(&McpError::Protocol { detail: "x".into() }),
             OutcomeUnknown(_)
         ));
+        // A server-defined code proves nothing: unknown, reason kept.
         assert!(matches!(
             d(&McpError::Rpc(RpcError {
                 code: -32000,
                 message: "Not enough credits".into(),
                 data: None
             })),
-            Rejected(CloudError::InsufficientCredits)
+            OutcomeUnknown(CloudError::InsufficientCredits)
+        ));
+        let rpc = |code| {
+            McpError::Rpc(RpcError {
+                code,
+                message: "x".into(),
+                data: None,
+            })
+        };
+        for code in [-32700, -32600, -32601, -32602] {
+            assert!(matches!(d(&rpc(code)), Rejected(_)), "{code}");
+        }
+        for code in [-32603, -32000, -32001, -32099, 1, 0] {
+            assert!(matches!(d(&rpc(code)), OutcomeUnknown(_)), "{code}");
+        }
+        assert!(matches!(
+            d(&McpError::Tool {
+                message: "failed after queueing".into(),
+                structured: Some(
+                    serde_json::json!({"job_id": "0b4f6d2a-1111-4222-8333-944455556666"})
+                )
+            }),
+            OutcomeUnknown(_)
         ));
         assert!(matches!(
             d(&McpError::Tool {
