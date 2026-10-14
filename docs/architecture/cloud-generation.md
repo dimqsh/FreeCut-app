@@ -986,6 +986,8 @@ README).
     calls into `freecut-cloud`. Test: the UI thread's cancel path returns without a call into
     the client.
   - **One `PreflightGuard` per app run**, shared by every provider the worker creates (R6).
+  - **Save refused tokens before quitting**: call `TokenManager::persist_unsaved()` and, if it
+    fails, tell the user the sign-in may need repeating (R18).
   - **One `TokenManager` per provider id per app run**, the same `Arc<dyn TokenSource>` for every
     provider and for the sign-in and disconnect UI (R17). Acceptance test:
     `a_new_provider_on_the_same_token_manager_never_sends_the_old_token`.
@@ -1192,7 +1194,9 @@ Other notes:
   only while FreeCut runs; the worker drains it on every tick and before quitting (R9).
 - **Refreshed tokens the keychain refuses (§5.6, review SEC-3, R7)** are kept in memory and
   used: the stored refresh token may already be dead after rotation, and it is not sent again
-  while FreeCut runs. The write is retried before the next refresh; a new sign-in drops them,
+  while FreeCut runs. The write is retried on every `bearer()` call (without waiting on a write
+  in progress) and before each refresh, and `TokenManager::persist_unsaved()` retries it on
+  demand: the worker calls it before quitting (review R18). A new sign-in drops them,
   and so does a disconnect, but only once its delete has succeeded. Whether the sign-in changed
   during a refresh is told by an in-memory count of sign-in changes, never by reading the store
   again after the network call: a keychain that locks meanwhile (sleep, screen lock) cannot make

@@ -585,6 +585,67 @@ fn a_new_provider_on_the_same_token_manager_never_sends_the_old_token() {
     assert_eq!(*sent.lock().unwrap(), vec!["rt-1", "rt-2"]);
 }
 
+/// R18: refused tokens are saved as soon as the store takes them again: on
+/// the next bearer() call, with no refresh, or by persist_unsaved() before
+/// quitting.
+#[test]
+fn refused_tokens_are_saved_without_waiting_for_the_next_refresh() {
+    for via_persist in [false, true] {
+        let fake = signed_out_service();
+        let (manager, clock, store) = signed_in_with_store(&fake, 0, 100);
+        let keychain = store.clone();
+        fake.on_route(Method::Post, TOKEN, move |_| {
+            keychain.entries().set_locked(true);
+            (200, token_answer("at-2", Some("rt-2"), 100))
+        });
+        let cancel = CancelToken::new();
+        *clock.0.lock().unwrap() = 90;
+        assert_eq!(
+            manager
+                .bearer(TokenPurpose::Ordinary, &cancel)
+                .unwrap()
+                .expose(),
+            "at-2"
+        );
+        store.entries().set_locked(false);
+        if via_persist {
+            manager.persist_unsaved().unwrap();
+        } else {
+            // Still fresh: no refresh, only the retried write.
+            manager.bearer(TokenPurpose::Ordinary, &cancel).unwrap();
+        }
+        match store.get(ProviderId::HIGGSFIELD).unwrap() {
+            Some(Credential::OAuth(c)) => {
+                assert_eq!(c.access.expose(), "at-2", "persist: {via_persist}");
+                assert_eq!(c.refresh.unwrap().expose(), "rt-2");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    // Nothing to save is fine; a store that still refuses is an error, and
+    // the tokens stay in memory.
+    let fake = signed_out_service();
+    let (manager, clock, store) = signed_in_with_store(&fake, 0, 100);
+    assert!(manager.persist_unsaved().is_ok());
+    let keychain = store.clone();
+    fake.on_route(Method::Post, TOKEN, move |_| {
+        keychain.entries().set_locked(true);
+        (200, token_answer("at-2", Some("rt-2"), 100))
+    });
+    *clock.0.lock().unwrap() = 90;
+    manager
+        .bearer(TokenPurpose::Ordinary, &CancelToken::new())
+        .unwrap();
+    assert!(matches!(
+        manager.persist_unsaved(),
+        Err(CloudError::SignInUnavailable { .. })
+    ));
+    match manager.credential().unwrap() {
+        Credential::OAuth(c) => assert_eq!(c.access.expose(), "at-2"),
+        other => panic!("{other:?}"),
+    }
+}
+
 #[test]
 fn invalid_grant_is_sign_in_expired_and_deletes_nothing() {
     let fake = signed_out_service();

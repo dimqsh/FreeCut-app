@@ -828,6 +828,26 @@ impl TokenManager {
         }
     }
 
+    /// Saves refreshed tokens the store refused earlier, if any (review
+    /// R18). The worker calls it before quitting: tokens still only in
+    /// memory then are lost, and the next start sends the superseded
+    /// refresh token.
+    ///
+    /// # Errors
+    /// The store still refuses them ([`CloudError::SignInUnavailable`]);
+    /// they stay in memory.
+    pub fn persist_unsaved(&self) -> Result<(), CloudError> {
+        let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(newer) = self.unsaved() else {
+            return Ok(());
+        };
+        self.store
+            .set(self.provider, &Credential::OAuth(newer))
+            .map_err(store_failed)?;
+        self.set_unsaved(None);
+        Ok(())
+    }
+
     /// Stores the tokens of a completed sign-in.
     ///
     /// # Errors
@@ -980,6 +1000,13 @@ impl TokenManager {
 
 impl TokenSource for TokenManager {
     fn bearer(&self, purpose: TokenPurpose, cancel: &CancelToken) -> Result<Secret, CloudError> {
+        // Refused tokens are written again on every call, not only at the
+        // next refresh; never waiting on a write in progress (review R18).
+        if self.unsaved().is_some()
+            && let Ok(_write) = self.writing.try_lock()
+        {
+            self.flush_unsaved();
+        }
         let credential = match self.credential()? {
             Credential::Bearer { token } => return Ok(token),
             Credential::OAuth(c) => c,
