@@ -423,7 +423,12 @@ fn run(
     let (Some(sink), Some(body)) = (late, kept) else {
         return;
     };
-    if cancel.is_cancelled() || shared.verdict(VERDICT_WAIT) == Reading::Abandoned {
+    if cancel.is_cancelled() {
+        // No need to wait; but a caller that already read the whole answer
+        // keeps its verdict, so a cancel just after it queues nothing.
+        shared.decide(Reading::Abandoned);
+    }
+    if shared.verdict(VERDICT_WAIT) == Reading::Abandoned {
         tracing::debug!(
             status,
             bytes = body.len(),
@@ -778,6 +783,25 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ureq::Error::Protocol(_)), "{err:?}");
         assert_eq!(send_state(&err), SendState::MaybeSent);
+    }
+
+    /// R4: the first verdict stands, so a cancel after the caller read the
+    /// whole answer does not make it late; no verdict in time counts as
+    /// abandoned.
+    #[test]
+    fn the_first_verdict_stands() {
+        let shared = Shared::new();
+        shared.decide(Reading::Finished);
+        shared.decide(Reading::Abandoned);
+        assert_eq!(shared.verdict(Duration::ZERO), Reading::Finished);
+        let shared = Shared::new();
+        shared.decide(Reading::Abandoned);
+        shared.decide(Reading::Finished);
+        assert_eq!(shared.verdict(Duration::ZERO), Reading::Abandoned);
+        assert_eq!(
+            Shared::new().verdict(Duration::from_millis(10)),
+            Reading::Abandoned
+        );
     }
 
     /// M3: the gate runs after the connection is up and stops the request
