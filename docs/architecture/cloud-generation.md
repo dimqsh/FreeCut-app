@@ -240,7 +240,9 @@ Rules:
   event id but before the response (MCP 2025-11-25 polling): after the server's `retry` delay
   (1 s if none, at most 30 s), at most 5 times. A `GET` never resends the request; if resuming
   fails, the answer is lost, so a paid call is *Outcome unknown* and a free call fails (review
-  F4).
+  F4). `Last-Event-ID` is the id of the last *dispatched* event: an `id:` line counts only at
+  the blank line that ends its event, so a stream cut inside the response event resumes before
+  it and the server sends it again (WHATWG last-event-ID buffer, review R3).
 - **Sessions.** The `Mcp-Session-Id` from the `initialize` response is kept in memory for the
   worker's lifetime. HTTP `404` on a request carrying a session id means the session expired:
   FreeCut re-initializes once. A **free** call (§4.5's table) is then sent again. A **paid**

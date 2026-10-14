@@ -4,6 +4,12 @@
 //! completed so far. Lines end in LF, CRLF or CR (a CR at the end of a chunk
 //! waits for the next one to see whether an LF follows); `data:` lines are
 //! joined with `\n`; comments (`:`) and `retry:` are ignored.
+//!
+//! An `id:` line only fills a buffer; the id counts as the stream's last
+//! event id once its event is dispatched at the blank line that ends it,
+//! empty events included (WHATWG "last event ID buffer"). A stream cut inside
+//! an event therefore resumes *before* that event, so the server sends it
+//! again (review R3).
 
 /// One dispatched event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,7 +18,7 @@ pub struct SseEvent {
     pub event: String,
     /// The joined `data:` lines.
     pub data: String,
-    /// The last `id:` seen, if any.
+    /// The stream's last event id when this event was dispatched.
     pub id: Option<String>,
 }
 
@@ -30,6 +36,10 @@ pub struct SseParser {
     data: String,
     has_data: bool,
     event: String,
+    /// The `id:` of the event being read; it counts once that event is
+    /// dispatched.
+    pending_id: Option<String>,
+    /// The id as of the last dispatched event.
     last_id: Option<String>,
     retry_ms: Option<u64>,
     max: usize,
@@ -45,6 +55,7 @@ impl SseParser {
             data: String::new(),
             has_data: false,
             event: String::new(),
+            pending_id: None,
             last_id: None,
             retry_ms: None,
             max,
@@ -91,6 +102,8 @@ impl SseParser {
         }
         let line = String::from_utf8_lossy(&raw);
         if line.is_empty() {
+            // Dispatch: the id counts now, even for an event without data.
+            self.last_id.clone_from(&self.pending_id);
             if self.has_data {
                 events.push(SseEvent {
                     event: if self.event.is_empty() {
@@ -126,7 +139,7 @@ impl SseParser {
                 }
             }
             "event" => self.event = value.to_owned(),
-            "id" if !value.contains('\0') => self.last_id = Some(value.to_owned()),
+            "id" if !value.contains('\0') => self.pending_id = Some(value.to_owned()),
             "retry" if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
                 self.retry_ms = value.parse().ok();
             }
@@ -135,9 +148,11 @@ impl SseParser {
         Ok(())
     }
 
-    /// The last event id seen, for `Last-Event-ID` when resuming.
+    /// The id of the last dispatched event, for `Last-Event-ID` when
+    /// resuming; `None` when there is none or the server reset it with an
+    /// empty `id:`.
     pub fn last_event_id(&self) -> Option<&str> {
-        self.last_id.as_deref()
+        self.last_id.as_deref().filter(|id| !id.is_empty())
     }
 
     /// The reconnection delay the server asked for, in milliseconds.
@@ -146,8 +161,10 @@ impl SseParser {
     }
 
     /// Starts reading a resumed stream: a half-read line or event of the old
-    /// one is dropped; the last event id and retry delay are kept.
+    /// one is dropped, its id included; the last dispatched event's id and
+    /// the retry delay are kept.
     pub fn next_stream(&mut self) {
+        self.pending_id.clone_from(&self.last_id);
         self.line.clear();
         self.pending_cr = false;
         self.started = false;
@@ -240,6 +257,33 @@ mod tests {
                 id: Some("ev-1".into()),
             }]
         );
+    }
+
+    /// R3: an id counts once its event is dispatched, so a stream cut inside
+    /// an event resumes before it; an empty event dispatches its id too.
+    #[test]
+    fn an_id_counts_only_once_its_event_is_dispatched() {
+        let mut p = SseParser::new(1 << 20);
+        let events = p
+            .feed(b"id: ev-1\nretry: 5\ndata:\n\nid: ev-2\nevent: message\ndata: {\"jsonrpc\"")
+            .unwrap();
+        assert!(events.iter().all(|e| e.data.is_empty()), "{events:?}");
+        assert_eq!(p.last_event_id(), Some("ev-1"));
+        p.next_stream();
+        // The cut event's id is gone with it: an event without an id line
+        // still carries ev-1.
+        assert_eq!(
+            p.feed(b"data: a\n\n").unwrap()[0].id.as_deref(),
+            Some("ev-1")
+        );
+        assert_eq!(
+            p.feed(b"id: ev-2\ndata: b\n\n").unwrap()[0].id.as_deref(),
+            Some("ev-2")
+        );
+        assert_eq!(p.last_event_id(), Some("ev-2"));
+        // An empty id resets it: nothing to resume from.
+        p.feed(b"id\ndata: c\n\n").unwrap();
+        assert_eq!(p.last_event_id(), None);
     }
 
     #[test]

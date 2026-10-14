@@ -34,6 +34,13 @@ pub enum StreamMode {
         /// Bytes per read.
         chunk: usize,
     },
+    /// Like `SseResumable`, but the stream also starts the response event
+    /// (its `id:` line and half of its data) before it ends; a `GET` with
+    /// the priming event's id replays the response (review R3).
+    SseCutInsideAnswer {
+        /// Bytes per read.
+        chunk: usize,
+    },
 }
 
 /// How the fake answers a `GET` that resumes a stream.
@@ -514,6 +521,22 @@ impl FakeService {
                 let text = format!(": stream opened\n\nid: {event}\nretry: 5\ndata:\n\n");
                 sse_response(text, chunk, extra_headers)
             }
+            StreamMode::SseCutInsideAnswer { chunk } => {
+                s.next_event += 2;
+                let primed = format!("ev-{}", s.next_event - 1);
+                let answer = format!("ev-{}", s.next_event);
+                let full = response.to_string();
+                let mut cut = full.len() / 2;
+                while !full.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                let text = format!(
+                    ": stream opened\n\nid: {primed}\nretry: 5\ndata:\n\nid: {answer}\nevent: message\ndata: {}",
+                    &full[..cut]
+                );
+                s.held.insert(primed, full);
+                sse_response(text, chunk, extra_headers)
+            }
             StreamMode::Json => {
                 let mut r = json_response(200, &response);
                 r.headers.extend(extra_headers);
@@ -552,7 +575,9 @@ impl FakeService {
             return HttpResponse::new(405, Vec::new(), Vec::new());
         };
         let chunk = match s.stream {
-            StreamMode::SseResumable { chunk } | StreamMode::Sse { chunk } => chunk,
+            StreamMode::SseResumable { chunk }
+            | StreamMode::SseCutInsideAnswer { chunk }
+            | StreamMode::Sse { chunk } => chunk,
             StreamMode::Json => 64,
         };
         if s.resume == ResumeMode::Stall {

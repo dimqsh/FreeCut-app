@@ -880,6 +880,34 @@ fn a_stream_closed_after_its_first_event_is_resumed_without_resending() {
     );
 }
 
+/// R3: a stream cut inside the response event, after its `id:` line, resumes
+/// from the last whole event, so the server sends the response again.
+#[test]
+fn a_stream_cut_inside_the_answer_resumes_from_the_last_whole_event() {
+    let fake = paid_fake();
+    fake.set_stream(StreamMode::SseCutInsideAnswer { chunk: 7 });
+    let c = mcp_client(&fake, token("t1"));
+    let output = c
+        .call_tool(&allow::GENERATE_IMAGE, image_args(), &CancelToken::new())
+        .unwrap();
+    assert!(
+        output
+            .value()
+            .unwrap()
+            .to_string()
+            .contains("0b4f6d2a-1111-4222-8333-944455556666")
+    );
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+    let resumed_from: Vec<_> = fake
+        .requests()
+        .into_iter()
+        .filter(|r| r.method == freecut_cloud::transport::Method::Get)
+        .filter_map(|r| r.last_event_id)
+        .collect();
+    // initialize primes ev-1 and cuts inside ev-2; tools/call ev-3 and ev-4.
+    assert_eq!(resumed_from, vec!["ev-1", "ev-3"]);
+}
+
 /// F4: if the stream cannot be resumed, the answer is lost: a paid call is an
 /// unknown outcome, sent once; a free call fails without being resent.
 #[test]
