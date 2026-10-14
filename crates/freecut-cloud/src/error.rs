@@ -150,11 +150,32 @@ pub enum SubmitError {
 /// The longest service message FreeCut keeps, in characters.
 const MAX_MESSAGE_CHARS: usize = 500;
 
+/// Invisible format characters (Unicode category Cf) that can reorder or
+/// hide text: bidi embeddings, overrides and isolates, zero-width marks and
+/// joiners, word joiners, invisible operators, the BOM, interlinear
+/// annotation marks (review SEC-9).
+fn is_format_char(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+    )
+}
+
 /// Service text made safe to show as a quote: control characters become
-/// spaces, whitespace runs collapse, and it is cut to 500 characters.
+/// spaces, invisible format characters are removed, whitespace runs
+/// collapse, and it is cut to 500 characters.
 pub fn quoted(message: &str) -> String {
     let cleaned: String = message
         .chars()
+        .filter(|c| !is_format_char(*c))
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     let mut out = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -596,6 +617,20 @@ mod tests {
             d(&McpError::SignIn(CloudError::NotConnected)),
             NotSent(_)
         ));
+    }
+
+    /// SEC-9: bidi controls and other invisible format characters cannot
+    /// reorder or hide part of a service message.
+    #[test]
+    fn quoted_text_drops_bidi_and_invisible_format_characters() {
+        let spoof = "Pay \u{202E}stiderc 5\u{202C} now\u{200B}\u{2066}!\u{2069}\u{FEFF}";
+        assert_eq!(quoted(spoof), "Pay stiderc 5 now!");
+        assert_eq!(quoted("a\u{00AD}b\u{200D}c\u{061C}d"), "abcd");
+        // Ordinary non-ASCII text is kept.
+        assert_eq!(
+            quoted("Недостаточно кредитов · ✓"),
+            "Недостаточно кредитов · ✓"
+        );
     }
 
     #[test]
