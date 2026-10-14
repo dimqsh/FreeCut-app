@@ -271,3 +271,39 @@ fn cloud_without_http_has_no_networking_crates() {
         );
     }
 }
+
+/// freecut-cloud opens sockets only in its http transport (review Q9): no
+/// `std::net`, `TcpStream`, `UdpSocket` or `TcpListener` anywhere else in
+/// its sources, so the sans-I/O core cannot grow a network path.
+#[test]
+fn cloud_opens_sockets_only_in_its_http_transport() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../freecut-cloud/src");
+    let transport = src.join("http.rs");
+    let mut dirs = vec![src];
+    let mut offenders = Vec::new();
+    let mut scanned = 0;
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") || path == transport {
+                continue;
+            }
+            scanned += 1;
+            let text = std::fs::read_to_string(&path).unwrap();
+            for banned in ["std::net", "TcpStream", "UdpSocket", "TcpListener"] {
+                if text.contains(banned) {
+                    offenders.push(format!("{}: {banned}", path.display()));
+                }
+            }
+        }
+    }
+    assert!(scanned > 10, "only {scanned} files scanned");
+    assert!(
+        offenders.is_empty(),
+        "socket code outside http.rs: {offenders:?}"
+    );
+}
