@@ -90,6 +90,7 @@ fn main() -> anyhow_free::Result {
     let oauth = OAuthClient::new(recorder.clone(), auth_policy());
     let found = oauth.discover(None, &cancel)?;
     let registration = oauth.register(&found.server, &cancel)?;
+    plain_endpoint(&found.server.authorization_endpoint)?;
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
     let request = authorize_request(
@@ -229,21 +230,56 @@ fn filter_headers(line: &Value, dropped: &mut BTreeSet<String>) -> Value {
     line
 }
 
+/// Where the tool runs, for the browser opener.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Platform {
+    MacOs,
+    Windows,
+    Other,
+}
+
+impl Platform {
+    fn current() -> Platform {
+        if cfg!(target_os = "macos") {
+            Platform::MacOs
+        } else if cfg!(windows) {
+            Platform::Windows
+        } else {
+            Platform::Other
+        }
+    }
+}
+
+/// The program and arguments that open `url` in the browser on `os`; the
+/// address is always one argument. Not `cmd /C start`, which splits it at
+/// each `&` and runs the rest as commands (review R27).
+fn opener(url: &str, os: Platform) -> (&'static str, Vec<String>) {
+    match os {
+        Platform::MacOs => ("open", vec![url.to_owned()]),
+        Platform::Windows => (
+            "rundll32",
+            vec!["url.dll,FileProtocolHandler".to_owned(), url.to_owned()],
+        ),
+        Platform::Other => ("xdg-open", vec![url.to_owned()]),
+    }
+}
+
 /// Opens `url` with the platform's opener; false if that failed.
 fn open_in_browser(url: &str) -> bool {
-    let mut command = if cfg!(target_os = "macos") {
-        std::process::Command::new("open")
-    } else if cfg!(windows) {
-        let mut c = std::process::Command::new("cmd");
-        c.args(["/C", "start", ""]);
-        c
-    } else {
-        std::process::Command::new("xdg-open")
-    };
-    command
-        .arg(url)
+    let (program, args) = opener(url, Platform::current());
+    std::process::Command::new(program)
+        .args(args)
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// The authorization endpoint, refused when it already carries a query: the
+/// sign-in address is built by appending to it (review R27).
+fn plain_endpoint(url: &str) -> anyhow_free::Result<&str> {
+    if url.contains('?') || url.contains('#') {
+        return Err("the authorization endpoint already has a query; not opening it".into());
+    }
+    Ok(url)
 }
 
 /// Serves the loopback redirect until the sign-in answer with `state`
@@ -1707,6 +1743,30 @@ mod tests {
         assert_eq!(waiting.join().unwrap(), Ok("the-code".to_owned()));
         // The listener is gone as soon as the code arrived.
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
+    }
+
+    /// R27: the browser gets the whole sign-in address as one argument on
+    /// every platform (on Windows `cmd /C start` would split it at each
+    /// `&`), and an authorization endpoint that already has a query is
+    /// refused.
+    #[test]
+    fn the_sign_in_address_reaches_the_browser_whole() {
+        let url = "https://clerk.example/oauth/authorize?response_type=code&client_id=c&state=s";
+        for os in [Platform::MacOs, Platform::Windows, Platform::Other] {
+            let (program, args) = opener(url, os);
+            assert_ne!(program, "cmd", "{os:?}");
+            assert_eq!(args.last().map(String::as_str), Some(url), "{os:?}");
+            assert_eq!(args.iter().filter(|a| a.contains('&')).count(), 1, "{os:?}");
+        }
+        assert_eq!(
+            opener(url, Platform::Windows),
+            (
+                "rundll32",
+                vec!["url.dll,FileProtocolHandler".to_owned(), url.to_owned()]
+            )
+        );
+        assert!(plain_endpoint("https://clerk.example/oauth/authorize").is_ok());
+        assert!(plain_endpoint("https://clerk.example/oauth/authorize?tenant=x").is_err());
     }
 
     #[test]
