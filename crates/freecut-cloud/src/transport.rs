@@ -356,13 +356,28 @@ pub fn read_body(
     max: usize,
 ) -> Result<Vec<u8>, BodyError> {
     let mut out = Vec::new();
+    read_body_into(body, cancel, max, &mut out)?;
+    Ok(out)
+}
+
+/// Like [`read_body`], but into `out`, which keeps what arrived when the
+/// read fails (review R12: a broken answer may still name its jobs).
+///
+/// # Errors
+/// As [`read_body`].
+pub fn read_body_into(
+    body: &mut dyn Read,
+    cancel: &CancelToken,
+    max: usize,
+    out: &mut Vec<u8>,
+) -> Result<(), BodyError> {
     let mut chunk = [0u8; 8 * 1024];
     loop {
         if cancel.is_cancelled() {
             return Err(BodyError::Cancelled);
         }
         match body.read(&mut chunk) {
-            Ok(0) => return Ok(out),
+            Ok(0) => return Ok(()),
             Ok(n) => {
                 if out.len() + n > max {
                     return Err(BodyError::TooLarge(max));

@@ -34,7 +34,7 @@ use crate::redact;
 use crate::secret::Secret;
 use crate::transport::{
     BodyError, CallLimits, HttpRequest, HttpResponse, HttpTransport, LateResponse, LateSink,
-    Method, SendState, TransportError, TransportErrorKind, Waiter, backoff_delay, read_body,
+    Method, SendState, TransportError, TransportErrorKind, Waiter, backoff_delay, read_body_into,
 };
 
 use self::jsonrpc::{Incoming, RpcError};
@@ -53,6 +53,8 @@ pub const WIRE_TARGET: &str = "freecut_cloud::wire";
 
 const MAX_ANSWER_BYTES: usize = 16 * 1024 * 1024;
 const MAX_EXCERPT_BYTES: usize = 2 * 1024;
+/// How much of an error body is scanned for job ids.
+const MAX_ERROR_SCAN_BYTES: usize = 64 * 1024;
 const MAX_RETRIES: u32 = 3;
 const MAX_TOOL_PAGES: usize = 50;
 /// Times one answer's event stream is resumed before the answer counts as
@@ -262,10 +264,18 @@ pub enum McpError {
         status: u16,
         /// The start of the body, as quoted text.
         excerpt: String,
+        /// Job ids in the raw body, up to 64 KiB of it (review R12).
+        job_ids: Vec<String>,
     },
     /// A JSON-RPC error answer.
-    #[error(transparent)]
-    Rpc(RpcError),
+    #[error("{error}")]
+    Rpc {
+        /// The error.
+        error: RpcError,
+        /// Job ids anywhere in the raw answer that carried it, earlier
+        /// events included (review R12).
+        job_ids: Vec<String>,
+    },
     /// A tool result with `isError: true`.
     #[error("tool error: {message}")]
     Tool {
@@ -275,6 +285,9 @@ pub enum McpError {
         structured: Option<Value>,
         /// Every text content item, for the job-id scan (review R5).
         texts: Vec<String>,
+        /// Job ids anywhere in the raw answer: other content items,
+        /// `_meta`, earlier events (review R12).
+        job_ids: Vec<String>,
     },
     /// An answer that cannot be read.
     #[error("unreadable answer: {detail}")]
@@ -322,19 +335,21 @@ impl McpError {
         }
     }
 
-    /// Every job id the failed exchange's answer names (review R5), found
-    /// with one scan ([`guard::uuids_in_text`]) wherever the service may put
-    /// them: every content item of a tool error (structured or text, JSON or
-    /// not), a JSON-RPC error's message and data, the excerpt of a server
-    /// error (5xx), and the part of an unreadable answer that arrived. A
-    /// failure that names a job may have started it, so it is never
-    /// reported as rejected or not sent.
+    /// Every job id the failed exchange's answer names (review R5, R12),
+    /// found with one scan ([`guard::uuids_in_text`]) over the raw answer:
+    /// every byte of it that arrived, earlier events and non-text items
+    /// included, a JSON-RPC error's message and data, and an error status's
+    /// body (4xx or 5xx, before it is cut for the message). A failure that
+    /// names a job may have started it, so it is never reported as rejected
+    /// or not sent ([`crate::error::submit_disposition`] leaves out the
+    /// request's own ids).
     pub fn job_ids(&self) -> Vec<String> {
-        let text = match self {
+        let (text, carried) = match self {
             McpError::Tool {
                 message,
                 structured,
                 texts,
+                job_ids,
             } => {
                 let mut all = texts.join("\n");
                 all.push('\n');
@@ -343,29 +358,43 @@ impl McpError {
                     all.push('\n');
                     all.push_str(&value.to_string());
                 }
-                all
+                (all, job_ids)
             }
-            McpError::Rpc(e) => match &e.data {
-                Some(data) => format!("{}\n{data}", e.message),
-                None => e.message.clone(),
+            McpError::Rpc { error, job_ids } => match &error.data {
+                Some(data) => (format!("{}\n{data}", error.message), job_ids),
+                None => (error.message.clone(), job_ids),
             },
-            McpError::Http { status, excerpt } if *status >= 500 => excerpt.clone(),
-            McpError::Protocol { job_ids, .. } => return job_ids.clone(),
+            McpError::Http {
+                excerpt, job_ids, ..
+            } => (excerpt.clone(), job_ids),
+            McpError::Protocol { job_ids, .. } => (String::new(), job_ids),
             _ => return Vec::new(),
         };
-        guard::uuids_in_text(&text)
+        let mut ids = guard::uuids_in_text(&text);
+        ids.extend(carried.iter().cloned());
+        ids.sort();
+        ids.dedup();
+        ids
     }
 
-    /// For an unreadable answer, the job ids in `read`, the part of it that
-    /// arrived (review R4). Other errors are returned as they are.
-    fn naming_jobs_in(self, read: &[u8]) -> McpError {
-        match self {
-            McpError::Protocol { detail, .. } => McpError::Protocol {
-                detail,
-                job_ids: guard::uuids_in_text(&String::from_utf8_lossy(read)),
-            },
-            other => other,
+    /// Adds the job ids in `read`, the raw answer or the part of it that
+    /// arrived, to an error that came with an answer (review R4, R12).
+    /// Other errors are returned as they are.
+    fn with_answer(self, read: &[u8]) -> McpError {
+        self.with_job_ids(guard::uuids_in_text(&String::from_utf8_lossy(read)))
+    }
+
+    fn with_job_ids(mut self, ids: Vec<String>) -> McpError {
+        if let McpError::Protocol { job_ids, .. }
+        | McpError::Tool { job_ids, .. }
+        | McpError::Rpc { job_ids, .. }
+        | McpError::Http { job_ids, .. } = &mut self
+        {
+            job_ids.extend(ids);
+            job_ids.sort();
+            job_ids.dedup();
         }
+        self
     }
 }
 
@@ -447,12 +476,15 @@ pub struct ToolInfo {
 }
 
 /// A successful tool result.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ToolOutput {
     /// `structuredContent`, when present.
     pub structured: Option<Value>,
     /// The `text` content items.
     pub texts: Vec<String>,
+    /// Job ids anywhere in the raw answer: non-text items, `_meta`, events
+    /// before the response (review R12).
+    pub answer_job_ids: Vec<String>,
 }
 
 impl ToolOutput {
@@ -464,7 +496,11 @@ impl ToolOutput {
             all.push('\n');
             all.push_str(&value.to_string());
         }
-        guard::uuids_in_text(&all)
+        let mut ids = guard::uuids_in_text(&all);
+        ids.extend(self.answer_job_ids.iter().cloned());
+        ids.sort();
+        ids.dedup();
+        ids
     }
 
     /// The result as JSON (§4.3): `structuredContent`, else the first text
@@ -530,6 +566,8 @@ struct LateRoute {
 struct Answer {
     result: Value,
     session: Option<String>,
+    /// Job ids anywhere in the raw answer (review R12).
+    job_ids: Vec<String>,
 }
 
 /// An MCP client for one server and one account.
@@ -799,7 +837,13 @@ impl McpClient {
             cancel,
         )?;
         let raw = answer.result.to_string();
-        parse_tool_result(answer.result).map_err(|e| e.naming_jobs_in(raw.as_bytes()))
+        match parse_tool_result(answer.result) {
+            Ok(mut output) => {
+                output.answer_job_ids = answer.job_ids;
+                Ok(output)
+            }
+            Err(e) => Err(e.with_answer(raw.as_bytes()).with_job_ids(answer.job_ids)),
+        }
     }
 
     /// Ends the session with `DELETE` (on disconnect and quit; best effort,
@@ -971,6 +1015,7 @@ impl McpClient {
                 Kind::Notification => Ok(Answer {
                     result: Value::Null,
                     session: session_header,
+                    job_ids: Vec::new(),
                 }),
                 Kind::Request => {
                     let resume = Resume {
@@ -978,12 +1023,13 @@ impl McpClient {
                         late,
                         session: session_header.clone(),
                     };
-                    let result = self
+                    let (result, job_ids) = self
                         .read_answer(response, id, resume, cancel)
                         .inspect_err(|e| tell_cancelled(e))?;
                     Ok(Answer {
                         result,
                         session: session_header,
+                        job_ids,
                     })
                 }
             },
@@ -995,8 +1041,12 @@ impl McpClient {
             }),
             404 if session.is_some() => Err(McpError::SessionExpired),
             status => {
-                let excerpt = excerpt(response, cancel);
-                Err(McpError::Http { status, excerpt })
+                let (excerpt, job_ids) = excerpt(response, cancel);
+                Err(McpError::Http {
+                    status,
+                    excerpt,
+                    job_ids,
+                })
             }
         }
     }
@@ -1007,20 +1057,32 @@ impl McpClient {
         id: i64,
         resume: Resume,
         cancel: &CancelToken,
-    ) -> Result<Value, McpError> {
+    ) -> Result<(Value, Vec<String>), McpError> {
+        // Every byte of the answer is scanned for job ids, whatever the
+        // outcome (review R12).
+        let ids = |read: &[u8]| guard::uuids_in_text(&String::from_utf8_lossy(read));
         match response.media_type().as_deref() {
             Some("application/json") => {
-                let bytes =
-                    read_body(&mut response.body, cancel, MAX_ANSWER_BYTES).map_err(body_error)?;
+                let mut bytes = Vec::new();
+                if let Err(e) =
+                    read_body_into(&mut response.body, cancel, MAX_ANSWER_BYTES, &mut bytes)
+                {
+                    return Err(body_error(e).with_answer(&bytes));
+                }
                 tracing::trace!(target: WIRE_TARGET, body = %redact::body(&bytes), "mcp answer body");
                 // Read to its end, so nothing in it can be reported late.
-                self.response_in(&bytes, id, cancel)
-                    .map_err(|e| e.naming_jobs_in(&bytes))?
+                let value = self
+                    .response_in(&bytes, id, cancel)
+                    .and_then(|outcome| outcome)
+                    .map_err(|e| e.with_answer(&bytes))?;
+                Ok((value, ids(&bytes)))
             }
             Some("text/event-stream") => {
                 let mut read = Vec::new();
-                self.read_stream(response.body, id, &resume, cancel, &mut read)
-                    .map_err(|e| e.naming_jobs_in(&read))
+                let value = self
+                    .read_stream(response.body, id, &resume, cancel, &mut read)
+                    .map_err(|e| e.with_answer(&read))?;
+                Ok((value, ids(&read)))
             }
             other => Err(McpError::protocol(format!(
                 "unexpected content type {}",
@@ -1236,7 +1298,10 @@ impl McpClient {
         match jsonrpc::parse(message).map_err(McpError::protocol)? {
             Incoming::Response { id: rid, outcome } => {
                 if rid == json!(id) {
-                    Ok(Some(outcome.map_err(McpError::Rpc)))
+                    Ok(Some(outcome.map_err(|error| McpError::Rpc {
+                        error,
+                        job_ids: Vec::new(),
+                    })))
                 } else {
                     tracing::debug!("ignored a response to another request");
                     Ok(None)
@@ -1390,17 +1455,21 @@ fn body_error(e: BodyError) -> McpError {
     }
 }
 
-/// The start of an error body as quoted text.
-fn excerpt(mut response: HttpResponse, cancel: &CancelToken) -> String {
+/// The start of an error body as quoted text, and the job ids in the raw
+/// body, up to [`MAX_ERROR_SCAN_BYTES`] of it, before it is cut for the
+/// message (review R12).
+fn excerpt(mut response: HttpResponse, cancel: &CancelToken) -> (String, Vec<String>) {
     let mut buf = Vec::new();
-    let mut chunk = [0u8; 1024];
-    while buf.len() < MAX_EXCERPT_BYTES && !cancel.is_cancelled() {
+    let mut chunk = [0u8; 8 * 1024];
+    while buf.len() < MAX_ERROR_SCAN_BYTES && !cancel.is_cancelled() {
         match response.body.read(&mut chunk) {
             Ok(0) | Err(_) => break,
-            Ok(n) => buf.extend_from_slice(&chunk[..n.min(MAX_EXCERPT_BYTES - buf.len())]),
+            Ok(n) => buf.extend_from_slice(&chunk[..n.min(MAX_ERROR_SCAN_BYTES - buf.len())]),
         }
     }
-    crate::error::quoted(&String::from_utf8_lossy(&buf))
+    let ids = guard::uuids_in_text(&String::from_utf8_lossy(&buf));
+    let start = &buf[..buf.len().min(MAX_EXCERPT_BYTES)];
+    (crate::error::quoted(&String::from_utf8_lossy(start)), ids)
 }
 
 fn parse_initialize(result: &Value) -> Result<ServerInfo, McpError> {
@@ -1448,12 +1517,14 @@ fn parse_tool_result(result: Value) -> Result<ToolOutput, McpError> {
     let output = ToolOutput {
         structured: obj.get("structuredContent").cloned(),
         texts,
+        answer_job_ids: Vec::new(),
     };
     if obj.get("isError").and_then(Value::as_bool).unwrap_or(false) {
         return Err(McpError::Tool {
             message: output.texts.first().cloned().unwrap_or_default(),
             structured: output.value().filter(Value::is_object),
             texts: output.texts,
+            job_ids: Vec::new(),
         });
     }
     Ok(output)
@@ -1491,18 +1562,23 @@ mod tests {
         let output = ToolOutput {
             structured: None,
             texts: vec![r#"{"cost":{"credits":2}}"#.into(), format!("queued {job}")],
+            answer_job_ids: vec![],
         };
         assert_eq!(output.value(), Some(json!({"cost": {"credits": 2}})));
         assert_eq!(output.job_ids(), vec![job]);
-        let rpc = McpError::Rpc(RpcError {
-            code: -32602,
-            message: "Invalid params".into(),
-            data: Some(json!({"jobs": [{"id": job.to_uppercase()}]})),
-        });
+        let rpc = McpError::Rpc {
+            error: RpcError {
+                code: -32602,
+                message: "Invalid params".into(),
+                data: Some(json!({"jobs": [{"id": job.to_uppercase()}]})),
+            },
+            job_ids: vec![],
+        };
         assert_eq!(rpc.job_ids(), vec![job]);
         let gateway = McpError::Http {
             status: 502,
             excerpt: format!("upstream failed for {job}"),
+            job_ids: vec![],
         };
         assert_eq!(gateway.job_ids(), vec![job]);
     }
@@ -1589,6 +1665,7 @@ mod tests {
         let http = McpError::Http {
             status: 503,
             excerpt: String::new(),
+            job_ids: vec![],
         };
         let not_sent = McpError::Transport(TransportError::not_sent(
             crate::transport::TransportErrorKind::Connect,

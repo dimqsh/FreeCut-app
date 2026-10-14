@@ -206,8 +206,10 @@ pub fn classify(err: &McpError) -> CloudError {
             reason: NotAcceptedReason::SessionExpired,
         },
         McpError::NotAccepted(reason) => CloudError::NotAccepted { reason: *reason },
-        McpError::Http { status, excerpt } => classify_status(*status, excerpt),
-        McpError::Rpc(e) => {
+        McpError::Http {
+            status, excerpt, ..
+        } => classify_status(*status, excerpt),
+        McpError::Rpc { error: e, .. } => {
             if e.code == -32602 {
                 // "Invalid params": still look for a more specific cause.
                 match classify_service_message(&e.message, e.data.as_ref()) {
@@ -303,7 +305,7 @@ pub fn submit_disposition(err: &McpError, sent: &Value) -> SubmitError {
         | McpError::Forbidden { .. }
         | McpError::SessionExpired
         | McpError::NotAccepted(_) => SubmitError::Rejected(classify(err)),
-        McpError::Rpc(e) => {
+        McpError::Rpc { error: e, .. } => {
             if REJECTING_RPC_CODES.contains(&e.code) {
                 SubmitError::Rejected(classify(err))
             } else {
@@ -519,6 +521,7 @@ mod tests {
         let http = |status| McpError::Http {
             status,
             excerpt: String::new(),
+            job_ids: vec![],
         };
         assert_eq!(classify(&http(402)), CloudError::InsufficientCredits);
         assert_eq!(classify(&http(429)), CloudError::Busy);
@@ -572,14 +575,16 @@ mod tests {
         assert!(matches!(
             d(&McpError::Http {
                 status: 429,
-                excerpt: String::new()
+                excerpt: String::new(),
+                job_ids: vec![]
             }),
             Rejected(CloudError::Busy)
         ));
         assert!(matches!(
             d(&McpError::Http {
                 status: 502,
-                excerpt: String::new()
+                excerpt: String::new(),
+                job_ids: vec![]
             }),
             OutcomeUnknown { .. }
         ));
@@ -592,22 +597,26 @@ mod tests {
         ));
         // A server-defined code proves nothing: unknown, reason kept.
         assert!(matches!(
-            d(&McpError::Rpc(RpcError {
-                code: -32000,
-                message: "Not enough credits".into(),
-                data: None
-            })),
+            d(&McpError::Rpc {
+                error: RpcError {
+                    code: -32000,
+                    message: "Not enough credits".into(),
+                    data: None
+                },
+                job_ids: vec![]
+            }),
             OutcomeUnknown {
                 cause: CloudError::InsufficientCredits,
                 ..
             }
         ));
-        let rpc = |code| {
-            McpError::Rpc(RpcError {
+        let rpc = |code| McpError::Rpc {
+            error: RpcError {
                 code,
                 message: "x".into(),
                 data: None,
-            })
+            },
+            job_ids: vec![],
         };
         for code in [-32700, -32600, -32601, -32602] {
             assert!(matches!(d(&rpc(code)), Rejected(_)), "{code}");
@@ -621,7 +630,8 @@ mod tests {
                 structured: Some(
                     serde_json::json!({"job_id": "0b4f6d2a-1111-4222-8333-944455556666"})
                 ),
-                texts: vec![]
+                texts: vec![],
+                job_ids: vec![]
             }),
             OutcomeUnknown { .. }
         ));
@@ -629,7 +639,8 @@ mod tests {
             d(&McpError::Tool {
                 message: "NSFW".into(),
                 structured: None,
-                texts: vec!["NSFW".into()]
+                texts: vec!["NSFW".into()],
+                job_ids: vec![]
             }),
             Rejected(CloudError::ContentRefused { .. })
         ));

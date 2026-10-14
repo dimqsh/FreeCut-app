@@ -94,6 +94,8 @@ pub enum ToolReply {
     RpcError(i64, String),
     /// A transport fault instead of an answer.
     Fault(Fault),
+    /// This tool result object, as it is.
+    Raw(Value),
 }
 
 /// What the fake received.
@@ -509,6 +511,7 @@ impl FakeService {
                     ),
                     ToolReply::RpcError(code, m) => rpc_error(&id, code, &m),
                     ToolReply::Fault(fault) => return fault_response(&fault, rec),
+                    ToolReply::Raw(result) => rpc_result(&id, result),
                 }
             }
             other => rpc_error(&id, -32601, &format!("Method not found: {other}")),

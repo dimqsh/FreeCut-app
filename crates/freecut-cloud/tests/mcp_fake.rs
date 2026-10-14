@@ -1313,6 +1313,7 @@ fn refusals_that_name_a_job_are_never_rejected() {
         message: "failed".into(),
         structured: None,
         texts: vec!["failed".into(), format!("see job {JOB}")],
+        job_ids: vec![],
     };
     assert_eq!(err.job_ids(), vec![JOB]);
 
@@ -1495,6 +1496,134 @@ fn a_refusal_that_echoes_a_media_id_is_not_a_job() {
         2,
         "the tool was released"
     );
+}
+
+/// Breaks the body of a `tools/call` answer right after the fake's job id,
+/// as a connection reset would.
+#[derive(Debug)]
+struct BreaksAfterTheJobId(freecut_cloud::fake::FakeService);
+
+struct Broken(std::io::Cursor<Vec<u8>>);
+
+impl std::io::Read for Broken {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self.0.read(buf)? {
+            0 => Err(std::io::Error::from(std::io::ErrorKind::ConnectionReset)),
+            n => Ok(n),
+        }
+    }
+}
+
+impl HttpTransport for BreaksAfterTheJobId {
+    fn send(
+        &self,
+        request: HttpRequest,
+        cancel: &CancelToken,
+    ) -> Result<HttpResponse, TransportError> {
+        let paid = String::from_utf8_lossy(&request.body).contains("generate_image");
+        let mut answer = self.0.send(request, cancel)?;
+        if !paid {
+            return Ok(answer);
+        }
+        let body = read_body(&mut answer.body, &CancelToken::new(), 1 << 20).unwrap();
+        let text = String::from_utf8_lossy(&body);
+        let cut = text.find(PAID_JOB).unwrap() + PAID_JOB.len() + 2;
+        answer.body = Box::new(Broken(std::io::Cursor::new(body[..cut].to_vec())));
+        Ok(answer)
+    }
+}
+
+/// The job id `paid_fake` answers with.
+const PAID_JOB: &str = "0b4f6d2a-1111-4222-8333-944455556666";
+
+/// R12: every byte of a paid call's or a cost check's answer is scanned for
+/// job ids: a `resource_link` item, a 4xx body, a 5xx body past the part
+/// kept for the message, a progress event before the response, and what
+/// arrived of a JSON answer before the read broke.
+#[test]
+fn every_byte_of_an_answer_is_scanned_for_job_ids() {
+    use freecut_cloud::fake::FakeService;
+    let progress = json!({"jsonrpc": "2.0", "method": "notifications/progress",
+        "params": {"progressToken": 1, "progress": 1, "message": format!("queued {JOB}")}});
+    type Setup = Box<dyn Fn(&FakeService)>;
+    let cases: Vec<(&str, Setup, Option<Fault>)> = vec![
+        (
+            "resource_link in an isError result",
+            Box::new(|f| {
+                f.on_tool("generate_image", |_| {
+                    ToolReply::Raw(json!({"isError": true, "content": [
+                        {"type": "text", "text": "failed"},
+                        {"type": "resource_link", "name": "job",
+                            "uri": format!("https://higgsfield.ai/jobs/{JOB}")}]}))
+                });
+            }),
+            None,
+        ),
+        (
+            "4xx body",
+            Box::new(|_| {}),
+            Some(Fault::Status(409, format!("job {JOB} already exists"))),
+        ),
+        (
+            "long 5xx body",
+            Box::new(|_| {}),
+            Some(Fault::Status(502, format!("{}{JOB}", "x".repeat(3000)))),
+        ),
+        (
+            "progress event before a refusal",
+            Box::new(move |f| {
+                f.set_stream(StreamMode::Sse { chunk: 64 });
+                f.send_before_response(vec![progress.clone()]);
+                f.on_tool("generate_image", |_| {
+                    ToolReply::Error("NSFW content".into())
+                });
+            }),
+            None,
+        ),
+    ];
+    for (name, setup, fault) in cases {
+        let fake = paid_fake();
+        setup(&fake);
+        let c = mcp_client(&fake, token("t1"));
+        c.initialize(&CancelToken::new()).unwrap();
+        if let Some(f) = fault {
+            fake.push_fault(f);
+        }
+        let d = submit_disposition(&submit(&c).unwrap_err(), &image_args());
+        assert!(
+            matches!(&d, SubmitError::OutcomeUnknown { job_ids, .. } if job_ids == &[JOB]),
+            "{name}: {d:?}"
+        );
+        assert_eq!(fake.calls_to("generate_image").len(), 1, "{name}");
+    }
+
+    // A JSON answer cut right after its job id.
+    let fake = paid_fake();
+    let c = McpClient::new(
+        freecut_cloud::provider::higgsfield::ENDPOINT,
+        Arc::new(BreaksAfterTheJobId(fake.clone())),
+        token("t1"),
+        Arc::new(common::NoWait::default()),
+        "0.1.0",
+    );
+    let d = submit_disposition(&submit(&c).unwrap_err(), &image_args());
+    assert!(
+        matches!(&d, SubmitError::OutcomeUnknown { job_ids, .. } if job_ids == &[PAID_JOB]),
+        "{d:?}"
+    );
+
+    // A cost check whose answer follows a progress event naming a job.
+    let fake = fake_higgsfield();
+    fake.set_stream(StreamMode::Sse { chunk: 64 });
+    fake.send_before_response(vec![
+        json!({"jsonrpc": "2.0", "method": "notifications/progress",
+        "params": {"progressToken": 1, "progress": 1, "message": format!("queued {JOB}")}}),
+    ]);
+    let (p, _) = provider(&fake, token("t1"));
+    match p.quote(&image_op(), &CancelToken::new()).unwrap() {
+        QuoteOutcome::StartedRun(run) => assert_eq!(run.job_ids, vec![JOB]),
+        other => panic!("{other:?}"),
+    }
 }
 
 fn fault_strategy() -> impl Strategy<Value = Fault> {
