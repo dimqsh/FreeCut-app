@@ -639,28 +639,42 @@ impl Scrubber {
         match value {
             Value::String(s) => Value::String(self.string(s)),
             Value::Array(items) => Value::Array(items.iter().map(|v| self.value(v)).collect()),
-            Value::Object(map) => Value::Object(
-                map.iter()
-                    .map(|(k, v)| {
-                        let v = if k == "mcp-session-id" {
-                            Value::String(self.fake(v.as_str().unwrap_or_default(), "fake-session"))
-                        } else if k == "unlim" {
-                            fake_allowance(v)
-                        } else if k == "text" && allowance_prose(map) {
-                            Value::String(ALLOWANCE_PROSE.into())
-                        } else if secret_key(k)
-                            && matches!(v, Value::String(_) | Value::Number(_) | Value::Bool(_))
-                        {
-                            // Only a scalar is a secret: a JSON Schema object
-                            // under `code` or `token` stays (review R23).
-                            Value::String("<redacted>".into())
-                        } else {
-                            self.value(v)
-                        };
-                        (k.clone(), v)
-                    })
-                    .collect(),
-            ),
+            Value::Object(map) => {
+                let mut out = serde_json::Map::new();
+                for (k, v) in map {
+                    let v = if k == "mcp-session-id" {
+                        Value::String(self.fake(v.as_str().unwrap_or_default(), "fake-session"))
+                    } else if k == "unlim" {
+                        fake_allowance(v)
+                    } else if k == "text" && allowance_prose(map) {
+                        Value::String(ALLOWANCE_PROSE.into())
+                    } else if secret_key(k)
+                        && matches!(v, Value::String(_) | Value::Number(_) | Value::Bool(_))
+                    {
+                        // Only a scalar is a secret: a JSON Schema object
+                        // under `code` or `token` stays (review R23).
+                        Value::String("<redacted>".into())
+                    } else {
+                        self.value(v)
+                    };
+                    // Keys are scrubbed like values (review R29); fakes are
+                    // distinct per original, and a key that still meets
+                    // another one gets a suffix instead of replacing it.
+                    let key = if k == "mcp-session-id" {
+                        k.clone()
+                    } else {
+                        self.text(k)
+                    };
+                    let mut unique = key.clone();
+                    let mut n = 2;
+                    while out.contains_key(&unique) {
+                        unique = format!("{key}#{n}");
+                        n += 1;
+                    }
+                    out.insert(unique, v);
+                }
+                Value::Object(out)
+            }
             other => other.clone(),
         }
     }
@@ -706,7 +720,7 @@ impl Scrubber {
     fn text(&mut self, text: &str) -> String {
         let text = self.uuids(text);
         let text = self.emails(&text);
-        let text = jwts(&text);
+        let text = self.jwts(&text);
         let mut out = String::with_capacity(text.len());
         let mut word = String::new();
         let flush = |word: &mut String, out: &mut String, this: &mut Scrubber| {
@@ -793,7 +807,10 @@ impl Scrubber {
                 .is_some_and(|t| t.len() >= 2 && t.bytes().all(|c| c.is_ascii_alphabetic()));
             if l < i && host.contains('.') && tld_ok {
                 out.push_str(&text[last..l]);
-                out.push_str("user");
+                // One fake per address, however it was written (R29).
+                let address = format!("{}@{host}", &text[l..i]).to_ascii_lowercase();
+                let user = self.fake(&format!("email:{address}"), "user");
+                out.push_str(&user.replacen('-', "", 1));
                 out.push_str(&text[i..i + at]);
                 out.push_str("example.test");
                 last = r;
@@ -804,6 +821,12 @@ impl Scrubber {
         }
         out.push_str(&text[last..]);
         out
+    }
+
+    fn jwts(&mut self, text: &str) -> String {
+        jwts(text, |jwt| {
+            format!("<{}>", self.fake(&format!("jwt:{jwt}"), "jwt"))
+        })
     }
 
     fn word(&mut self, word: &str) -> String {
@@ -824,8 +847,8 @@ impl Scrubber {
 
 /// Every JWT (`eyJ…` with at least three dot-separated base64url parts, JWS
 /// or JWE), wherever it sits: after `=` or `;`, in brackets, before a full
-/// stop (review R21).
-fn jwts(text: &str) -> String {
+/// stop (review R21). Each distinct one gets its own `<jwt-N>` (R29).
+fn jwts(text: &str, mut fake: impl FnMut(&str) -> String) -> String {
     let b = text.as_bytes();
     let part = |c: u8| c.is_ascii_alphanumeric() || c == b'-' || c == b'_';
     let mut out = String::with_capacity(text.len());
@@ -851,7 +874,7 @@ fn jwts(text: &str) -> String {
             }
             if parts >= 3 {
                 out.push_str(&text[last..i]);
-                out.push_str("<jwt>");
+                out.push_str(&fake(&text[i..end]));
                 last = end;
                 i = end;
                 continue;
@@ -1509,6 +1532,37 @@ mod tests {
         assert_eq!(result["content"][1]["text"], ALLOWANCE_PROSE);
     }
 
+    /// R29: object keys are scrubbed like values, and no two keys collapse
+    /// into one: each e-mail gets its own fake, and a key that still meets
+    /// another gets a suffix.
+    #[test]
+    fn object_keys_are_scrubbed_without_collapsing() {
+        let id = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+        let mut s = Scrubber::default();
+        let out = s.value(&json!({
+            id: 1,
+            "a@x.example": 2,
+            "b@y.example": 3,
+            "user1@example.test": 4,
+            "mcp-session-id": "real-session",
+        }));
+        let map = out.as_object().unwrap();
+        assert_eq!(map.len(), 5, "{out}");
+        let text = out.to_string();
+        for leak in [id, "a@x.example", "b@y.example", "real-session"] {
+            assert!(!text.contains(leak), "{leak} in {text}");
+        }
+        let mut values: Vec<i64> = map.values().filter_map(Value::as_i64).collect();
+        values.sort_unstable();
+        assert_eq!(values, vec![1, 2, 3, 4]);
+        assert!(
+            map["mcp-session-id"]
+                .as_str()
+                .unwrap()
+                .starts_with("fake-session-")
+        );
+    }
+
     #[test]
     fn a_known_value_is_replaced_wherever_it_appears() {
         let line = json!({"response": {"body": {
@@ -1534,7 +1588,7 @@ mod tests {
             s.text("https://cdn.example/x.png?X-Amz-Signature=abc&X-Amz-Expires=60"),
             "https://cdn.example/x.png?<signed query removed>"
         );
-        assert_eq!(s.text("eyJhbGciOi.eyJzdWIiOi.c2ln"), "<jwt>");
+        assert!(s.text("eyJhbGciOi.eyJzdWIiOi.c2ln").starts_with("<jwt-"));
         assert_eq!(
             s.text("https://clerk.higgsfield.ai/oauth/authorize"),
             "https://clerk.higgsfield.ai/oauth/authorize"
@@ -1551,7 +1605,8 @@ mod tests {
                 .unwrap()
                 .starts_with("fake-session-")
         );
-        assert_eq!(scrubbed["x"], "user@example.test");
+        let x = scrubbed["x"].as_str().unwrap();
+        assert!(x.starts_with("user") && x.ends_with("@example.test"), "{x}");
         // The same session id maps to the same fake.
         assert_eq!(
             s.value(&json!({"mcp-session-id": "real-session-abc"}))["mcp-session-id"],
