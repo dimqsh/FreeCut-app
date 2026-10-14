@@ -526,32 +526,28 @@ fn headers_json(headers: &[(String, String)]) -> Value {
     )
 }
 
-/// JSON stays JSON, forms and other text become strings; secret fields are
-/// replaced either way.
+/// JSON stays JSON, a form has its secret fields replaced, other text (an
+/// event stream) stays text. The scrubber redacts secret fields in JSON and
+/// in every event's data at write time.
 fn body_json(bytes: &[u8]) -> Value {
     if bytes.is_empty() {
         return Value::Null;
     }
     if let Ok(value) = serde_json::from_slice::<Value>(bytes) {
-        return redact::json(&value);
+        return value;
     }
     let text = String::from_utf8_lossy(bytes);
     if text.contains('=') && !text.contains(char::is_whitespace) {
         return Value::String(redact::form(&text));
     }
-    // SSE streams and other text: JSON inside `data:` lines is redacted.
-    Value::String(
-        text.lines()
-            .map(|line| match line.strip_prefix("data:") {
-                Some(data) => match serde_json::from_str::<Value>(data.trim()) {
-                    Ok(v) => format!("data: {}", redact::json(&v)),
-                    Err(_) => line.to_owned(),
-                },
-                None => line.to_owned(),
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
+    Value::String(text.into_owned())
+}
+
+/// Whether `key` names a secret field (`redact::SECRET_FIELDS`).
+fn secret_key(key: &str) -> bool {
+    redact::SECRET_FIELDS
+        .iter()
+        .any(|f| f.eq_ignore_ascii_case(key))
 }
 
 /// The start of every fake UUID the scrubber writes.
@@ -582,6 +578,12 @@ impl Scrubber {
                     .map(|(k, v)| {
                         let v = if k == "mcp-session-id" {
                             Value::String(self.fake(v.as_str().unwrap_or_default(), "fake-session"))
+                        } else if secret_key(k)
+                            && matches!(v, Value::String(_) | Value::Number(_) | Value::Bool(_))
+                        {
+                            // Only a scalar is a secret: a JSON Schema object
+                            // under `code` or `token` stays (review R23).
+                            Value::String("<redacted>".into())
                         } else {
                             self.value(v)
                         };
@@ -1252,6 +1254,43 @@ mod tests {
         // them all.
         let raw = recorder.raw.lock().unwrap().clone();
         assert_eq!(leaks(&raw, &known).len(), values.len());
+    }
+
+    /// R23: a secret field name redacts only a scalar value. A JSON Schema
+    /// property named `code` or `token` (an object) survives, in a JSON body
+    /// and inside an event stream; a token string or number does not.
+    #[test]
+    fn only_scalar_secret_values_are_redacted() {
+        let schema = json!({"type": "object", "properties": {
+            "code": {"type": "string", "description": "Python code to run"},
+            "lease": {"type": "object", "properties": {"token": {"type": "string"}}}}});
+        let answer = json!({"jsonrpc": "2.0", "id": 2, "result": {"tools": [
+            {"name": "scene_builder_3d_run_python", "inputSchema": schema}]}});
+        let tokens = json!({"access_token": "at-1", "code": "c-1", "expires_in": 3600,
+            "token": 12345, "refresh_token": null});
+        let mut s = Scrubber::default();
+        let in_json = s.value(&answer);
+        assert_eq!(in_json["result"]["tools"][0]["inputSchema"], schema);
+        let sse = Value::String(format!("event: message\ndata: {answer}\n\n"));
+        let in_stream = s.value(&sse);
+        let data = in_stream
+            .as_str()
+            .unwrap()
+            .lines()
+            .find_map(|l| l.strip_prefix("data: "))
+            .unwrap();
+        let parsed: Value = serde_json::from_str(data).unwrap();
+        assert_eq!(parsed["result"]["tools"][0]["inputSchema"], schema);
+        assert_eq!(
+            s.value(&tokens),
+            json!({"access_token": "<redacted>", "code": "<redacted>", "expires_in": 3600,
+                "token": "<redacted>", "refresh_token": null})
+        );
+        // Through the recorder: a JSON answer keeps its schema too.
+        assert_eq!(
+            s.value(&body_json(answer.to_string().as_bytes()))["result"]["tools"][0]["inputSchema"],
+            schema
+        );
     }
 
     #[test]
