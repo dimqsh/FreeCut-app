@@ -1269,6 +1269,8 @@ fn refusals_that_name_a_job_are_never_rejected() {
     for fault in [
         Fault::ToolError(format!("Job {JOB} failed: model overloaded")),
         Fault::ToolError(format!("{{\"error\":\"busy\",\"job_id\":\"{JOB}\"}}")),
+        // Glued to a prefix (R13).
+        Fault::ToolError(format!("request-{JOB} failed")),
         Fault::RpcErrorData(-32602, "Invalid params".into(), json!({"job_id": JOB})),
         Fault::RpcError(-32600, format!("request {JOB} was already queued")),
     ] {

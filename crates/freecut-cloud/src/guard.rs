@@ -114,28 +114,58 @@ pub fn job_ids_in(answer: &Value) -> Vec<String> {
     uuids_in_text(&answer.to_string())
 }
 
-/// Every UUID-shaped token in raw text, lower-case and deduplicated: the one
-/// scan for job ids, used on answers that parse and on those that do not,
-/// so no job id is lost.
+/// Every UUID-shaped run of 36 characters in raw text, lower-case and
+/// deduplicated: the one scan for job ids, used on answers that parse and
+/// on those that do not, so no job id is lost. A window is tried at every
+/// byte, with no token boundaries, so `job-<id>`, `id-<id>` and
+/// `<id>-0.png` count (review R13); finding too much fails closed.
 pub fn uuids_in_text(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = text
-        .split(|c: char| !(c.is_ascii_hexdigit() || c == '-'))
-        .filter(|t| is_uuid(t))
-        .map(str::to_ascii_lowercase)
+    let mut out: Vec<String> = uuid_spans(text)
+        .map(|(start, end)| text[start..end].to_ascii_lowercase())
         .collect();
     out.sort();
     out.dedup();
     out
 }
 
+/// The byte ranges of the UUID-shaped windows in `text`, left to right and
+/// not overlapping. Every byte in a window is ASCII, so each range starts
+/// and ends on a character boundary.
+pub fn uuid_spans(text: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    std::iter::from_fn(move || {
+        while i + UUID_LEN <= bytes.len() {
+            if uuid_at(bytes, i) {
+                let span = (i, i + UUID_LEN);
+                i += UUID_LEN;
+                return Some(span);
+            }
+            i += 1;
+        }
+        None
+    })
+}
+
+const UUID_LEN: usize = 36;
+
+/// Whether `bytes[i..i + 36]` is `8-4-4-4-12` hexadecimal digits. The dashes
+/// are checked first, so most positions cost four byte reads (review N7).
+fn uuid_at(bytes: &[u8], i: usize) -> bool {
+    const DASHES: [usize; 4] = [8, 13, 18, 23];
+    let Some(window) = bytes.get(i..i + UUID_LEN) else {
+        return false;
+    };
+    DASHES.iter().all(|&d| window[d] == b'-')
+        && window
+            .iter()
+            .enumerate()
+            .all(|(k, b)| DASHES.contains(&k) || b.is_ascii_hexdigit())
+}
+
 /// `8-4-4-4-12` hexadecimal digits.
 pub fn is_uuid(text: &str) -> bool {
-    let groups: Vec<&str> = text.split('-').collect();
-    groups.len() == 5
-        && groups
-            .iter()
-            .zip([8, 4, 4, 4, 12])
-            .all(|(g, len)| g.len() == len && g.bytes().all(|b| b.is_ascii_hexdigit()))
+    text.len() == UUID_LEN && uuid_at(text.as_bytes(), 0)
 }
 
 /// Cost checks in flight, and tools whose check started or may have started
@@ -353,6 +383,28 @@ mod tests {
                 &json!({"message": "queued 7c9e6679-7425-40de-944b-e07fc1f90ae7, then failed"})
             ),
             vec!["7c9e6679-7425-40de-944b-e07fc1f90ae7"]
+        );
+    }
+
+    /// R13: a UUID glued to a hyphen, a hex letter or a suffix is found;
+    /// there are no token boundaries, and over-detection fails closed.
+    #[test]
+    fn uuids_glued_to_hyphens_or_hex_letters_are_found() {
+        let id = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+        for text in [
+            format!("job-{id}"),
+            format!("request-{id}"),
+            format!("id-{id}"),
+            format!("{id}-0.png"),
+            format!("https://cdn.example/a{}b.webp", id.to_uppercase()),
+        ] {
+            assert_eq!(uuids_in_text(&text), vec![id], "{text}");
+        }
+        assert!(uuids_in_text("7c9e6679-7425-40de-944b-e07fc1f90ae").is_empty());
+        assert!(
+            is_uuid(id)
+                && !is_uuid(&format!("{id}0"))
+                && !is_uuid("7c9e66797425-40de-944b-e07fc1f90ae7-")
         );
     }
 
