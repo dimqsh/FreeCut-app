@@ -42,8 +42,11 @@ only: discovery, one client registration, the code exchange, `initialize`,
 tool's transport refuses any paid tool and anything carrying `get_cost`
 before it is sent.
 
-Before writing, the tool removes the `Authorization` header, replaces secret
-fields (tokens, codes, client id) and the client id wherever else it appears,
+Before writing, the tool keeps only an allow list of headers (`content-type`,
+`cache-control`, `date`, `mcp-session-id`, `mcp-protocol-version`,
+`www-authenticate`, `x-higgsfield-build`; no `Authorization`, cookies, trace
+ids or CDN headers), replaces secret fields (tokens, codes, client id) and the
+client id wherever else it appears,
 and replaces e-mail addresses, JWTs and UUIDs with stable fakes; session ids
 become `fake-session-N` and signed URLs lose their query. Review the file
 before committing it. Not recorded yet.

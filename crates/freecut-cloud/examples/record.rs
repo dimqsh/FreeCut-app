@@ -14,8 +14,10 @@
 //! before it leaves the computer.
 //!
 //! What is written (`tests/fixtures/higgsfield/recorded/free-calls.jsonl`,
-//! one exchange per line) is scrubbed first: no `Authorization` header is
-//! recorded; token, code, client id and other secret fields are replaced;
+//! one exchange per line) is scrubbed first: only the headers on
+//! [`RECORDED_HEADERS`] are kept, request and response (no `Authorization`,
+//! cookies, trace ids or CDN headers); token, code, client id and other
+//! secret fields are replaced;
 //! e-mail addresses, JWTs and UUIDs are replaced by stable fakes; session
 //! ids become `fake-session-N`; signed URLs lose their query. The owner
 //! reviews the file before committing it. The access token lives in memory
@@ -43,6 +45,20 @@ use freecut_cloud::transport::{
     TransportErrorKind, read_body,
 };
 use serde_json::{Value, json};
+
+/// The only headers recorded, on requests and answers (default deny). Every
+/// other header may tie the file to the account, the machine or the CDN
+/// session: cookies, trace and ray ids, the caller's country, report
+/// endpoints (review round 3).
+const RECORDED_HEADERS: &[&str] = &[
+    "content-type",
+    "cache-control",
+    "date",
+    "mcp-session-id",
+    "mcp-protocol-version",
+    "www-authenticate",
+    "x-higgsfield-build",
+];
 
 /// The longest answer recorded.
 const MAX_RECORDED_BYTES: usize = 32 * 1024 * 1024;
@@ -336,11 +352,18 @@ fn replace_known(value: &Value, known: &[(&str, &str)]) -> Value {
     }
 }
 
+fn recorded_header(name: &str) -> bool {
+    RECORDED_HEADERS
+        .iter()
+        .any(|h| h.eq_ignore_ascii_case(name))
+}
+
+/// The headers worth recording, names lower-cased; everything else dropped.
 fn headers_json(headers: &[(String, String)]) -> Value {
     Value::Object(
         headers
             .iter()
-            .filter(|(k, _)| !k.eq_ignore_ascii_case("authorization"))
+            .filter(|(k, _)| recorded_header(k))
             .map(|(k, v)| (k.to_ascii_lowercase(), Value::String(v.clone())))
             .collect(),
     )
@@ -585,6 +608,74 @@ mod tests {
                 &CancelToken::new(),
             )
             .unwrap();
+    }
+
+    /// A transport that answers every request with the same headers.
+    #[derive(Debug)]
+    struct Canned;
+
+    impl HttpTransport for Canned {
+        fn send(&self, _: HttpRequest, _: &CancelToken) -> Result<HttpResponse, TransportError> {
+            let headers = [
+                ("Content-Type", "application/json"),
+                ("Date", "Tue, 14 Oct 2026 10:00:00 GMT"),
+                ("X-Higgsfield-Build", "b1"),
+                ("Set-Cookie", "__cf_bm=abc; path=/"),
+                ("x-country", "KZ"),
+                ("cf-ray", "8c1f-ALA"),
+                ("x-clerk-trace-id", "t-123"),
+                ("x-cloud-trace-context", "c-456"),
+                ("report-to", "{\"group\":\"cf-nel\"}"),
+                ("nel", "{\"report_to\":\"cf-nel\"}"),
+                ("server", "cloudflare"),
+            ];
+            Ok(HttpResponse::new(
+                200,
+                headers
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect(),
+                b"{}".to_vec(),
+            ))
+        }
+    }
+
+    /// Round 3: only allowed headers reach the file, request and answer.
+    #[test]
+    fn only_allowed_headers_are_recorded() {
+        let recorder = Recorder::new(Arc::new(Canned));
+        let mut request = HttpRequest::get(
+            "https://clerk.higgsfield.ai/.well-known/oauth-authorization-server",
+            freecut_cloud::transport::CallLimits::READ,
+        )
+        .header("Accept", "application/json")
+        .header("Cookie", "__cf_bm=abc")
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .with_bearer(Secret::new("t1"));
+        request
+            .headers
+            .push(("authorization".into(), "Bearer t1".into()));
+        recorder.send(request, &CancelToken::new()).unwrap();
+        let line = &recorder.lines()[0];
+        let names = |part: &str| -> Vec<String> {
+            line[part]["headers"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect()
+        };
+        assert_eq!(names("request"), vec!["mcp-protocol-version"]);
+        assert_eq!(
+            names("response"),
+            vec!["content-type", "date", "x-higgsfield-build"]
+        );
+        let text = line.to_string();
+        for leak in [
+            "__cf_bm", "KZ", "8c1f", "t-123", "c-456", "cf-nel", "Bearer",
+        ] {
+            assert!(!text.contains(leak), "{leak} was recorded");
+        }
     }
 
     #[test]
