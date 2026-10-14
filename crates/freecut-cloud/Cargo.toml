@@ -12,6 +12,9 @@ default = []
 # Without it the crate contains no networking code at all: the protocol,
 # OAuth, catalogue and guard logic run against the in-memory fake server.
 http = ["dep:ureq", "dep:rustls"]
+# `provider::scripted::ScriptedProvider` for app and assistant tests (§6.1);
+# enable it from dev-dependencies only.
+test-support = []
 
 [dependencies]
 freecut-timeline.workspace = true

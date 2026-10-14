@@ -474,10 +474,13 @@ pub trait SecretStore: Send + Sync {
 ```rust
 pub trait GenerationProvider: Send + Sync + std::fmt::Debug {
     fn id(&self) -> ProviderId;                       // "higgsfield"
-    fn connect(&self, cred: &Credential, cancel: &CancelToken) -> Result<ServiceInfo, CloudError>;
+    // H1, built. Tokens come from the provider's TokenSource (the TokenManager, §5.5),
+    // so connect takes no Credential.
+    fn connect(&self, cancel: &CancelToken) -> Result<ServiceInfo, CloudError>;
     fn catalogue(&self, cancel: &CancelToken) -> Result<Catalogue, CloudError>;
-    fn quote(&self, op: &Operation, inputs: &[RemoteInput], cancel: &CancelToken)
-        -> Result<QuoteOutcome, CloudError>;          // Quote | Question | NotAvailable
+    fn quote(&self, op: &Operation, cancel: &CancelToken)   // inputs: RoleRefs inside `op`
+        -> Result<QuoteOutcome, CloudError>;
+    // H2, planned; the shapes below may change with the upload work.
     fn prepare_upload(&self, files: &[UploadSpec], cancel: &CancelToken)
         -> Result<Vec<UploadSlot>, CloudError>;       // presigned URL + headers + remote id
     fn confirm_upload(&self, slots: &[UploadSlot], cancel: &CancelToken)
@@ -487,6 +490,14 @@ pub trait GenerationProvider: Send + Sync + std::fmt::Debug {
     fn poll(&self, jobs: &[RemoteJobId], cancel: &CancelToken)
         -> Result<PollResult, CloudError>;            // states, result URLs, next poll delay
     fn cancel_remote(&self, job: &RemoteJobId) -> CancelSupport;  // Higgsfield: Unsupported
+}
+
+pub enum QuoteOutcome {
+    Quote(Quote),                       // credits, variants covered, adjustments
+    Question(ServiceQuestion),          // e.g. UseAllowance
+    NotAvailable(Unavailable),
+    StartedRun(StartedRun),             // the service ignored get_cost and started a run (§4.7 rule 4)
+    PossiblyStarted(PossiblyStarted),   // a check may have started a run; that tool's checks stop (§4.7)
 }
 
 pub enum SubmitOutcome {
@@ -501,8 +512,14 @@ pub enum SubmitError {
 }
 ```
 
-`ScriptedProvider` (always built) implements the trait from a script for app and assistant
-tests. A second service (for example the REST key pair, or another vendor) is a second
+The Higgsfield `quote` sends its cost check through `McpClient::check_cost(tool, &QuoteRequest,
+cancel)`, the only path that may set `get_cost: true` (§4.7); paid tools go through
+`McpClient::call_tool` with an `&'static AllowedTool` (§6.3).
+
+`ScriptedProvider` (`freecut_cloud::provider::scripted`, feature `test-support`, enabled from
+dev-dependencies only) implements the trait from a script for app and assistant tests: each
+method returns its next scripted answer, a cancelled token wins, a missing step is an error,
+and every call is recorded. A second service (for example the REST key pair, or another vendor) is a second
 implementation plus its own catalogue mapping; the UI, job model, ledger, recipe and disclosure
 do not change.
 
@@ -1066,7 +1083,8 @@ Deviations from the sections above, all **accepted by owner** (2026-10-14):
 - **Contracts (§6.1).** A provider is built with a `TokenSource` (the `TokenManager` supplies
   tokens), so `connect` takes no `Credential`; `quote` takes the `Operation` alone (inputs are
   `RoleRef`s with service media ids). `QuoteOutcome` gains `StartedRun` (§4.7 rule 4).
-  *Accepted by owner.*
+  *Accepted by owner.* §6.1's body shows these signatures, and `ScriptedProvider` (feature
+  `test-support`) implements the same trait (review Q10).
 - **Cost checks after a refusal (§4.5, §4.7).** A cost check answered `401` or session `404` is
   not resent: the sign-in or session is renewed and the user presses Check cost again.
   *Accepted by owner.*

@@ -20,7 +20,9 @@
 //! - [`guard`]: the preflight guard of §4.7;
 //! - [`error`]: [`CloudError`](error::CloudError) and the classifiers that turn
 //!   protocol failures into it;
-//! - [`fake`]: an in-memory fake of the service for tests (no sockets).
+//! - [`fake`]: an in-memory fake of the service for tests (no sockets);
+//! - `provider::scripted` (feature `test-support`): a provider that answers
+//!   from a script, for app and assistant tests.
 //!
 //! **Money.** Paid calls are never retried or resent by this crate, and a
 //! paid request that may have reached the service without a readable answer

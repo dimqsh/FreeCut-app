@@ -41,5 +41,5 @@ jobs:
         run: cargo test -p freecut-audio --no-default-features
       - name: Cloud transport (http feature; tests use 127.0.0.1 only)
         run: |
-          cargo clippy -p freecut-cloud --all-targets --features http -- -D warnings
+          cargo clippy -p freecut-cloud --all-targets --features http,test-support -- -D warnings
           cargo test -p freecut-cloud --features http

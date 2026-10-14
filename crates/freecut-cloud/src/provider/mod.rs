@@ -3,6 +3,8 @@
 //! and cost quotes; submission and polling come in H2.
 
 pub mod higgsfield;
+#[cfg(any(test, feature = "test-support"))]
+pub mod scripted;
 
 use std::collections::BTreeMap;
 use std::fmt;
