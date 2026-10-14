@@ -456,6 +456,18 @@ fn body_json(bytes: &[u8]) -> Value {
     )
 }
 
+/// The start of every fake UUID the scrubber writes.
+const FAKE_UUID_PREFIX: &str = "00000000-0000-4000-8000-";
+
+/// UUIDs the scrubber leaves alone: the nil and max values (they appear in
+/// the service's public schemas) and its own fakes.
+fn keeps(uuid: &str) -> bool {
+    let digits = uuid.bytes().filter(|b| *b != b'-');
+    uuid.starts_with(FAKE_UUID_PREFIX)
+        || digits.clone().all(|b| b == b'0')
+        || digits.into_iter().all(|b| b.eq_ignore_ascii_case(&b'f'))
+}
+
 /// Replaces what is personal or secret in recorded text with stable fakes.
 #[derive(Debug, Default)]
 struct Scrubber {
@@ -491,8 +503,10 @@ impl Scrubber {
             .clone()
     }
 
-    /// Word by word: UUIDs, e-mail addresses, JWTs and signed URL queries.
+    /// UUIDs anywhere (inside escaped JSON and URL paths too), then word by
+    /// word: e-mail addresses, JWTs and signed URL queries.
     fn text(&mut self, text: &str) -> String {
+        let text = self.uuids(text);
         let mut out = String::with_capacity(text.len());
         let mut word = String::new();
         let flush = |word: &mut String, out: &mut String, this: &mut Scrubber| {
@@ -513,15 +527,40 @@ impl Scrubber {
         out
     }
 
-    fn word(&mut self, word: &str) -> String {
-        if is_uuid(word) {
-            let n = self.fakes.len() + 1;
-            return self
-                .fakes
-                .entry(word.to_ascii_lowercase())
-                .or_insert_with(|| format!("00000000-0000-4000-8000-{n:012}"))
-                .clone();
+    /// Replaces every UUID-shaped run of 36 characters that no hex digit
+    /// touches, wherever it sits: a whole word, inside an escaped JSON string
+    /// (`\"<id>\"`), in a URL path, after a prefix (`job-<id>`). The nil and
+    /// max UUIDs are values, not identifiers, and stay; so do the fakes.
+    fn uuids(&mut self, text: &str) -> String {
+        const LEN: usize = 36;
+        let bytes = text.as_bytes();
+        let mut out = String::with_capacity(text.len());
+        let mut start = 0;
+        let mut i = 0;
+        while i + LEN <= bytes.len() {
+            let candidate = text.get(i..i + LEN).filter(|c| is_uuid(c));
+            let free_before = i == 0 || !bytes[i - 1].is_ascii_hexdigit();
+            let free_after = bytes.get(i + LEN).is_none_or(|b| !b.is_ascii_hexdigit());
+            match candidate {
+                Some(uuid) if free_before && free_after && !keeps(uuid) => {
+                    out.push_str(&text[start..i]);
+                    let n = self.fakes.len() + 1;
+                    out.push_str(
+                        self.fakes
+                            .entry(uuid.to_ascii_lowercase())
+                            .or_insert_with(|| format!("{FAKE_UUID_PREFIX}{n:012}")),
+                    );
+                    i += LEN;
+                    start = i;
+                }
+                _ => i += 1,
+            }
         }
+        out.push_str(&text[start..]);
+        out
+    }
+
+    fn word(&mut self, word: &str) -> String {
         if word.starts_with("eyJ") && word.matches('.').count() == 2 {
             return "<jwt>".into();
         }
@@ -819,6 +858,29 @@ mod tests {
         // An exchange that ended in an error has no answer; it passes as is.
         let failed = json!({"request": {"headers": {}}, "error": "x"});
         assert_eq!(filter_headers(&failed, &mut BTreeSet::new()), failed);
+    }
+
+    /// Round 3 check: a UUID is replaced wherever it sits, not only as a
+    /// whole word; the nil and max UUIDs of a public schema stay.
+    #[test]
+    fn uuids_are_replaced_anywhere_but_nil_and_max_stay() {
+        let id = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+        let mut s = Scrubber::default();
+        let escaped = s.text(&format!(r#"data: {{"text":"{{\"job_id\":\"{id}\"}}"}}"#));
+        let in_path = s.text(&format!("https://cdn.example/media/{id}.png"));
+        let prefixed = s.text(&format!("job-{}", id.to_uppercase()));
+        for out in [&escaped, &in_path, &prefixed] {
+            assert!(!out.to_ascii_lowercase().contains(id), "{out}");
+            assert!(
+                out.contains("00000000-0000-4000-8000-000000000001"),
+                "{out}"
+            );
+        }
+        let pattern = "^([0-9a-f]{8}-…|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$";
+        assert_eq!(s.text(pattern), pattern);
+        // A longer hex run is not a UUID.
+        let longer = format!("{id}0");
+        assert_eq!(s.text(&longer), longer);
     }
 
     #[test]
