@@ -1140,9 +1140,15 @@ Other notes:
   (`SubmitError::OutcomeUnknown { job_ids }`), and a cost check that named ids is a
   `StartedRun`. The queue is in memory: until the ledger exists (H2), a late answer is kept
   only while FreeCut runs; the worker drains it on every tick and before quitting (R9).
-- **Refreshed tokens the keychain refuses (§5.6, review SEC-3)** are kept in memory and used:
-  the stored refresh token may already be dead after rotation and is never sent again. The
-  write is retried before the next refresh; a disconnect or a new sign-in drops them.
+- **Refreshed tokens the keychain refuses (§5.6, review SEC-3, R7)** are kept in memory and
+  used: the stored refresh token may already be dead after rotation, and it is not sent again
+  while FreeCut runs. The write is retried before the next refresh; a new sign-in drops them,
+  and so does a disconnect, but only once its delete has succeeded. Whether the sign-in changed
+  during a refresh is told by an in-memory count of sign-in changes, never by reading the store
+  again after the network call: a keychain that locks meanwhile (sleep, screen lock) cannot make
+  the new tokens get lost. The limit: if FreeCut quits before any write succeeds, the next start
+  reads the superseded refresh token from the store and sends it; on a server with reuse
+  detection that can end the sign-in.
 - **Stream resumption (§4.1, review F4).** Implemented rather than offering only 2025-06-18:
   `GET` + `Last-Event-ID`, the server's `retry`, at most 5 resumes, the same late sink as the
   request, the answer's own session id during `initialize`.

@@ -484,6 +484,63 @@ fn refreshed_tokens_the_store_refuses_are_used_and_stored_later() {
     assert_eq!(stored_access(), "at-4");
 }
 
+/// R7: the keychain locks while a refresh is on the wire (sleep, screen
+/// lock), so it can neither be read nor written when the answer arrives.
+/// The rotated tokens stay in use; a disconnect that cannot delete keeps
+/// them too; the superseded refresh token is never sent again.
+#[test]
+fn a_keychain_that_locks_during_a_refresh_never_brings_back_the_old_token() {
+    let fake = signed_out_service();
+    let (manager, clock, store) = signed_in_with_store(&fake, 0, 100);
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let log = sent.clone();
+    let keychain = store.clone();
+    fake.on_route(Method::Post, TOKEN, move |req| {
+        let mut log = log.lock().unwrap();
+        log.push(
+            req.body["refresh_token"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        if log.len() == 1 {
+            keychain.entries().set_locked(true);
+        }
+        let n = log.len() + 1;
+        (
+            200,
+            token_answer(&format!("at-{n}"), Some(&format!("rt-{n}")), 100),
+        )
+    });
+    let cancel = CancelToken::new();
+
+    *clock.0.lock().unwrap() = 90;
+    assert_eq!(
+        manager
+            .bearer(TokenPurpose::Ordinary, &cancel)
+            .unwrap()
+            .expose(),
+        "at-2"
+    );
+    // Disconnect while still locked: the delete fails, the newer tokens stay.
+    assert!(manager.disconnect(&cancel).is_err());
+    store.entries().set_locked(false);
+    match manager.credential().unwrap() {
+        Credential::OAuth(c) => assert_eq!(c.access.expose(), "at-2"),
+        other => panic!("{other:?}"),
+    }
+
+    *clock.0.lock().unwrap() = 180;
+    assert_eq!(
+        manager
+            .bearer(TokenPurpose::Ordinary, &cancel)
+            .unwrap()
+            .expose(),
+        "at-3"
+    );
+    assert_eq!(*sent.lock().unwrap(), vec!["rt-1", "rt-2"]);
+}
+
 #[test]
 fn invalid_grant_is_sign_in_expired_and_deletes_nothing() {
     let fake = signed_out_service();

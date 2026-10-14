@@ -733,8 +733,11 @@ pub struct TokenManager {
     refreshing: Mutex<()>,
     /// One write to the store at a time: sign-in, pasted token, the write
     /// after a refresh, and disconnect (review SEC-1). Never held across a
-    /// network call. It also guards `unsaved`.
-    writing: Mutex<()>,
+    /// network call. It also guards `unsaved`. The value counts sign-in
+    /// changes (sign-in, pasted token, disconnect): a refresh that sees it
+    /// change during its network call drops its tokens, without reading the
+    /// store again, which may be locked by then (review R7).
+    writing: Mutex<u64>,
     /// Refreshed tokens the store would not take (review SEC-3). They are
     /// newer than the stored ones, which the service may already have
     /// invalidated by rotation, so they are used until a write succeeds.
@@ -764,7 +767,7 @@ impl TokenManager {
             clock,
             server: Mutex::new(None),
             refreshing: Mutex::new(()),
-            writing: Mutex::new(()),
+            writing: Mutex::new(0),
             unsaved: Mutex::new(None),
         }
     }
@@ -832,11 +835,12 @@ impl TokenManager {
             &registration.issuer,
             None,
         );
-        let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut changes = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         self.store
             .set(self.provider, &Credential::OAuth(credential.clone()))
             .map_err(store_failed)?;
         self.set_unsaved(None);
+        *changes += 1;
         Ok(credential)
     }
 
@@ -845,11 +849,12 @@ impl TokenManager {
     /// # Errors
     /// A store failure as [`CloudError::SignInUnavailable`].
     pub fn store_pasted(&self, token: Secret) -> Result<(), CloudError> {
-        let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut changes = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         self.store
             .set(self.provider, &Credential::Bearer { token })
             .map_err(store_failed)?;
         self.set_unsaved(None);
+        *changes += 1;
         Ok(())
     }
 
@@ -874,19 +879,22 @@ impl TokenManager {
     }
 
     /// Refreshes unless another thread already did since `seen` was read,
-    /// and returns the access token to use. The new tokens are written only
-    /// if the stored credential is still the one refreshed: a disconnect or
-    /// a new sign-in during the network call wins (review SEC-1).
+    /// and returns the access token to use. The new tokens are kept only if
+    /// the sign-in did not change during the network call: a disconnect or
+    /// a new sign-in wins (review SEC-1). Once the service has answered, the
+    /// new tokens are never lost to a store failure: they stay in memory
+    /// until a write succeeds (SEC-3, R7).
     fn refresh(&self, seen: &OAuthCredential, cancel: &CancelToken) -> Result<Secret, CloudError> {
         let _one_at_a_time = self
             .refreshing
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        {
+        let changes_before = {
             // Before the next refresh, try again to store the last one.
-            let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+            let changes = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
             self.flush_unsaved();
-        }
+            *changes
+        };
         let current = match self.credential()? {
             Credential::OAuth(c) => c,
             Credential::Bearer { .. } => return Err(CloudError::SignInExpired),
@@ -908,37 +916,26 @@ impl TokenManager {
             &current.issuer,
             Some(&current),
         );
-        let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
-        let now = match self.unsaved() {
-            Some(newer) => Some(Credential::OAuth(newer)),
-            None => self.store.get(self.provider).map_err(store_failed)?,
-        };
-        match now {
-            None => {
-                tracing::debug!("signed out during a refresh; the new tokens are dropped");
-                Err(CloudError::NotConnected)
-            }
-            Some(Credential::OAuth(now)) if now.access == current.access => {
-                match self
-                    .store
-                    .set(self.provider, &Credential::OAuth(renewed.clone()))
-                {
-                    Ok(()) => self.set_unsaved(None),
-                    // The old refresh token may be dead after rotation:
-                    // keep the new tokens in memory and store them later.
-                    Err(e) => {
-                        tracing::warn!(error = %e, "refreshed tokens kept in memory; the store refused them");
-                        self.set_unsaved(Some(renewed.clone()));
-                    }
-                }
-                tracing::debug!("access token refreshed");
-                Ok(renewed.access)
-            }
-            Some(replaced) => {
-                tracing::debug!("the sign-in changed during a refresh; the new tokens are dropped");
-                Ok(replaced.access_token().clone())
+        let changes = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        if *changes != changes_before {
+            tracing::debug!("the sign-in changed during a refresh; the new tokens are dropped");
+            drop(changes);
+            return self.credential().map(|c| c.access_token().clone());
+        }
+        match self
+            .store
+            .set(self.provider, &Credential::OAuth(renewed.clone()))
+        {
+            Ok(()) => self.set_unsaved(None),
+            // The old refresh token may be dead after rotation: keep the
+            // new tokens in memory and store them later.
+            Err(e) => {
+                tracing::warn!(error = %e, "refreshed tokens kept in memory; the store refused them");
+                self.set_unsaved(Some(renewed.clone()));
             }
         }
+        tracing::debug!("access token refreshed");
+        Ok(renewed.access)
     }
 
     /// Revokes the tokens when the service offers revocation (best effort),
@@ -962,9 +959,12 @@ impl TokenManager {
                 .revoke(&server, &c.client_id, &c.access, "access_token", cancel)
                 .unwrap_or(false);
         }
-        let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
-        self.set_unsaved(None);
+        let mut changes = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        // Newer tokens kept in memory go only once the stored ones are gone:
+        // if the delete fails, they stay the ones in use (review R7).
         self.store.delete(self.provider).map_err(store_failed)?;
+        self.set_unsaved(None);
+        *changes += 1;
         Ok(Disconnected { revoked })
     }
 }
