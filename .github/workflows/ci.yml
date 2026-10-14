@@ -24,6 +24,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # bash everywhere: on Windows the default pwsh fails a multi-line step
+    # only on its last command, which hid a clippy failure (review R8).
+    # GitHub runs bash with -e -o pipefail.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -39,7 +45,7 @@ jobs:
       - run: cargo test --workspace
       - name: Audio mixer builds without FFmpeg
         run: cargo test -p freecut-audio --no-default-features
-      - name: Cloud transport (http feature; tests use 127.0.0.1 only)
-        run: |
-          cargo clippy -p freecut-cloud --all-targets --features http,test-support -- -D warnings
-          cargo test -p freecut-cloud --features http
+      - name: Cloud lint (http and test-support features)
+        run: cargo clippy -p freecut-cloud --all-targets --features http,test-support -- -D warnings
+      - name: Cloud transport tests (http feature; tests use 127.0.0.1 only)
+        run: cargo test -p freecut-cloud --features http
