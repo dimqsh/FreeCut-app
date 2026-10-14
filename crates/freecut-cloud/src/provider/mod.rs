@@ -236,8 +236,10 @@ pub enum ServiceQuestion {
 pub enum Unavailable {
     /// The tool's live schema no longer offers a cost check (§4.7 rule 2).
     NoEstimate,
-    /// A cost check of this tool started, or may have started, a run
-    /// earlier; checks stay off until FreeCut restarts (§4.7 rule 4).
+    /// No check is sent now: a cost check of this tool started, or may have
+    /// started, a run earlier, and checks stay off until FreeCut restarts
+    /// (§4.7 rule 4); or another check of it is still waiting for its
+    /// answer (review R6).
     PreflightStopped,
     /// The estimate does not cover more than `max` variants (CG-005).
     VariantsNotCovered {

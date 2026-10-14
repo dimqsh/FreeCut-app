@@ -9,13 +9,13 @@ use std::sync::Arc;
 
 use common::{
     SwapToken, fake_higgsfield, fixture, fixture_json, golden, image_op, mcp_client, provider,
-    video_op,
+    provider_with_guard, video_op,
 };
 use freecut_cloud::CancelToken;
 use freecut_cloud::credits::Credits;
 use freecut_cloud::error::{CloudError, NotAcceptedReason, SubmitError, submit_disposition};
 use freecut_cloud::fake::{Fault, ResumeMode, StreamMode, ToolReply};
-use freecut_cloud::guard::QuoteRequest;
+use freecut_cloud::guard::{PreflightGuard, QuoteRequest};
 use freecut_cloud::mcp::{McpClient, McpError, StaticToken};
 use freecut_cloud::provider::higgsfield::allow;
 use freecut_cloud::provider::{GenerationProvider, Operation, QuoteOutcome, Unavailable};
@@ -1235,6 +1235,88 @@ fn refusals_that_name_a_job_are_never_rejected() {
             other => panic!("{other:?}"),
         }
     }
+}
+
+/// R6: two threads check the same tool at once. One check goes out; the
+/// other is refused without sending anything, instead of a second check
+/// (which can spend) going out beside it.
+#[test]
+fn two_checks_of_one_tool_never_go_out_together() {
+    use std::sync::Mutex;
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+    let fake = fake_higgsfield();
+    let (started_tx, started_rx) = channel();
+    let (go_tx, go_rx) = channel::<()>();
+    let (started_tx, go_rx) = (Mutex::new(started_tx), Mutex::new(go_rx));
+    fake.on_tool("generate_image", move |_| {
+        let _ = started_tx.lock().unwrap().send(());
+        let _ = go_rx.lock().unwrap().recv_timeout(Duration::from_secs(5));
+        ToolReply::Json(json!({"cost": {"credits": 2, "credits_exact": 2}}))
+    });
+    let (p, _) = provider(&fake, token("t1"));
+    let p = Arc::new(p);
+    p.connect(&CancelToken::new()).unwrap();
+    p.catalogue(&CancelToken::new()).unwrap();
+
+    let first = {
+        let p = Arc::clone(&p);
+        std::thread::spawn(move || p.quote(&image_op(), &CancelToken::new()))
+    };
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (done_tx, done_rx) = channel();
+    {
+        let p = Arc::clone(&p);
+        std::thread::spawn(move || {
+            let _ = done_tx.send(p.quote(&image_op(), &CancelToken::new()));
+        });
+    }
+    let second = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the second check went out and is waiting for its answer");
+    assert_eq!(
+        second.unwrap(),
+        QuoteOutcome::NotAvailable(Unavailable::PreflightStopped)
+    );
+    go_tx.send(()).unwrap();
+    assert!(matches!(
+        first.join().unwrap().unwrap(),
+        QuoteOutcome::Quote(_)
+    ));
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+
+    // A readable answer released the tool.
+    go_tx.send(()).unwrap();
+    assert!(matches!(
+        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        QuoteOutcome::Quote(_)
+    ));
+    assert_eq!(fake.calls_to("generate_image").len(), 2);
+}
+
+/// R6: the app owns the guard. A block set through one provider holds for
+/// the next one the app creates (reconnect, account switch) until FreeCut
+/// restarts.
+#[test]
+fn a_block_outlives_the_provider_that_set_it() {
+    let guard = Arc::new(PreflightGuard::new());
+    let fake = fake_higgsfield();
+    let (p, _) = provider_with_guard(&fake, token("t1"), Arc::clone(&guard));
+    p.connect(&CancelToken::new()).unwrap();
+    p.catalogue(&CancelToken::new()).unwrap();
+    fake.push_fault(Fault::Garbage);
+    assert!(matches!(
+        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        QuoteOutcome::PossiblyStarted(_)
+    ));
+    drop(p);
+
+    let (again, _) = provider_with_guard(&fake, token("t1"), Arc::clone(&guard));
+    assert_eq!(
+        again.quote(&image_op(), &CancelToken::new()).unwrap(),
+        QuoteOutcome::NotAvailable(Unavailable::PreflightStopped)
+    );
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
 }
 
 fn fault_strategy() -> impl Strategy<Value = Fault> {

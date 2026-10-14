@@ -9,6 +9,7 @@ use freecut_cloud::CancelToken;
 use freecut_cloud::catalogue::ModelId;
 use freecut_cloud::error::CloudError;
 use freecut_cloud::fake::{FakeService, ToolReply};
+use freecut_cloud::guard::PreflightGuard;
 use freecut_cloud::mcp::{McpClient, TokenPurpose, TokenSource};
 use freecut_cloud::provider::higgsfield::{ENDPOINT, HiggsfieldProvider};
 use freecut_cloud::provider::{
@@ -135,6 +136,15 @@ pub fn provider(
     fake: &FakeService,
     tokens: Arc<dyn TokenSource>,
 ) -> (HiggsfieldProvider, Arc<NoWait>) {
+    provider_with_guard(fake, tokens, Arc::new(PreflightGuard::new()))
+}
+
+/// A provider sharing `guard`, as the app's providers do.
+pub fn provider_with_guard(
+    fake: &FakeService,
+    tokens: Arc<dyn TokenSource>,
+    guard: Arc<PreflightGuard>,
+) -> (HiggsfieldProvider, Arc<NoWait>) {
     let waiter = Arc::new(NoWait::default());
     let provider = HiggsfieldProvider::with_endpoint(
         ENDPOINT,
@@ -142,6 +152,7 @@ pub fn provider(
         tokens,
         waiter.clone(),
         "0.1.0",
+        guard,
     );
     (provider, waiter)
 }

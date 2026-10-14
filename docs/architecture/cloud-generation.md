@@ -366,7 +366,12 @@ A dropped or renamed flag would turn a free check (and its retries) into paid ru
 3. Preflights are retried only while `NotSent` (§4.5).
 4. A preflight answer that contains job ids is treated as a started run: a ledger entry is
    written in `Running` with those ids, it is polled and imported like any run, the user is told,
-   and preflights for that tool stop until restart.
+   and preflights for that tool stop until restart. The `PreflightGuard` that enforces this is
+   owned by the app for its whole run and shared by every provider it creates, so a reconnect or
+   an account switch does not lift a block. A check reserves its tool under the same lock that
+   tests it: while one check of a tool is in flight, a second is refused (*PreflightStopped*,
+   nothing sent). The reservation is released only by a readable answer, *Not sent* or a
+   refusal; anything else, or a reservation dropped unsettled, blocks the tool (review R6).
 5. Tests: golden JSON for every quote; a fake server that ignores `get_cost` must produce exactly
    one submission per Check cost and the "started run" path, never more.
 

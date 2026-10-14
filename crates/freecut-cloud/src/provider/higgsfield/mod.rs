@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::catalogue::{Catalogue, parse_listing};
 use crate::credits::Credits;
 use crate::error::{CloudError, SubmitError, classify, quoted, submit_disposition};
-use crate::guard::{self, PreflightGuard, QuoteRequest};
+use crate::guard::{CheckReservation, PreflightGuard, QuoteRequest, schema_offers_get_cost};
 use crate::mcp::{McpClient, ServerInfo, TokenSource, ToolInfo, schema};
 use crate::oauth::discovery::AuthPolicy;
 use crate::provider::{
@@ -56,7 +56,7 @@ pub struct HiggsfieldProvider {
     mcp: McpClient,
     tools: Mutex<Option<BTreeMap<String, ToolInfo>>>,
     catalogue: Mutex<Option<Catalogue>>,
-    guard: PreflightGuard,
+    guard: Arc<PreflightGuard>,
 }
 
 impl fmt::Debug for HiggsfieldProvider {
@@ -68,14 +68,24 @@ impl fmt::Debug for HiggsfieldProvider {
 }
 
 impl HiggsfieldProvider {
-    /// A provider for Higgsfield's endpoint.
+    /// A provider for Higgsfield's endpoint. `guard` is the app's preflight
+    /// guard, shared by every provider it creates during its run (§4.7,
+    /// review R6).
     pub fn new(
         transport: Arc<dyn HttpTransport>,
         tokens: Arc<dyn TokenSource>,
         waiter: Arc<dyn Waiter>,
         client_version: &str,
+        guard: Arc<PreflightGuard>,
     ) -> HiggsfieldProvider {
-        HiggsfieldProvider::with_endpoint(ENDPOINT, transport, tokens, waiter, client_version)
+        HiggsfieldProvider::with_endpoint(
+            ENDPOINT,
+            transport,
+            tokens,
+            waiter,
+            client_version,
+            guard,
+        )
     }
 
     /// A provider for another endpoint (tests against a fake service).
@@ -85,12 +95,13 @@ impl HiggsfieldProvider {
         tokens: Arc<dyn TokenSource>,
         waiter: Arc<dyn Waiter>,
         client_version: &str,
+        guard: Arc<PreflightGuard>,
     ) -> HiggsfieldProvider {
         HiggsfieldProvider {
             mcp: McpClient::new(endpoint, transport, tokens, waiter, client_version),
             tools: Mutex::new(None),
             catalogue: Mutex::new(None),
-            guard: PreflightGuard::new(),
+            guard,
         }
     }
 
@@ -234,7 +245,7 @@ impl GenerationProvider for HiggsfieldProvider {
                 tool: call.tool.name().to_owned(),
             }));
         };
-        if !guard::schema_offers_get_cost(&tool.input_schema) {
+        if !schema_offers_get_cost(&tool.input_schema) {
             return Ok(QuoteOutcome::NotAvailable(Unavailable::NoEstimate));
         }
         if self.guard.is_blocked(call.tool.name()) {
@@ -251,35 +262,15 @@ impl GenerationProvider for HiggsfieldProvider {
                 detail: v.to_string(),
             }
         })?;
-        // Fail closed (review M1): an answer that is lost or cannot be read
-        // may hide a paid run, so this tool's checks stop until restart.
-        let possibly_started = |cause: CloudError| {
-            self.guard.block(call.tool.name());
-            tracing::warn!(
-                tool = call.tool.name(),
-                error = %cause,
-                "a cost check may have started a run; cost checks for this tool are off until restart"
-            );
-            QuoteOutcome::PossiblyStarted(PossiblyStarted {
-                tool: call.tool.name().to_owned(),
-                arguments: request.arguments().clone(),
-                cause,
-            })
+        // Reserved under one lock with the test: a second check of this tool
+        // while one is in flight is refused (review R6).
+        let Ok(reservation) = self.guard.reserve(call.tool.name()) else {
+            return Ok(QuoteOutcome::NotAvailable(Unavailable::PreflightStopped));
         };
-        // A check that named job ids started a run: the ids go to the ledger
-        // (§4.7 rule 4), and this tool's checks stop until restart.
-        let started_run = |job_ids: Vec<String>| {
-            self.guard.block(call.tool.name());
-            tracing::warn!(
-                tool = call.tool.name(),
-                jobs = job_ids.len(),
-                "a cost check started a run; cost checks for this tool are off until restart"
-            );
-            QuoteOutcome::StartedRun(StartedRun {
-                tool: call.tool.name().to_owned(),
-                job_ids,
-                arguments: request.arguments().clone(),
-            })
+        let check = Check {
+            tool: call.tool.name(),
+            arguments: request.arguments(),
+            reservation,
         };
         let output = match self.mcp.check_cost(call.tool, &request, cancel) {
             Ok(output) => output,
@@ -287,27 +278,76 @@ impl GenerationProvider for HiggsfieldProvider {
                 return match submit_disposition(&e) {
                     // An answer that named jobs, readable or not (R4, R5).
                     SubmitError::OutcomeUnknown { job_ids, .. } if !job_ids.is_empty() => {
-                        Ok(started_run(job_ids))
+                        Ok(check.started_run(job_ids))
                     }
-                    SubmitError::OutcomeUnknown { cause, .. } => Ok(possibly_started(cause)),
-                    SubmitError::NotSent(cause) | SubmitError::Rejected(cause) => Err(cause),
+                    SubmitError::OutcomeUnknown { cause, .. } => Ok(check.possibly_started(cause)),
+                    SubmitError::NotSent(cause) | SubmitError::Rejected(cause) => {
+                        check.reservation.release();
+                        Err(cause)
+                    }
                 };
             }
         };
         // Every content item, not only the one read as the answer (R5).
         let job_ids = output.job_ids();
         if !job_ids.is_empty() {
-            return Ok(started_run(job_ids));
+            return Ok(check.started_run(job_ids));
         }
         let Some(answer) = output.value() else {
-            return Ok(possibly_started(CloudError::Protocol {
+            return Ok(check.possibly_started(CloudError::Protocol {
                 detail: "empty cost answer".into(),
             }));
         };
-        match parse_quote_answer(&answer, call.tool.name(), request.arguments()) {
-            Ok(outcome) => Ok(outcome),
-            Err(cause) => Ok(possibly_started(cause)),
+        match parse_quote_answer(&answer, check.tool, check.arguments) {
+            Ok(outcome) => {
+                check.reservation.release();
+                Ok(outcome)
+            }
+            // Fail closed (review M1): an answer FreeCut cannot read may hide
+            // a paid run.
+            Err(cause) => Ok(check.possibly_started(cause)),
         }
+    }
+}
+
+/// A cost check on the wire, holding its tool's reservation.
+struct Check<'a> {
+    tool: &'a str,
+    arguments: &'a Value,
+    reservation: CheckReservation<'a>,
+}
+
+impl Check<'_> {
+    /// The check named job ids: a run started. The ids go to the ledger
+    /// (§4.7 rule 4) and this tool's checks stop until restart.
+    fn started_run(self, job_ids: Vec<String>) -> QuoteOutcome {
+        self.reservation.block();
+        tracing::warn!(
+            tool = self.tool,
+            jobs = job_ids.len(),
+            "a cost check started a run; cost checks for this tool are off until restart"
+        );
+        QuoteOutcome::StartedRun(StartedRun {
+            tool: self.tool.to_owned(),
+            job_ids,
+            arguments: self.arguments.clone(),
+        })
+    }
+
+    /// The answer was lost or could not be read: it may hide a run, so this
+    /// tool's checks stop until restart (review M1).
+    fn possibly_started(self, cause: CloudError) -> QuoteOutcome {
+        self.reservation.block();
+        tracing::warn!(
+            tool = self.tool,
+            error = %cause,
+            "a cost check may have started a run; cost checks for this tool are off until restart"
+        );
+        QuoteOutcome::PossiblyStarted(PossiblyStarted {
+            tool: self.tool.to_owned(),
+            arguments: self.arguments.clone(),
+            cause,
+        })
     }
 }
 

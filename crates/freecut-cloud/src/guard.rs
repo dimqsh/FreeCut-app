@@ -18,8 +18,8 @@
 //!    with the same scan, [`uuids_in_text`], over all of the answer
 //!    (review R5).
 
-use std::collections::BTreeSet;
-use std::sync::{Mutex, PoisonError};
+use std::collections::BTreeMap;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde_json::Value;
 
@@ -138,33 +138,112 @@ pub fn is_uuid(text: &str) -> bool {
             .all(|(g, len)| g.len() == len && g.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-/// Tools whose cost check started a run; their checks stay off until FreeCut
-/// restarts (§4.7 rule 4).
+/// Cost checks in flight, and tools whose check started or may have started
+/// a run (§4.7 rule 4, review R6). Reserving a tool and testing it happen
+/// under one lock, so two checks of the same tool never go out together (a
+/// check can spend, §15 item 14). The app keeps one guard for its whole run
+/// and hands it to every provider it creates, so reconnecting or switching
+/// accounts does not lift a block.
 #[derive(Debug, Default)]
 pub struct PreflightGuard {
-    blocked: Mutex<BTreeSet<String>>,
+    tools: Mutex<BTreeMap<String, Check>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Check {
+    InFlight,
+    Blocked,
+}
+
+/// Why no cost check of a tool may go out now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckRefused {
+    /// Another check of the tool is still waiting for its answer.
+    InFlight,
+    /// A check of the tool started, or may have started, a run; checks stay
+    /// off until FreeCut restarts.
+    Blocked,
 }
 
 impl PreflightGuard {
-    /// No tool blocked.
+    /// Nothing reserved or blocked.
     pub fn new() -> PreflightGuard {
         PreflightGuard::default()
     }
 
-    /// True once a check of `tool` started a run.
+    /// True once a check of `tool` started, or may have started, a run.
     pub fn is_blocked(&self, tool: &str) -> bool {
-        self.blocked
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains(tool)
+        self.lock().get(tool) == Some(&Check::Blocked)
     }
 
-    /// Stops checks of `tool` for the rest of this run of FreeCut.
-    pub fn block(&self, tool: &str) {
-        self.blocked
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(tool.to_owned());
+    /// Reserves `tool` for one cost check, to be settled when its outcome is
+    /// known.
+    ///
+    /// # Errors
+    /// [`CheckRefused`] while another check of `tool` is in flight, or once
+    /// one blocked it.
+    pub fn reserve(&self, tool: &str) -> Result<CheckReservation<'_>, CheckRefused> {
+        let mut tools = self.lock();
+        match tools.get(tool) {
+            Some(Check::InFlight) => Err(CheckRefused::InFlight),
+            Some(Check::Blocked) => Err(CheckRefused::Blocked),
+            None => {
+                tools.insert(tool.to_owned(), Check::InFlight);
+                Ok(CheckReservation {
+                    guard: self,
+                    tool: tool.to_owned(),
+                    settled: false,
+                })
+            }
+        }
+    }
+
+    fn settle(&self, tool: &str, block: bool) {
+        let mut tools = self.lock();
+        if block {
+            tools.insert(tool.to_owned(), Check::Blocked);
+        } else {
+            tools.remove(tool);
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Check>> {
+        self.tools.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// One cost check's hold on its tool. [`release`](Self::release) frees the
+/// tool after an answer FreeCut could read, a check that was not sent, or a
+/// refusal; [`block`](Self::block) keeps the tool's checks off until
+/// restart. Dropping it unsettled (an early return, a panic) blocks too:
+/// the guard fails closed.
+#[must_use = "settle the reservation with release() or block()"]
+#[derive(Debug)]
+pub struct CheckReservation<'a> {
+    guard: &'a PreflightGuard,
+    tool: String,
+    settled: bool,
+}
+
+impl CheckReservation<'_> {
+    /// The check had a readable answer, was not sent, or was refused.
+    pub fn release(mut self) {
+        self.settled = true;
+        self.guard.settle(&self.tool, false);
+    }
+
+    /// The check started, or may have started, a run.
+    pub fn block(mut self) {
+        self.settled = true;
+        self.guard.settle(&self.tool, true);
+    }
+}
+
+impl Drop for CheckReservation<'_> {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.guard.settle(&self.tool, true);
+        }
     }
 }
 
@@ -232,6 +311,28 @@ mod tests {
         assert!(!schema_offers_get_cost(&retyped));
     }
 
+    /// R6: one check per tool at a time; a refused or unsent check frees
+    /// the tool, anything else (or forgetting to settle) blocks it.
+    #[test]
+    fn a_reservation_is_exclusive_and_fails_closed() {
+        let guard = PreflightGuard::new();
+        let first = guard.reserve("generate_image").unwrap();
+        assert_eq!(
+            guard.reserve("generate_image").unwrap_err(),
+            CheckRefused::InFlight
+        );
+        let other = guard.reserve("generate_video").unwrap();
+        first.release();
+        guard.reserve("generate_image").unwrap().block();
+        assert!(guard.is_blocked("generate_image"));
+        assert_eq!(
+            guard.reserve("generate_image").unwrap_err(),
+            CheckRefused::Blocked
+        );
+        drop(other); // unsettled
+        assert!(guard.is_blocked("generate_video"));
+    }
+
     #[test]
     fn recorded_cost_answers_carry_no_job_ids() {
         assert!(job_ids_in(&json!({"cost": {"credits": 0.25, "credits_exact": 0.25}})).is_empty());
@@ -275,7 +376,7 @@ mod tests {
     #[test]
     fn blocking_is_per_tool() {
         let g = PreflightGuard::new();
-        g.block("generate_video");
+        g.reserve("generate_video").unwrap().block();
         assert!(g.is_blocked("generate_video"));
         assert!(!g.is_blocked("generate_image"));
     }
