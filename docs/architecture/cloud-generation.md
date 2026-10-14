@@ -500,7 +500,7 @@ pub trait GenerationProvider: Send + Sync + std::fmt::Debug {
     fn confirm_upload(&self, slots: &[UploadSlot], cancel: &CancelToken)
         -> Result<Vec<RemoteInput>, CloudError>;
     fn submit(&self, op: &Operation, inputs: &[RemoteInput], answer: Option<&ServiceAnswer>,
-              cancel: &CancelToken) -> Result<SubmitOutcome, SubmitError>;
+              run: &RunTag, cancel: &CancelToken) -> Result<SubmitOutcome, SubmitError>;
     fn poll(&self, jobs: &[RemoteJobId], cancel: &CancelToken)
         -> Result<PollResult, CloudError>;            // states, result URLs, next poll delay
     fn cancel_remote(&self, job: &RemoteJobId) -> CancelSupport;  // Higgsfield: Unsupported
@@ -527,8 +527,11 @@ pub enum SubmitError {
 ```
 
 The Higgsfield `quote` sends its cost check through `McpClient::check_cost(tool, &QuoteRequest,
-cancel)`, the only path that may set `get_cost: true` (§4.7); paid tools go through
-`McpClient::call_tool` with an `&'static AllowedTool` (§6.3).
+run, cancel)`, the only path that may set `get_cost: true` (§4.7); free tools go through
+`McpClient::call_tool`, and paid tools only through `McpClient::call_paid(tool, arguments, run,
+cancel)`, each with an `&'static AllowedTool` (§6.3). `HiggsfieldProvider::new(..., guard,
+late)` and `with_endpoint(..., guard, late)` take the app's one `PreflightGuard` and `LateQueue`
+(review R6, R10, R44).
 
 `ScriptedProvider` (`freecut_cloud::provider::scripted`, feature `test-support`, enabled from
 dev-dependencies only) implements the trait from a script for app and assistant tests: each
@@ -909,7 +912,7 @@ Messages from the service are shown as plain quoted text; no links in them are m
 | Preflight guard | quote JSON always carries `get_cost: true`; no quote when the live schema lacks it; a server that ignores the flag yields one submission per Check cost and the "started run" path; preflights not retried after `MaybeSent` | units + fake server (§4.7) |
 | Send-state table | every `ureq::Error` variant maps to `NotSent` or `MaybeSent` as §4.5 lists | table test over every variant built with FreeCut's features and every `Timeout`; `Protocol` from a loopback server |
 | Loopback integration | presigned `PUT` with progress and retry; download with `Range` resume and checksum; OAuth loopback callback with right and wrong `state` | `std::net::TcpListener` on `127.0.0.1:0` (feature `http`) |
-| Recorded fixtures | `initialize`, `tools/list`, `models_explore` listings, `get_cost` answers (all free), then one cheapest image run and one shortest video run of each operation as it is built (paid; the owner records them with their own account and explicit consent) | `crates/freecut-cloud/tests/fixtures/higgsfield/*.jsonl`, produced by `cargo run -p freecut-cloud --features http --example record`; a scrubber removes tokens, e-mails, subject ids, signed URL queries and job ids are replaced by stable fakes; reviewed before commit |
+| Recorded fixtures | `initialize`, `tools/list` and `models_explore` listings (free), recorded by `cargo run -p freecut-cloud --features http --example record`, which refuses `get_cost` and every other call on purpose (review R25, N4). The `get_cost` answers came from the probes (fixtures README). One cheapest image run and one shortest video run of each operation (paid; the owner records them with their own account and explicit consent) need a separate tool the owner approves; `record` cannot make them (review R45) | `crates/freecut-cloud/tests/fixtures/higgsfield/*.jsonl`; a scrubber removes tokens, e-mails, subject ids, signed URL queries and job ids are replaced by stable fakes; reviewed before commit |
 | Contract check (manual, not CI) | compares live `tools/list` schemas and the catalogue with the fixtures and reports drift | `--example check-contract`, free calls only |
 | App | Generate tab, run sheet, Runs page and placement driven by `ScriptedProvider`; import and placement are one undo entry (apply → undo → redo test) | `freecut-app` tests |
 | Guard | dependency edges; no networking crate in `cargo tree -p freecut-cloud` without `http` | workspace guard test |
@@ -933,7 +936,8 @@ README).
   (`cloud` feature, Preferences ▸ Cloud generation, keychain `SecretStore`, browser launch,
   loopback listener, cloud worker, a Generate tab with the Image and Video forms and **Check
   cost** but no Run).
-- **Contracts:** `McpClient::{initialize, list_tools, call_tool}`, `HttpTransport` trait,
+- **Contracts:** `McpClient::{initialize, list_tools, call_tool, call_paid, check_cost}`,
+  `HiggsfieldProvider::new(..., guard, late)`, `HttpTransport` trait,
   `Credential`, `SecretStore`, `GenerationProvider::{connect, catalogue, quote}`, `Catalogue`,
   `ModelInfo`, `Operation::{Image, Video}`, `Quote`, `CloudCmd`/`CloudEvent`, `CloudError`.
 - **Tests:** SSE and JSON-RPC units; OAuth URL and PKCE; fake-server handshake, session expiry
@@ -1163,8 +1167,8 @@ Deviations from the sections above, all **accepted by owner** (2026-10-14):
   same way; an unreadable store is an error, never "nothing stored" (review SEC-2). Writes are
   exclusive (SEC-1).
 - **Contracts (§6.1).** A provider is built with a `TokenSource` (the `TokenManager` supplies
-  tokens), so `connect` takes no `Credential`; `quote` takes the `Operation` alone (inputs are
-  `RoleRef`s with service media ids). `QuoteOutcome` gains `StartedRun` (§4.7 rule 4).
+  tokens), so `connect` takes no `Credential`; `quote` takes the `Operation` and the caller's `RunTag`
+  (inputs are `RoleRef`s with service media ids; review R44). `QuoteOutcome` gains `StartedRun` (§4.7 rule 4).
   *Accepted by owner.* §6.1's body shows these signatures, and `ScriptedProvider` (feature
   `test-support`) implements the same trait (review Q10).
 - **Cost checks after a refusal (§4.5, §4.7).** A cost check answered `401` or session `404` is
@@ -1250,9 +1254,9 @@ Other notes:
   `3d_jutsu_*`, `cinematic_studio_soul_*` and `image_auto` (it routes each prompt to a model of
   the service's choosing, so model and price are not known up front). On the 2026-10-14
   catalogue this leaves 31 image, 45 video and 5 audio models.
-- **Next.** Phase B starts with `cargo run -p freecut-cloud --features http --example record`
-  (§13): the owner signs in once and it records the transport facts still open in §15.1, free
-  calls only.
+- **Next.** The first `record` run has happened (the signed-in rows of §15.1); the rest of
+  "Still unknown" needs paid runs. Left: the owner's re-run of `record` after review R21-R24 and
+  R36, the review of that recording, then Phase B in the order of review round 4 (review R45).
 
 ---
 
