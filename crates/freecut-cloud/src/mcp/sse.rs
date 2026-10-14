@@ -174,10 +174,41 @@ impl SseParser {
     }
 }
 
+/// The text of an event stream without its framing, for the job-id scan
+/// (review R38): `id:`, `event:` and `retry:` lines and comments are left
+/// out, so a UUID in an event id is not taken for a job. Everything else
+/// stays: `data:` lines, dispatched or not, a line cut off at the end, and
+/// fields this parser does not know (the scan then errs towards more ids).
+pub fn without_framing(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.strip_prefix('\u{FEFF}').unwrap_or(&text);
+    let mut out = String::with_capacity(text.len());
+    for line in text.split(['\r', '\n']) {
+        let field = line.split_once(':').map_or(line, |(field, _)| field);
+        if matches!(field, "" | "id" | "event" | "retry") {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    /// R38: only framing is left out; data, unknown fields and a cut-off
+    /// tail stay, each on its own line.
+    #[test]
+    fn framing_is_left_out_of_the_scanned_text() {
+        let stream = "\u{FEFF}id: a\r\nevent: message\rretry: 5\n: note\n\ndata: one\ndata\nx-trace: two\n\nid:b\ndata: th";
+        assert_eq!(
+            without_framing(stream.as_bytes()),
+            "data: one\ndata\nx-trace: two\ndata: th\n"
+        );
+    }
 
     fn ev(data: &str) -> SseEvent {
         SseEvent {

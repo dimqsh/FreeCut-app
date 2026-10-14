@@ -1160,7 +1160,8 @@ impl McpClient {
         cancel: &CancelToken,
     ) -> Result<(Value, Vec<String>), McpError> {
         // Every byte of the answer is scanned for job ids, whatever the
-        // outcome (review R12).
+        // outcome (review R12); of an event stream, every byte but its
+        // framing (R38).
         let ids = |read: &[u8]| guard::uuids_in_text(&String::from_utf8_lossy(read));
         match response.media_type().as_deref() {
             Some("application/json") => {
@@ -1180,9 +1181,10 @@ impl McpClient {
             }
             Some("text/event-stream") => {
                 let mut read = Vec::new();
+                let ids = |read: &[u8]| guard::uuids_in_text(&sse::without_framing(read));
                 let value = self
                     .read_stream(response.body, id, &resume, cancel, &mut read)
-                    .map_err(|e| e.with_answer(&read))?;
+                    .map_err(|e| e.with_job_ids(ids(&read)))?;
                 Ok((value, ids(&read)))
             }
             other => Err(McpError::protocol(format!(
@@ -1283,6 +1285,11 @@ impl McpClient {
                 }
                 body = self.resume(&last, resume, cancel)?;
                 parser.next_stream();
+                // A line the old stream cut off ends here, so it is not
+                // scanned as one with the new stream's first line (R38).
+                if read.len() < MAX_ANSWER_BYTES {
+                    read.push(b'\n');
+                }
                 continue;
             }
             if read.len() < MAX_ANSWER_BYTES {
@@ -1552,6 +1559,11 @@ fn late_result(tool: &str, id: i64, response: LateResponse) -> LateToolResult {
         },
         _ => None,
     });
+    let job_ids = if is_stream {
+        guard::uuids_in_text(&sse::without_framing(&response.body))
+    } else {
+        guard::uuids_in_text(&text)
+    };
     LateToolResult {
         run: None,
         class: CallClass::Paid,
@@ -1560,7 +1572,7 @@ fn late_result(tool: &str, id: i64, response: LateResponse) -> LateToolResult {
         status: response.status,
         complete: response.complete,
         value,
-        job_ids: guard::uuids_in_text(&text),
+        job_ids,
     }
 }
 
@@ -1578,6 +1590,7 @@ fn body_error(e: BodyError) -> McpError {
 /// body, up to [`MAX_ERROR_SCAN_BYTES`] of it, before it is cut for the
 /// message (review R12).
 fn excerpt(mut response: HttpResponse, cancel: &CancelToken) -> (String, Vec<String>) {
+    let is_stream = response.media_type().as_deref() == Some("text/event-stream");
     let mut buf = Vec::new();
     let mut chunk = [0u8; 8 * 1024];
     while buf.len() < MAX_ERROR_SCAN_BYTES && !cancel.is_cancelled() {
@@ -1586,7 +1599,11 @@ fn excerpt(mut response: HttpResponse, cancel: &CancelToken) -> (String, Vec<Str
             Ok(n) => buf.extend_from_slice(&chunk[..n.min(MAX_ERROR_SCAN_BYTES - buf.len())]),
         }
     }
-    let ids = guard::uuids_in_text(&String::from_utf8_lossy(&buf));
+    let ids = if is_stream {
+        guard::uuids_in_text(&sse::without_framing(&buf))
+    } else {
+        guard::uuids_in_text(&String::from_utf8_lossy(&buf))
+    };
     let start = &buf[..buf.len().min(MAX_EXCERPT_BYTES)];
     (crate::error::quoted(&String::from_utf8_lossy(start)), ids)
 }
@@ -1777,6 +1794,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out.texts, vec!["real"]);
+    }
+
+    /// R38: a late event stream and an error status's event-stream body
+    /// are scanned without their framing; the job in their data is kept.
+    #[test]
+    fn late_and_error_streams_are_scanned_without_framing() {
+        let event_id = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+        let job = "0b4f6d2a-1111-4222-8333-944455556666";
+        let sse = || vec![("content-type".to_owned(), "text/event-stream".to_owned())];
+        let body = format!(
+            ": {event_id}\n\nid: {event_id}_1\nevent: message\ndata: {{\"jsonrpc\":\"2.0\",\"method\":\"x\",\"params\":\"{job}\"}}\n\nid: {event_id}_2\n"
+        );
+        let late = late_result(
+            "generate_image",
+            3,
+            LateResponse {
+                status: 200,
+                headers: sse(),
+                body: body.clone().into_bytes(),
+                complete: true,
+            },
+        );
+        assert_eq!(late.job_ids, vec![job]);
+        let (_, ids) = excerpt(
+            HttpResponse::new(400, sse(), body.into_bytes()),
+            &CancelToken::new(),
+        );
+        assert_eq!(ids, vec![job]);
     }
 
     #[test]

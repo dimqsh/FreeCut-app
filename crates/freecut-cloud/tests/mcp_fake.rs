@@ -1957,6 +1957,115 @@ fn a_cancel_while_resuming_keeps_the_job_ids_already_read() {
     );
 }
 
+/// A UUID in an SSE event id, as some servers write them (the reference
+/// SDK's event store does).
+const EVENT_ID: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+
+/// Puts a UUID in front of each SSE event id of the fake (and takes it off
+/// a `Last-Event-ID` again), and opens the stream with a comment that names
+/// one.
+#[derive(Debug)]
+struct UuidEventIds(freecut_cloud::fake::FakeService);
+
+impl HttpTransport for UuidEventIds {
+    fn send(
+        &self,
+        mut request: HttpRequest,
+        cancel: &CancelToken,
+    ) -> Result<HttpResponse, TransportError> {
+        for (name, value) in &mut request.headers {
+            let prefix = format!("{EVENT_ID}_");
+            if name == "last-event-id" && value.starts_with(&prefix) {
+                *value = value[prefix.len()..].to_owned();
+            }
+        }
+        let mut answer = self.0.send(request, cancel)?;
+        if answer.media_type().as_deref() != Some("text/event-stream") {
+            return Ok(answer);
+        }
+        let body = read_body(&mut answer.body, &CancelToken::new(), 1 << 20).unwrap();
+        let mut text = format!(": trace {EVENT_ID}\n\n");
+        for line in String::from_utf8_lossy(&body).split_inclusive('\n') {
+            if let Some(id) = line.strip_prefix("id:") {
+                text.push_str(&format!("id: {EVENT_ID}_{}\n", id.trim()));
+            } else {
+                text.push_str(line);
+            }
+        }
+        answer.body = Box::new(std::io::Cursor::new(text.into_bytes()));
+        Ok(answer)
+    }
+}
+
+/// R38: UUIDs in SSE framing (event ids, comments) are not job ids. A cost
+/// answer on such a stream is a quote, a refusal stays rejected, a progress
+/// event before a refusal still names its job, and only it, and a line cut
+/// off by a resume is not read as one with the next stream's id line.
+#[test]
+fn sse_framing_is_not_scanned_for_job_ids() {
+    let fake = fake_higgsfield();
+    fake.set_stream(StreamMode::Sse { chunk: 64 });
+    let guard = Arc::new(PreflightGuard::new());
+    let p = provider_on(
+        Arc::new(UuidEventIds(fake.clone())),
+        token("t1"),
+        guard.clone(),
+        Arc::new(freecut_cloud::mcp::LateQueue::new()),
+    );
+    let outcome = p
+        .quote(&image_op(), &run_tag(), &CancelToken::new())
+        .unwrap();
+    assert!(matches!(outcome, QuoteOutcome::Quote(_)), "{outcome:?}");
+    assert!(!guard.is_blocked("generate_image"));
+
+    let fake = paid_fake();
+    fake.set_stream(StreamMode::Sse { chunk: 64 });
+    fake.on_tool("generate_image", |_| {
+        ToolReply::Error("NSFW content".into())
+    });
+    let c = McpClient::new(
+        freecut_cloud::provider::higgsfield::ENDPOINT,
+        Arc::new(UuidEventIds(fake.clone())),
+        token("t1"),
+        Arc::new(common::NoWait::default()),
+        "0.1.0",
+    );
+    c.initialize(&CancelToken::new()).unwrap();
+    let d = submit_disposition(&submit(&c).unwrap_err(), &image_args());
+    assert!(matches!(d, SubmitError::Rejected(_)), "{d:?}");
+
+    fake.send_before_response(vec![
+        json!({"jsonrpc": "2.0", "method": "notifications/progress",
+        "params": {"progressToken": 1, "progress": 1, "message": format!("queued {JOB}")}}),
+    ]);
+    let d = submit_disposition(&submit(&c).unwrap_err(), &image_args());
+    assert!(
+        matches!(&d, SubmitError::OutcomeUnknown { job_ids, .. } if job_ids == &[JOB]),
+        "{d:?}"
+    );
+    assert_eq!(fake.calls_to("generate_image").len(), 2);
+
+    let fake = paid_fake();
+    fake.set_stream(StreamMode::SseCutInsideAnswer { chunk: 7 });
+    let c = McpClient::new(
+        freecut_cloud::provider::higgsfield::ENDPOINT,
+        Arc::new(UuidEventIds(fake.clone())),
+        token("t1"),
+        Arc::new(common::NoWait::default()),
+        "0.1.0",
+    );
+    c.initialize(&CancelToken::new()).unwrap();
+    let out = c
+        .call_paid(
+            &allow::GENERATE_IMAGE,
+            image_args(),
+            &run_tag(),
+            &CancelToken::new(),
+        )
+        .unwrap();
+    assert_eq!(out.job_ids(), vec![PAID_JOB]);
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),
