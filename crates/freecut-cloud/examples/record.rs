@@ -629,7 +629,43 @@ impl HttpTransport for Recorder {
                 "body": body_json(&body),
             },
         }));
-        Ok(HttpResponse::new(response.status, response.headers, body))
+        Ok(HttpResponse {
+            status: response.status,
+            headers: response.headers,
+            body: Box::new(ZeroingBody::new(body)),
+        })
+    }
+}
+
+/// The buffered answer handed to the caller. Its bytes (the token answer
+/// among them) are zeroed once the caller has read them all, and on drop
+/// (review N3; best effort, as §5.6 says: the parsed copies are not).
+struct ZeroingBody {
+    data: Vec<u8>,
+    pos: usize,
+}
+
+impl ZeroingBody {
+    fn new(data: Vec<u8>) -> ZeroingBody {
+        ZeroingBody { data, pos: 0 }
+    }
+}
+
+impl std::io::Read for ZeroingBody {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = buf.len().min(self.data.len() - self.pos);
+        buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+        self.pos += n;
+        if n == 0 {
+            self.data.fill(0);
+        }
+        Ok(n)
+    }
+}
+
+impl Drop for ZeroingBody {
+    fn drop(&mut self) {
+        self.data.fill(0);
     }
 }
 
@@ -1804,6 +1840,17 @@ mod tests {
             "{text:?}"
         );
         assert!(text.contains("1.0.0 real"), "{text}");
+    }
+
+    /// N3: the buffered answer is zeroed once the caller has read it all.
+    #[test]
+    fn the_buffered_answer_is_zeroed_once_read() {
+        use std::io::Read as _;
+        let mut body = ZeroingBody::new(br#"{"access_token":"at-1"}"#.to_vec());
+        let mut read = Vec::new();
+        body.read_to_end(&mut read).unwrap();
+        assert_eq!(read, br#"{"access_token":"at-1"}"#);
+        assert!(body.data.iter().all(|b| *b == 0));
     }
 
     #[test]
