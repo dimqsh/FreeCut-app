@@ -542,14 +542,28 @@ do not change.
   `image_references`, `video_references`, `audio_references`, `mask`, `input_video`,
   `input_audio`); the listing's per-media `type` field says "image" even for video inputs.
 - Cached as `<app data>/FreeCut/cloud/catalogue-<provider>.json` with its fetch time.
-- **Hidden** (a list in code, plus any model whose description marks it as restricted to the
-  service's own pipelines): `sonilo_music`, `mirelo_text_to_audio`, `inworld_text_to_speech`
+- **Shown: reviewed models only** (owner decision, review round 2). v1 offers only plain image
+  and video generation models on a reviewed list in the Higgsfield provider
+  (`provider::higgsfield::reviewed::REVIEWED_MODELS`, each entry an id and *image* or *video*).
+  Every other listed model, including any the service adds later, is hidden: with its specific
+  reason below where one applies, otherwise as *NotReviewed*. So are the pipeline and internal
+  families (`ad_multiplier*`, `hf_mult_*`, `3d_jutsu_*`, `cinematic_studio_soul_*`), `image_auto`
+  (it routes each prompt to a model of the service's choosing, so model and price are unknown
+  before the check), every audio model for v1, and a reviewed id whose output type changed. The
+  first list was built from the recorded listing (an excerpt) on 2026-10-14: image
+  `gpt_image_2`, `gpt_image_2_5`, `nano_banana_2`, `nano_banana_pro`, `seedream_v5_pro`; video
+  `seedance_2_5`, `kling3_0`, `veo3_1`, `minimax_hailuo`, `wan3_0`, `cinematic_studio_3_0`,
+  `cinematic_studio_video`. The owner confirms it, and the code comment records who reviewed it
+  and when. Adding a model is a reviewed code change with its fixture entry.
+- **Hidden with a specific reason** (a list in code, plus any model whose description marks it
+  as restricted to the service's own pipelines): `sonilo_music`, `mirelo_text_to_audio`, `inworld_text_to_speech`
   (game pipeline only), `higgsfield_preset` (legacy recipes), `ms_image` and the other marketing
   studio models (styles chosen in the service's UI), the identity-trained `soul_*` family
   (needs identity training), `autosprite`, `clipify` (web addresses as input),
   `marketing_studio_v2_reference2video`.
 - **Defaults** (FreeCut's, re-checked per release): image `gpt_image_2_5`; video
-  `seedance_2_5` (text-to-video, frames-to-video, edit and extension modes); lip sync `sync_so`.
+  `seedance_2_5` (text-to-video, frames-to-video, edit and extension modes). Both are on the
+  reviewed list. (Lip sync, `sync_so`, is not built: owner decision on voice tools.)
 
 ### 6.3 Tool allow list
 

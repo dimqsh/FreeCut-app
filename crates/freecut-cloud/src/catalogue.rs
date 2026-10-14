@@ -246,8 +246,9 @@ pub enum HiddenReason {
     OutOfScope,
     /// Dubbing, lip sync and voice change are not built (owner decision).
     VoiceToolNotBuilt,
-    /// Internal, pipeline or routing models, hidden until the owner reviews
-    /// them (2026-10-14).
+    /// Not on the provider's list of reviewed models: internal, pipeline or
+    /// routing models, and any model nobody has reviewed yet (owner decision,
+    /// review round 2).
     NotReviewed,
 }
 
@@ -685,6 +686,15 @@ impl Catalogue {
             .map(parse_listing)
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Catalogue::from_pages(pages))
+    }
+
+    /// Hides every visible model `reason` gives a reason for; models already
+    /// hidden keep their own reason. Providers apply their own rules with it,
+    /// such as a list of reviewed models.
+    pub fn hide(&mut self, reason: impl Fn(&ModelInfo) -> Option<HiddenReason>) {
+        for model in self.models.iter_mut().filter(|m| m.hidden.is_none()) {
+            model.hidden = reason(model);
+        }
     }
 
     /// Every listed model, hidden ones included.

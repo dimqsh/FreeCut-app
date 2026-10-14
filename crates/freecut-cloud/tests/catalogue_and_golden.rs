@@ -4,20 +4,29 @@
 
 mod common;
 
-use common::{fixture_json, golden, image_op, video_op};
+use common::{fake_higgsfield, fixture_json, golden, image_op, provider, video_op};
+use freecut_cloud::CancelToken;
 use freecut_cloud::catalogue::{
     AudioSupport, Catalogue, DurationSpec, Durations, HiddenReason, ModelId, OutputKind, Role,
 };
 use freecut_cloud::guard::{QuoteRequest, schema_offers_get_cost};
+use freecut_cloud::mcp::StaticToken;
 use freecut_cloud::mcp::schema::validate;
+use freecut_cloud::provider::GenerationProvider;
 use freecut_cloud::provider::higgsfield::map::tool_call;
+use freecut_cloud::provider::higgsfield::reviewed::{
+    REVIEWED_MODELS, ReviewedKind, restrict_to_reviewed,
+};
 use freecut_cloud::provider::higgsfield::{DEFAULT_IMAGE_MODEL, DEFAULT_VIDEO_MODEL};
 use freecut_cloud::provider::{
     Aspect, ImageRequest, Operation, ParamValue, ParamValues, RemoteMediaId, RoleRef, VideoMode,
     VideoRequest, WholeSeconds,
 };
+use freecut_cloud::secret::Secret;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 fn catalogue() -> Catalogue {
     Catalogue::from_listings(&[
@@ -26,6 +35,38 @@ fn catalogue() -> Catalogue {
         fixture_json("models_explore-list-audio.json"),
     ])
     .unwrap()
+}
+
+/// The recorded catalogue as the Higgsfield provider offers it.
+fn reviewed_catalogue() -> Catalogue {
+    let mut c = catalogue();
+    restrict_to_reviewed(&mut c);
+    c
+}
+
+/// A listing of copies of a recorded `kind` entry under other ids.
+fn listing_with_ids(kind: &str, ids: &[&str]) -> Value {
+    let recorded = fixture_json(&format!("models_explore-list-{kind}.json"));
+    let template = recorded["items"][0].clone();
+    let items: Vec<Value> = ids
+        .iter()
+        .map(|id| {
+            let mut item = template.clone();
+            item["id"] = Value::String((*id).to_owned());
+            item["name"] = Value::String(format!("Model {id}"));
+            item["description"] = Value::String("Text to media.".into());
+            item
+        })
+        .collect();
+    serde_json::json!({"items": items, "has_more": false})
+}
+
+fn reviewed_ids() -> BTreeSet<&'static str> {
+    REVIEWED_MODELS.iter().map(|m| m.id).collect()
+}
+
+fn visible_ids(c: &Catalogue) -> BTreeSet<String> {
+    c.visible().map(|m| m.id.as_str().to_owned()).collect()
 }
 
 fn schema(tool: &str) -> Value {
@@ -287,4 +328,106 @@ fn the_recorded_get_answer_matches_the_listing_entry() {
         page.models[0],
         catalogue().get("gpt_image_2_5").unwrap().clone()
     );
+}
+
+// ---- Reviewed models (owner decision, review round 2) ----
+
+#[test]
+fn every_visible_model_is_on_the_reviewed_list() {
+    let c = reviewed_catalogue();
+    let visible = visible_ids(&c);
+    let reviewed: BTreeSet<String> = reviewed_ids().into_iter().map(str::to_owned).collect();
+    // The list was built from this listing: every entry is in it and shown.
+    assert_eq!(visible, reviewed);
+    assert!(
+        c.visible()
+            .all(|m| matches!(m.output, OutputKind::Image | OutputKind::Video))
+    );
+    assert_eq!(c.counts().audio, 0);
+
+    // The same through the provider, against the fake service.
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, Arc::new(StaticToken(Secret::new("t1"))));
+    let offered = p.catalogue(&CancelToken::new()).unwrap();
+    assert_eq!(visible_ids(&offered), visible);
+}
+
+#[test]
+fn pipeline_models_and_image_auto_are_hidden() {
+    let c = reviewed_catalogue();
+    assert_eq!(
+        c.get("image_auto").unwrap().hidden,
+        Some(HiddenReason::NotReviewed)
+    );
+    // Specific reasons survive the review.
+    assert_eq!(
+        c.get("soul_2").unwrap().hidden,
+        Some(HiddenReason::NeedsIdentityTraining)
+    );
+    let mut pipelines = Catalogue::from_listings(&[listing_with_ids(
+        "video",
+        &[
+            "ad_multiplier_v2",
+            "hf_mult_motion_control",
+            "3d_jutsu_scene",
+            "cinematic_studio_soul_cinema",
+        ],
+    )])
+    .unwrap();
+    restrict_to_reviewed(&mut pipelines);
+    assert_eq!(pipelines.visible().count(), 0);
+    assert!(
+        pipelines
+            .models()
+            .iter()
+            .all(|m| m.hidden == Some(HiddenReason::NotReviewed))
+    );
+}
+
+#[test]
+fn a_model_nobody_reviewed_is_hidden_as_not_reviewed() {
+    for (kind, id) in [
+        ("image", "brand_new_image_3"),
+        ("video", "brand_new_video_3"),
+    ] {
+        let mut c = Catalogue::from_listings(&[listing_with_ids(kind, &[id])]).unwrap();
+        // Without the review it would be shown.
+        assert!(c.get(id).unwrap().is_visible(), "{id}");
+        restrict_to_reviewed(&mut c);
+        assert_eq!(c.get(id).unwrap().hidden, Some(HiddenReason::NotReviewed));
+    }
+    // A reviewed id that now makes something else is hidden too.
+    let mut moved =
+        Catalogue::from_listings(&[listing_with_ids("video", &["gpt_image_2_5"])]).unwrap();
+    restrict_to_reviewed(&mut moved);
+    assert_eq!(
+        moved.get("gpt_image_2_5").unwrap().hidden,
+        Some(HiddenReason::NotReviewed)
+    );
+}
+
+#[test]
+fn every_reviewed_model_is_a_plain_image_or_video_generator() {
+    let recorded = catalogue();
+    for entry in REVIEWED_MODELS {
+        let model = recorded
+            .get(entry.id)
+            .unwrap_or_else(|| panic!("{} is not in the recorded listing", entry.id));
+        let expected = match entry.kind {
+            ReviewedKind::Image => OutputKind::Image,
+            ReviewedKind::Video => OutputKind::Video,
+        };
+        assert_eq!(model.output, expected, "{}", entry.id);
+        // No pipeline, styles, identity or voice reason applies to it.
+        assert_eq!(model.hidden, None, "{}", entry.id);
+        assert!(model.company.is_some(), "{} has no maker", entry.id);
+        assert!(
+            !model.description.is_empty(),
+            "{} has no description",
+            entry.id
+        );
+    }
+    let ids = reviewed_ids();
+    assert_eq!(ids.len(), REVIEWED_MODELS.len(), "no duplicates");
+    assert!(ids.contains(DEFAULT_IMAGE_MODEL) && ids.contains(DEFAULT_VIDEO_MODEL));
 }

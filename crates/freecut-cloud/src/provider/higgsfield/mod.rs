@@ -2,6 +2,7 @@
 
 pub mod allow;
 pub mod map;
+pub mod reviewed;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -204,7 +205,9 @@ impl GenerationProvider for HiggsfieldProvider {
                 }
             }
         }
-        let catalogue = Catalogue::from_pages(pages);
+        let mut catalogue = Catalogue::from_pages(pages);
+        // Only reviewed models are offered (owner decision, review round 2).
+        reviewed::restrict_to_reviewed(&mut catalogue);
         if catalogue.skipped() > 0 {
             tracing::warn!(
                 skipped = catalogue.skipped(),
