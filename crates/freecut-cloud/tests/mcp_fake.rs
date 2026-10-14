@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use common::{
     SwapToken, fake_higgsfield, fixture, fixture_json, golden, image_op, mcp_client, provider,
-    provider_with_guard, video_op,
+    provider_on, provider_with_guard, video_op,
 };
 use freecut_cloud::CancelToken;
 use freecut_cloud::credits::Credits;
@@ -806,6 +806,90 @@ impl HttpTransport for CancelsAfterSending {
             "cancelled while waiting",
         ))
     }
+}
+
+/// Holds the answers to requests that carry a late sink and reports the
+/// call as cancelled; `deliver` hands them to their sinks later, as a helper
+/// thread does after the caller gave up.
+#[derive(Default)]
+struct DeliversLater {
+    fake: Option<freecut_cloud::fake::FakeService>,
+    held: std::sync::Mutex<Vec<(freecut_cloud::transport::LateSink, LateResponse)>>,
+}
+
+impl std::fmt::Debug for DeliversLater {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeliversLater").finish_non_exhaustive()
+    }
+}
+
+impl DeliversLater {
+    fn deliver(&self) {
+        for (sink, response) in std::mem::take(&mut *self.held.lock().unwrap()) {
+            sink(response);
+        }
+    }
+}
+
+impl HttpTransport for DeliversLater {
+    fn send(
+        &self,
+        request: HttpRequest,
+        cancel: &CancelToken,
+    ) -> Result<HttpResponse, TransportError> {
+        let fake = self.fake.as_ref().unwrap();
+        let Some(sink) = request.late.clone() else {
+            return fake.send(request, cancel);
+        };
+        let mut answer = fake.send(request, cancel)?;
+        let body = read_body(&mut answer.body, &CancelToken::new(), 1 << 20).unwrap();
+        self.held.lock().unwrap().push((
+            sink,
+            LateResponse {
+                status: answer.status,
+                headers: answer.headers,
+                body,
+                complete: true,
+            },
+        ));
+        Err(TransportError::maybe_sent(
+            TransportErrorKind::Cancelled,
+            "cancelled while waiting",
+        ))
+    }
+}
+
+/// R10: the late queue belongs to the app. A cost check is cancelled, the
+/// provider that sent it is dropped (reconnect, account switch), and only
+/// then does the late answer arrive: its job id still reaches the app.
+#[test]
+fn late_job_ids_reach_the_app_after_the_provider_is_gone() {
+    let fake = fake_higgsfield();
+    fake.on_tool("generate_image", |_| {
+        ToolReply::Json(json!({"cost": {"credits": 2}, "job_id": JOB}))
+    });
+    let transport = Arc::new(DeliversLater {
+        fake: Some(fake.clone()),
+        ..DeliversLater::default()
+    });
+    let late = Arc::new(freecut_cloud::mcp::LateQueue::new());
+    let p = provider_on(
+        transport.clone(),
+        token("t1"),
+        Arc::new(PreflightGuard::new()),
+        Arc::clone(&late),
+    );
+    assert!(matches!(
+        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        QuoteOutcome::PossiblyStarted(_)
+    ));
+    drop(p);
+    assert!(late.take().is_empty());
+    transport.deliver();
+    let results = late.take();
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert_eq!(results[0].job_ids, vec![JOB]);
+    assert_eq!(results[0].tool, "generate_image");
 }
 
 /// M3: job ids in an answer that arrives after a cancel reach the late queue,

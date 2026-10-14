@@ -10,7 +10,7 @@ use freecut_cloud::catalogue::ModelId;
 use freecut_cloud::error::CloudError;
 use freecut_cloud::fake::{FakeService, ToolReply};
 use freecut_cloud::guard::PreflightGuard;
-use freecut_cloud::mcp::{McpClient, TokenPurpose, TokenSource};
+use freecut_cloud::mcp::{LateQueue, McpClient, TokenPurpose, TokenSource};
 use freecut_cloud::provider::higgsfield::{ENDPOINT, HiggsfieldProvider};
 use freecut_cloud::provider::{
     Aspect, ImageRequest, Operation, ParamValues, VideoMode, VideoRequest, WholeSeconds,
@@ -139,6 +139,24 @@ pub fn provider(
     provider_with_guard(fake, tokens, Arc::new(PreflightGuard::new()))
 }
 
+/// A provider on `transport`, with the app's `guard` and `late` queue.
+pub fn provider_on(
+    transport: Arc<dyn freecut_cloud::transport::HttpTransport>,
+    tokens: Arc<dyn TokenSource>,
+    guard: Arc<PreflightGuard>,
+    late: Arc<LateQueue>,
+) -> HiggsfieldProvider {
+    HiggsfieldProvider::with_endpoint(
+        ENDPOINT,
+        transport,
+        tokens,
+        Arc::new(NoWait::default()),
+        "0.1.0",
+        guard,
+        late,
+    )
+}
+
 /// A provider sharing `guard`, as the app's providers do.
 pub fn provider_with_guard(
     fake: &FakeService,
@@ -153,6 +171,7 @@ pub fn provider_with_guard(
         waiter.clone(),
         "0.1.0",
         guard,
+        Arc::new(LateQueue::new()),
     );
     (provider, waiter)
 }

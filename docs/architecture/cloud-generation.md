@@ -1167,8 +1167,10 @@ Other notes:
   cost checks also carry a late sink: if the caller stopped before the end of the answer,
   because its token fired or because it gave up on a part it could not read (bad JSON, an
   oversized or broken event, a failed resume; review R4), the helper thread reads the answer to
-  its end and the MCP client queues it as a `LateToolResult` with every UUID in it
-  (`McpClient::take_late_results`). The helper waits for the caller's verdict (read to the end,
+  its end and the MCP client queues it as a `LateToolResult` with every UUID in it. The queue
+  (`LateQueue`) belongs to the app: it is passed into every provider, as the `PreflightGuard`
+  is, so an answer that arrives after its provider was dropped or replaced still reaches the
+  ledger (review R10). The helper waits for the caller's verdict (read to the end,
   or stopped) before deciding; an answer whose response the caller already has is not queued,
   nor a refusal status that names no job. The bytes the caller did read are scanned too: an
   unreadable answer is *Outcome unknown* with the ids it named

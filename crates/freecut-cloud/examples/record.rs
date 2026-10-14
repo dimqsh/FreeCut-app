@@ -38,7 +38,7 @@ use freecut_cloud::CancelToken;
 use freecut_cloud::catalogue::OutputKind;
 use freecut_cloud::guard::{PreflightGuard, is_uuid};
 use freecut_cloud::http::{TransportConfig, UreqTransport};
-use freecut_cloud::mcp::{CallClass, StaticToken};
+use freecut_cloud::mcp::{CallClass, LateQueue, StaticToken};
 use freecut_cloud::oauth::pkce::{Pkce, random_state};
 use freecut_cloud::oauth::{OAuthClient, authorize_request, parse_callback};
 use freecut_cloud::provider::GenerationProvider;
@@ -119,6 +119,7 @@ fn main() -> anyhow_free::Result {
         Arc::new(SystemWaiter),
         env!("CARGO_PKG_VERSION"),
         Arc::new(PreflightGuard::new()),
+        Arc::new(LateQueue::new()),
     );
     let info = provider.connect(&cancel)?;
     let catalogue = provider.catalogue(&cancel)?;
@@ -647,6 +648,7 @@ mod tests {
             Arc::new(NoWait),
             "0.1.0",
             Arc::new(PreflightGuard::new()),
+            Arc::new(LateQueue::new()),
         );
         provider.connect(&CancelToken::new()).unwrap();
         provider.catalogue(&CancelToken::new()).unwrap();

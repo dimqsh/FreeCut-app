@@ -391,6 +391,36 @@ pub struct LateToolResult {
     pub job_ids: Vec<String>,
 }
 
+/// Late answers to paid calls and cost checks (review M3, R4, R10). The app
+/// keeps one for its whole run and hands it to every provider (and so every
+/// client) it creates: a helper thread may deliver an answer up to minutes
+/// after a cancel, when the provider that sent the request has long been
+/// dropped or replaced, and its job ids must still reach the ledger.
+#[derive(Debug, Default)]
+pub struct LateQueue {
+    results: Mutex<Vec<LateToolResult>>,
+}
+
+impl LateQueue {
+    /// An empty queue.
+    pub fn new() -> LateQueue {
+        LateQueue::default()
+    }
+
+    /// The late answers so far, oldest first; taking them empties the queue.
+    pub fn take(&self) -> Vec<LateToolResult> {
+        std::mem::take(&mut *self.lock())
+    }
+
+    fn push(&self, result: LateToolResult) {
+        self.lock().push(result);
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Vec<LateToolResult>> {
+        self.results.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 /// What the server said about itself in `initialize`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerInfo {
@@ -510,7 +540,7 @@ pub struct McpClient {
     waiter: Arc<dyn Waiter>,
     client_version: String,
     session: Mutex<Session>,
-    late: Arc<Mutex<Vec<LateToolResult>>>,
+    late: Arc<LateQueue>,
 }
 
 impl fmt::Debug for McpClient {
@@ -523,7 +553,8 @@ impl fmt::Debug for McpClient {
 }
 
 impl McpClient {
-    /// A client for `endpoint`. Nothing is sent until the first call.
+    /// A client for `endpoint` with a late queue of its own (see
+    /// [`McpClient::with_late_queue`]). Nothing is sent until the first call.
     pub fn new(
         endpoint: impl Into<String>,
         transport: Arc<dyn HttpTransport>,
@@ -538,8 +569,15 @@ impl McpClient {
             waiter,
             client_version: client_version.into(),
             session: Mutex::new(Session::default()),
-            late: Arc::new(Mutex::new(Vec::new())),
+            late: Arc::new(LateQueue::new()),
         }
+    }
+
+    /// Sends late answers to `queue`, the app's (review R10).
+    #[must_use]
+    pub fn with_late_queue(mut self, queue: Arc<LateQueue>) -> McpClient {
+        self.late = queue;
+        self
     }
 
     /// The endpoint URL.
@@ -552,10 +590,10 @@ impl McpClient {
         self.lock().server.clone()
     }
 
-    /// Answers to paid calls and cost checks that arrived after a cancel,
-    /// oldest first; taking them empties the queue.
+    /// Takes the late answers from this client's queue (the app's, when it
+    /// passed one), oldest first.
     pub fn take_late_results(&self) -> Vec<LateToolResult> {
-        std::mem::take(&mut *self.late.lock().unwrap_or_else(PoisonError::into_inner))
+        self.late.take()
     }
 
     /// The current session id, if the server issued one.
@@ -1287,10 +1325,7 @@ impl McpClient {
                 jobs = result.job_ids.len(),
                 "an answer arrived after the caller stopped reading"
             );
-            queue
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push(result);
+            queue.push(result);
         });
         LateRoute { sink, answered }
     }

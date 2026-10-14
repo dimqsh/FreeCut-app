@@ -15,7 +15,7 @@ use crate::catalogue::{Catalogue, parse_listing};
 use crate::credits::Credits;
 use crate::error::{CloudError, SubmitError, classify, quoted, submit_disposition};
 use crate::guard::{CheckReservation, PreflightGuard, QuoteRequest, schema_offers_get_cost};
-use crate::mcp::{McpClient, ServerInfo, TokenSource, ToolInfo, schema};
+use crate::mcp::{LateQueue, McpClient, ServerInfo, TokenSource, ToolInfo, schema};
 use crate::oauth::discovery::AuthPolicy;
 use crate::provider::{
     Adjustment, GenerationProvider, Operation, PossiblyStarted, Quote, QuoteOutcome, ServiceInfo,
@@ -69,15 +69,16 @@ impl fmt::Debug for HiggsfieldProvider {
 }
 
 impl HiggsfieldProvider {
-    /// A provider for Higgsfield's endpoint. `guard` is the app's preflight
-    /// guard, shared by every provider it creates during its run (§4.7,
-    /// review R6).
+    /// A provider for Higgsfield's endpoint. `guard` and `late` are the
+    /// app's preflight guard and late queue, shared by every provider it
+    /// creates during its run (§4.7, review R6, R10).
     pub fn new(
         transport: Arc<dyn HttpTransport>,
         tokens: Arc<dyn TokenSource>,
         waiter: Arc<dyn Waiter>,
         client_version: &str,
         guard: Arc<PreflightGuard>,
+        late: Arc<LateQueue>,
     ) -> HiggsfieldProvider {
         HiggsfieldProvider::with_endpoint(
             ENDPOINT,
@@ -86,6 +87,7 @@ impl HiggsfieldProvider {
             waiter,
             client_version,
             guard,
+            late,
         )
     }
 
@@ -97,9 +99,11 @@ impl HiggsfieldProvider {
         waiter: Arc<dyn Waiter>,
         client_version: &str,
         guard: Arc<PreflightGuard>,
+        late: Arc<LateQueue>,
     ) -> HiggsfieldProvider {
         HiggsfieldProvider {
-            mcp: McpClient::new(endpoint, transport, tokens, waiter, client_version),
+            mcp: McpClient::new(endpoint, transport, tokens, waiter, client_version)
+                .with_late_queue(late),
             tools: Mutex::new(None),
             catalogue: Mutex::new(None),
             guard,
