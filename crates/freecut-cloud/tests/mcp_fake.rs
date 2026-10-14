@@ -1845,6 +1845,53 @@ fn a_404_from_a_stateless_server_is_an_ordinary_error() {
     );
 }
 
+/// R35: a 401, 403 or session-404 body that names a job is read on paid
+/// calls and cost checks: the run is Outcome unknown with the job (a cost
+/// check a started run), never Rejected, and nothing is renewed or resent.
+#[test]
+fn auth_and_session_refusals_that_name_a_job_keep_it() {
+    for status in [401, 403, 404] {
+        let fake = paid_fake();
+        let c = mcp_client(&fake, SwapToken::new("t1", Some("t2")));
+        c.initialize(&CancelToken::new()).unwrap();
+        fake.push_fault(Fault::Status(
+            status,
+            format!("job {JOB} was created, then: denied"),
+        ));
+        let err = submit(&c).unwrap_err();
+        let d = submit_disposition(&err, &image_args());
+        assert!(
+            matches!(&d, SubmitError::OutcomeUnknown { job_ids, .. } if job_ids == &[JOB]),
+            "{status}: {d:?}"
+        );
+        assert_eq!(fake.calls_to("generate_image").len(), 1, "{status}");
+    }
+    // Without a job they stay what they were.
+    let fake = paid_fake();
+    let c = mcp_client(&fake, token("t1"));
+    c.initialize(&CancelToken::new()).unwrap();
+    fake.push_fault(Fault::Status(403, "forbidden".into()));
+    assert!(matches!(
+        submit(&c).unwrap_err(),
+        McpError::Forbidden { .. }
+    ));
+
+    // A cost check refused with 403 that names a job started a run.
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    p.connect(&CancelToken::new()).unwrap();
+    p.catalogue(&CancelToken::new()).unwrap();
+    fake.push_fault(Fault::Status(403, format!("job {JOB}: plan required")));
+    match p
+        .quote(&image_op(), &run_tag(), &CancelToken::new())
+        .unwrap()
+    {
+        QuoteOutcome::StartedRun(run) => assert_eq!(run.job_ids, vec![JOB]),
+        other => panic!("{other:?}"),
+    }
+    assert!(p.guard().is_blocked("generate_image"));
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),

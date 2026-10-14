@@ -339,7 +339,8 @@ impl McpError {
     /// found with one scan ([`guard::uuids_in_text`]) over the raw answer:
     /// every byte of it that arrived, earlier events and non-text items
     /// included, a JSON-RPC error's message and data, and an error status's
-    /// body (4xx or 5xx, before it is cut for the message). A failure that
+    /// body (4xx or 5xx, before it is cut for the message; on a paid call
+    /// or cost check a 401, 403 or session 404 too, review R35). A failure that
     /// names a job may have started it, so it is never reported as rejected
     /// or not sent ([`crate::error::submit_disposition`] leaves out the
     /// request's own ids).
@@ -1092,6 +1093,38 @@ impl McpClient {
                     })
                 }
             },
+            // On a paid call or cost check these bodies are read too: one
+            // that names a job (not the request's own ids) makes the
+            // answer an error that carries it, so the run is Outcome
+            // unknown or a started run, never Rejected, and nothing is
+            // renewed or resent (review R35, the owner's R12 rule).
+            401 | 403 | 404
+                if class != CallClass::Free && (response.status != 404 || session.is_some()) =>
+            {
+                let status = response.status;
+                let (excerpt, found) = excerpt(response, cancel);
+                let sent = out
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("arguments"))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let job_ids = guard::new_ids(found, &sent);
+                Err(match status {
+                    _ if !job_ids.is_empty() => McpError::Http {
+                        status,
+                        excerpt,
+                        job_ids,
+                    },
+                    401 => McpError::Unauthorized {
+                        challenge: challenge(),
+                    },
+                    403 => McpError::Forbidden {
+                        challenge: challenge(),
+                    },
+                    _ => McpError::SessionExpired,
+                })
+            }
             401 => Err(McpError::Unauthorized {
                 challenge: challenge(),
             }),
