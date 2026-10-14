@@ -23,11 +23,14 @@
 //! ids become `fake-session-N`; signed URLs lose their query. The owner
 //! reviews the file before committing it. The access token lives in memory
 //! only and is dropped at exit; nothing is stored in the keychain.
+//!
+//! `--filter-headers <file>` applies the header allow list to a file recorded
+//! before the list existed, without signing in or calling the service.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -67,7 +70,12 @@ const MAX_RECORDED_BYTES: usize = 32 * 1024 * 1024;
 const SIGN_IN_WAIT: Duration = Duration::from_secs(300);
 
 fn main() -> anyhow_free::Result {
-    let print_url = std::env::args().any(|a| a == "--print-url");
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--filter-headers") {
+        let path = args.get(i + 1).ok_or("--filter-headers needs a file")?;
+        return filter_file(Path::new(path));
+    }
+    let print_url = args.iter().any(|a| a == "--print-url");
     let out = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/higgsfield/recorded/free-calls.jsonl");
     let cancel = CancelToken::new();
@@ -148,6 +156,51 @@ fn main() -> anyhow_free::Result {
         catalogue.visible().count(),
     );
     Ok(())
+}
+
+/// Rewrites a recorded file keeping only [`RECORDED_HEADERS`] (review round
+/// 3): no network, no sign-in. Everything but the dropped headers stays as
+/// it was.
+fn filter_file(path: &Path) -> anyhow_free::Result {
+    let text = std::fs::read_to_string(path)?;
+    let mut dropped = BTreeSet::new();
+    let mut out = String::with_capacity(text.len());
+    let mut lines = 0;
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let value: Value = serde_json::from_str(line)?;
+        out.push_str(&filter_headers(&value, &mut dropped).to_string());
+        out.push('\n');
+        lines += 1;
+    }
+    std::fs::write(path, out)?;
+    println!(
+        "Kept only the allowed headers in {lines} exchanges of {}.\nDropped: {}",
+        path.display(),
+        dropped.into_iter().collect::<Vec<_>>().join(", ")
+    );
+    Ok(())
+}
+
+/// `line` with every header off [`RECORDED_HEADERS`] removed from its request
+/// and answer; the names removed are added to `dropped`.
+fn filter_headers(line: &Value, dropped: &mut BTreeSet<String>) -> Value {
+    let mut line = line.clone();
+    for part in ["request", "response"] {
+        if let Some(headers) = line
+            .get_mut(part)
+            .and_then(|p| p.get_mut("headers"))
+            .and_then(Value::as_object_mut)
+        {
+            headers.retain(|name, _| {
+                let keep = recorded_header(name);
+                if !keep {
+                    dropped.insert(name.clone());
+                }
+                keep
+            });
+        }
+    }
+    line
 }
 
 /// Opens `url` with the platform's opener; false if that failed.
@@ -729,6 +782,43 @@ mod tests {
         .with_bearer(Secret::new("t1"));
         assert!(recorder.send(one, &CancelToken::new()).is_ok());
         assert_eq!(fake.requests().len(), 1);
+    }
+
+    /// Round 3: the one-off pass over an older recording keeps the same
+    /// headers the recorder keeps, and nothing else changes.
+    #[test]
+    fn the_one_off_pass_keeps_only_allowed_headers() {
+        let line = json!({
+            "request": {"method": "POST", "url": ENDPOINT, "body": {"method": "initialize"},
+                "headers": {"accept": "application/json", "mcp-protocol-version": "2025-11-25"}},
+            "response": {"status": 200, "body": "event: message",
+                "headers": {"content-type": "text/event-stream", "set-cookie": "__cf_bm=abc",
+                    "x-country": "KZ", "cf-ray": "8c1f-ALA", "x-higgsfield-build": "b1"}},
+        });
+        let mut dropped = BTreeSet::new();
+        let out = filter_headers(&line, &mut dropped);
+        assert_eq!(
+            out["request"]["headers"],
+            json!({"mcp-protocol-version": "2025-11-25"})
+        );
+        assert_eq!(
+            out["response"]["headers"],
+            json!({"content-type": "text/event-stream", "x-higgsfield-build": "b1"})
+        );
+        assert_eq!(
+            dropped.into_iter().collect::<Vec<_>>(),
+            vec!["accept", "cf-ray", "set-cookie", "x-country"]
+        );
+        let mut rest = out.clone();
+        let mut original = line.clone();
+        for v in [&mut rest, &mut original] {
+            v["request"]["headers"] = Value::Null;
+            v["response"]["headers"] = Value::Null;
+        }
+        assert_eq!(rest, original);
+        // An exchange that ended in an error has no answer; it passes as is.
+        let failed = json!({"request": {"headers": {}}, "error": "x"});
+        assert_eq!(filter_headers(&failed, &mut BTreeSet::new()), failed);
     }
 
     #[test]
