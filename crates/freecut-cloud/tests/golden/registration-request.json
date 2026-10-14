@@ -1,7 +1,11 @@
 {
   "application_type": "native",
   "client_name": "FreeCut",
-  "grant_types": ["authorization_code", "refresh_token"],
+  "grant_types": [
+    "authorization_code",
+    "refresh_token",
+    "urn:ietf:params:oauth:grant-type:device_code"
+  ],
   "redirect_uris": ["http://127.0.0.1/callback"],
   "response_types": ["code"],
   "scope": "openid email offline_access",

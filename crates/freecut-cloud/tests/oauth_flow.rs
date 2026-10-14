@@ -138,16 +138,88 @@ fn registration_sends_the_golden_request_and_reads_the_recorded_answer() {
         reg,
         ClientRegistration {
             client_id: "FAKE_CLIENT_ID".into(),
-            issuer: "https://clerk.higgsfield.ai".into()
+            issuer: "https://clerk.higgsfield.ai".into(),
+            // The recorded answer echoes no device grant.
+            device_grant: false,
         }
     );
-    let sent = fake
+    let sent: Vec<_> = fake
         .requests()
         .into_iter()
-        .find(|r| r.url == REGISTER)
-        .unwrap();
-    assert_eq!(sent.body, golden("registration-request.json"));
-    assert_eq!(sent.bearer, None);
+        .filter(|r| r.url == REGISTER)
+        .collect();
+    assert_eq!(sent.len(), 1);
+    // Clerk advertises device sign-in, so the grant is requested.
+    assert_eq!(sent[0].body, golden("registration-request.json"));
+    assert_eq!(sent[0].bearer, None);
+}
+
+#[test]
+fn an_echoed_device_grant_enables_sign_in_with_a_code() {
+    let fake = signed_out_service();
+    fake.on_route(Method::Post, REGISTER, |req| {
+        let mut answer = fixture_json("oauth-register-clerk-201.json");
+        answer["grant_types"] = req.body["grant_types"].clone();
+        (201, answer)
+    });
+    let oauth = OAuthClient::new(Arc::new(fake), auth_policy());
+    let cancel = CancelToken::new();
+    let server = oauth.discover(None, &cancel).unwrap().server;
+    assert!(oauth.register(&server, &cancel).unwrap().device_grant);
+}
+
+#[test]
+fn a_refused_device_grant_falls_back_to_browser_only_registration() {
+    let fake = signed_out_service();
+    fake.on_route(Method::Post, REGISTER, |req| {
+        let asks_device = req.body["grant_types"]
+            .as_array()
+            .is_some_and(|g| g.iter().any(|g| g.as_str().is_some_and(|g| g.ends_with("device_code"))));
+        if asks_device {
+            (400, json!({"error": "invalid_client_metadata", "error_description": "grant not allowed"}))
+        } else {
+            (201, fixture_json("oauth-register-clerk-201.json"))
+        }
+    });
+    let oauth = OAuthClient::new(Arc::new(fake.clone()), auth_policy());
+    let cancel = CancelToken::new();
+    let server = oauth.discover(None, &cancel).unwrap().server;
+    let reg = oauth.register(&server, &cancel).unwrap();
+    assert!(!reg.device_grant);
+    let sent: Vec<_> = fake
+        .requests()
+        .into_iter()
+        .filter(|r| r.url == REGISTER)
+        .collect();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(
+        sent[1].body,
+        golden("registration-request-browser-only.json")
+    );
+}
+
+#[test]
+fn without_device_sign_in_only_the_browser_grants_are_requested() {
+    let fake = signed_out_service();
+    let mut meta = fixture_json("oauth-authorization-server-clerk.json");
+    meta.as_object_mut()
+        .unwrap()
+        .remove("device_authorization_endpoint");
+    fake.serve_json(CLERK_META, meta);
+    let oauth = OAuthClient::new(Arc::new(fake.clone()), auth_policy());
+    let cancel = CancelToken::new();
+    let server = oauth.discover(None, &cancel).unwrap().server;
+    oauth.register(&server, &cancel).unwrap();
+    let sent: Vec<_> = fake
+        .requests()
+        .into_iter()
+        .filter(|r| r.url == REGISTER)
+        .collect();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0].body,
+        golden("registration-request-browser-only.json")
+    );
 }
 
 #[test]
@@ -292,6 +364,7 @@ fn signed_in(fake: &FakeService, now: i64, expires_in: u64) -> (Arc<TokenManager
             &ClientRegistration {
                 client_id: "cid".into(),
                 issuer: "https://clerk.higgsfield.ai".into(),
+                device_grant: false,
             },
         )
         .unwrap();

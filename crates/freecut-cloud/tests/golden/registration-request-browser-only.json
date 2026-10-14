@@ -1,0 +1,9 @@
+{
+  "application_type": "native",
+  "client_name": "FreeCut",
+  "grant_types": ["authorization_code", "refresh_token"],
+  "redirect_uris": ["http://127.0.0.1/callback"],
+  "response_types": ["code"],
+  "scope": "openid email offline_access",
+  "token_endpoint_auth_method": "none"
+}

@@ -72,6 +72,9 @@ pub struct ClientRegistration {
     pub client_id: String,
     /// The issuer it was registered with.
     pub issuer: String,
+    /// Whether the registration includes the device grant, so "Use a code
+    /// instead" (§5.4) can be offered.
+    pub device_grant: bool,
 }
 
 /// A browser sign-in in progress: the URL to open and what the callback
@@ -203,12 +206,17 @@ pub fn parse_callback(
 }
 
 /// The registration request (§5.2): a public native client with a loopback
-/// redirect and no secret.
-pub fn registration_body(policy: &AuthPolicy) -> Value {
+/// redirect and no secret. The device grant is added only when the server
+/// advertises device sign-in (§5.4).
+pub fn registration_body(policy: &AuthPolicy, device_grant: bool) -> Value {
+    let mut grants = vec!["authorization_code", "refresh_token"];
+    if device_grant {
+        grants.push(DEVICE_GRANT);
+    }
     json!({
         "client_name": "FreeCut",
         "redirect_uris": [REGISTERED_REDIRECT_URI],
-        "grant_types": ["authorization_code", "refresh_token"],
+        "grant_types": grants,
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
         "application_type": "native",
@@ -380,6 +388,31 @@ impl OAuthClient {
         server: &AuthServer,
         cancel: &CancelToken,
     ) -> Result<ClientRegistration, CloudError> {
+        let device = server.device_authorization_endpoint.is_some()
+            && server
+                .grant_types_supported
+                .iter()
+                .any(|g| g == DEVICE_GRANT);
+        if device {
+            match self.register_with(server, true, cancel) {
+                Ok(registration) => return Ok(registration),
+                // Browser sign-in stays the main path: a server that refuses
+                // the device grant gets the plain registration instead.
+                Err(CloudError::SignInFailed { message }) => {
+                    tracing::debug!(%message, "registration with the device grant refused");
+                }
+                Err(other) => return Err(other),
+            }
+        }
+        self.register_with(server, false, cancel)
+    }
+
+    fn register_with(
+        &self,
+        server: &AuthServer,
+        device_grant: bool,
+        cancel: &CancelToken,
+    ) -> Result<ClientRegistration, CloudError> {
         let endpoint =
             server
                 .registration_endpoint
@@ -387,7 +420,9 @@ impl OAuthClient {
                 .ok_or_else(|| CloudError::NotOffered {
                     what: "client registration".into(),
                 })?;
-        let body = registration_body(&self.policy).to_string().into_bytes();
+        let body = registration_body(&self.policy, device_grant)
+            .to_string()
+            .into_bytes();
         let (status, answer) = self.fetch(
             HttpRequest::post_json(endpoint, body, CallLimits::OAUTH)
                 .header("accept", "application/json"),
@@ -423,9 +458,16 @@ impl OAuthClient {
                 message: format!("registered as a {method} client, which needs a secret"),
             });
         }
+        // A server may drop grants it will not allow; trust its echo.
+        let granted_device = device_grant
+            && value
+                .get("grant_types")
+                .and_then(Value::as_array)
+                .is_none_or(|g| g.iter().any(|g| g.as_str() == Some(DEVICE_GRANT)));
         Ok(ClientRegistration {
             client_id: client_id.to_owned(),
             issuer: server.issuer.clone(),
+            device_grant: granted_device,
         })
     }
 
@@ -971,7 +1013,7 @@ mod tests {
     #[test]
     fn the_registration_request_is_a_public_native_client() {
         assert_eq!(
-            registration_body(&policy()),
+            registration_body(&policy(), false),
             json!({
                 "client_name": "FreeCut",
                 "redirect_uris": ["http://127.0.0.1/callback"],
