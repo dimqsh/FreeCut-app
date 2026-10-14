@@ -15,7 +15,10 @@
 //! list, and any request that carries `get_cost`.
 //!
 //! What is written (`tests/fixtures/higgsfield/recorded/free-calls.jsonl`,
-//! one exchange per line) is scrubbed first: only the headers on
+//! one exchange per line) is scrubbed first. Every secret the run holds (the
+//! client id, state, PKCE verifier, code, tokens, and the e-mail and subject
+//! in the ID token) is replaced wherever it appears, raw, percent-encoded or
+//! JSON-escaped, and the file is not written if any is left. Only the headers on
 //! [`RECORDED_HEADERS`] are kept, request and response (no `Authorization`,
 //! cookies, trace ids or CDN headers); token, code, client id and other
 //! secret fields are replaced;
@@ -110,6 +113,16 @@ fn main() -> anyhow_free::Result {
         request.pkce.verifier(),
         &cancel,
     )?;
+    // Every secret this run holds, replaced before writing and checked
+    // after (review R22). Taken before the access token moves below.
+    let known = known_secrets(
+        &registration.client_id,
+        &request.state,
+        request.pkce.verifier(),
+        &code,
+        &tokens,
+    );
+    drop(registration);
     println!("Signed in. Recording the free calls.");
 
     // The service: handshake, tool list, model listings, session end.
@@ -125,9 +138,15 @@ fn main() -> anyhow_free::Result {
     let catalogue = provider.catalogue(&cancel)?;
     provider.close();
 
-    // The client id can also sit inside other values (a registration URL).
-    let lines = recorder.lines_without(&[(registration.client_id.as_str(), "FAKE_CLIENT_ID")]);
-    drop(registration);
+    let lines = recorder.lines_without(&known);
+    let left = leaks(&lines, &known);
+    if !left.is_empty() {
+        return Err(format!(
+            "refusing to write the recording: it still holds {}",
+            left.join(", ")
+        )
+        .into());
+    }
     if let Some(dir) = out.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -266,50 +285,124 @@ fn wait_for_callback(
     Err("sign-in was not finished within 5 minutes".into())
 }
 
-/// A transport that refuses anything but free calls and keeps a scrubbed
-/// copy of every exchange.
+/// A transport that refuses anything but free calls and keeps every
+/// exchange (headers filtered, secret fields redacted) in memory until the
+/// file is written; the rest of the scrubbing happens then, once every
+/// secret of the run is known.
 struct Recorder {
     inner: Arc<dyn HttpTransport>,
-    lines: Mutex<Vec<Value>>,
-    scrub: Mutex<Scrubber>,
+    raw: Mutex<Vec<Value>>,
 }
 
 impl Recorder {
     fn new(inner: Arc<dyn HttpTransport>) -> Recorder {
         Recorder {
             inner,
-            lines: Mutex::new(Vec::new()),
-            scrub: Mutex::new(Scrubber::default()),
+            raw: Mutex::new(Vec::new()),
         }
     }
 
+    /// The scrubbed lines, with no known secrets (tests).
+    #[cfg(test)]
     fn lines(&self) -> Vec<Value> {
-        self.lines
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.lines_without(&[])
     }
 
-    /// The recorded lines with each known value replaced wherever it
-    /// appears.
-    fn lines_without(&self, known: &[(&str, &str)]) -> Vec<Value> {
-        self.lines()
+    /// The lines with each known secret replaced wherever it appears, then
+    /// scrubbed, with fakes that are stable across the file.
+    fn lines_without(&self, known: &[Known]) -> Vec<Value> {
+        let mut scrub = Scrubber::default();
+        self.raw
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .map(|line| replace_known(line, known))
+            .map(|line| scrub.value(&replace_known(line, known)))
             .collect()
     }
 
     fn record(&self, exchange: Value) {
-        let scrubbed = self
-            .scrub
+        self.raw
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .value(&exchange);
-        self.lines
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(scrubbed);
+            .push(exchange);
     }
+}
+
+/// A secret the run holds, and what replaces it in the recording.
+struct Known {
+    value: freecut_cloud::secret::Secret,
+    label: &'static str,
+}
+
+impl Known {
+    fn new(value: &str, label: &'static str) -> Known {
+        Known {
+            value: freecut_cloud::secret::Secret::new(value.to_owned()),
+            label,
+        }
+    }
+
+    /// The forms the value can take in a recording: raw, percent-encoded
+    /// (with `+` or `%20` for spaces) and JSON-escaped; longest first.
+    fn forms(&self) -> Vec<String> {
+        let raw = self.value.expose();
+        let form: String = url::form_urlencoded::byte_serialize(raw.as_bytes()).collect();
+        let escaped = serde_json::to_string(raw).unwrap_or_default();
+        let mut forms = vec![
+            raw.to_owned(),
+            form.replace('+', "%20"),
+            form,
+            escaped.trim_matches('"').to_owned(),
+        ];
+        forms.retain(|f| !f.is_empty());
+        forms.sort_by_key(|f| std::cmp::Reverse(f.len()));
+        forms.dedup();
+        forms
+    }
+}
+
+/// The secrets of a signed-in run (review R22): the client id, the state,
+/// the PKCE verifier, the code, the tokens, and the e-mail and subject the
+/// ID token names.
+fn known_secrets(
+    client_id: &str,
+    state: &freecut_cloud::secret::Secret,
+    verifier: &freecut_cloud::secret::Secret,
+    code: &freecut_cloud::secret::Secret,
+    tokens: &freecut_cloud::oauth::token::TokenSet,
+) -> Vec<Known> {
+    let mut known = vec![
+        Known::new(client_id, "FAKE_CLIENT_ID"),
+        Known::new(state.expose(), "<state>"),
+        Known::new(verifier.expose(), "<code-verifier>"),
+        Known::new(code.expose(), "<code>"),
+        Known::new(tokens.access.expose(), "<access-token>"),
+    ];
+    if let Some(refresh) = &tokens.refresh {
+        known.push(Known::new(refresh.expose(), "<refresh-token>"));
+    }
+    if let Some(id) = &tokens.id_token {
+        known.push(Known::new(id.expose(), "<id-token>"));
+        if let Some(claims) = freecut_cloud::oauth::token::id_token_claims(id.expose()) {
+            if let Some(email) = &claims.email {
+                known.push(Known::new(email, "user@example.test"));
+            }
+            if let Some(sub) = &claims.subject {
+                known.push(Known::new(sub, "<sub>"));
+            }
+        }
+    }
+    known
+}
+
+/// The labels of the known secrets still present, in any form, in `lines`.
+fn leaks(lines: &[Value], known: &[Known]) -> Vec<&'static str> {
+    let text: String = lines.iter().map(Value::to_string).collect();
+    known
+        .iter()
+        .filter(|k| k.forms().iter().any(|f| text.contains(f.as_str())))
+        .map(|k| k.label)
+        .collect()
 }
 
 impl std::fmt::Debug for Recorder {
@@ -392,20 +485,24 @@ impl HttpTransport for Recorder {
     }
 }
 
-fn replace_known(value: &Value, known: &[(&str, &str)]) -> Value {
-    match value {
-        Value::String(s) => Value::String(
-            known
+/// `value` with every form of every known secret replaced by its label, in
+/// strings and in object keys.
+fn replace_known(value: &Value, known: &[Known]) -> Value {
+    let text = |s: &str| {
+        known.iter().fold(s.to_owned(), |s, k| {
+            k.forms()
                 .iter()
-                .filter(|(real, _)| !real.is_empty())
-                .fold(s.clone(), |s, (real, fake)| s.replace(real, fake)),
-        ),
+                .fold(s, |s, form| s.replace(form.as_str(), k.label))
+        })
+    };
+    match value {
+        Value::String(s) => Value::String(text(s)),
         Value::Array(items) => {
             Value::Array(items.iter().map(|v| replace_known(v, known)).collect())
         }
         Value::Object(map) => Value::Object(
             map.iter()
-                .map(|(k, v)| (k.clone(), replace_known(v, known)))
+                .map(|(k, v)| (text(k), replace_known(v, known)))
                 .collect(),
         ),
         other => other.clone(),
@@ -1056,6 +1153,107 @@ mod tests {
         assert_eq!(s.text(&longer), longer);
     }
 
+    /// Answers with every planted secret in its body (raw, percent-encoded,
+    /// inside escaped JSON) and in an allowed header; fails the request whose
+    /// URL ends in `/fail` with a secret in the error.
+    #[derive(Debug)]
+    struct Plants(Vec<String>);
+
+    impl HttpTransport for Plants {
+        fn send(
+            &self,
+            request: HttpRequest,
+            _: &CancelToken,
+        ) -> Result<HttpResponse, TransportError> {
+            if request.url.ends_with("/fail") {
+                return Err(TransportError::maybe_sent(
+                    TransportErrorKind::Io,
+                    format!("reset while sending {}", self.0[0]),
+                ));
+            }
+            let pct: Vec<String> = self
+                .0
+                .iter()
+                .map(|v| url::form_urlencoded::byte_serialize(v.as_bytes()).collect())
+                .collect();
+            let body = json!({
+                "raw": self.0,
+                "link": format!("https://x.example/cb?v={}", pct.join("&w=")),
+                "text": json!({"nested": self.0}).to_string(),
+            });
+            Ok(HttpResponse::new(
+                200,
+                vec![
+                    ("content-type".into(), "application/json".into()),
+                    (
+                        "www-authenticate".into(),
+                        format!("Bearer error={}", self.0[1]),
+                    ),
+                ],
+                body.to_string().into_bytes(),
+            ))
+        }
+    }
+
+    /// R22: every secret the tool holds is replaced wherever it appears, in
+    /// raw, percent-encoded and JSON-escaped form, before the file is
+    /// written; one that is left makes the write refuse.
+    #[test]
+    fn no_secret_held_in_memory_is_written() {
+        let values = [
+            "at-RAW+access/token==",
+            "rt.refresh\"token\"",
+            "code value 1",
+            "verifier_ABC-123",
+            "st4te",
+            "owner+tag@example.com",
+            "user_2xYzSub",
+            "client_abc123",
+        ];
+        let known: Vec<Known> = values
+            .iter()
+            .zip([
+                "<access-token>",
+                "<refresh-token>",
+                "<code>",
+                "<code-verifier>",
+                "<state>",
+                "user@example.test",
+                "<sub>",
+                "FAKE_CLIENT_ID",
+            ])
+            .map(|(v, label)| Known::new(v, label))
+            .collect();
+        let recorder = Recorder::new(Arc::new(Plants(
+            values.iter().map(|v| (*v).to_owned()).collect(),
+        )));
+        let limits = freecut_cloud::transport::CallLimits::READ;
+        recorder
+            .send(
+                HttpRequest::get("https://clerk.example/a", limits),
+                &CancelToken::new(),
+            )
+            .unwrap();
+        assert!(
+            recorder
+                .send(
+                    HttpRequest::get("https://clerk.example/fail", limits),
+                    &CancelToken::new()
+                )
+                .is_err()
+        );
+        let lines = recorder.lines_without(&known);
+        assert_eq!(leaks(&lines, &known), Vec::<&str>::new());
+        let text = lines.iter().map(Value::to_string).collect::<String>();
+        for v in values {
+            assert!(!text.contains(v), "{v} was written");
+        }
+        // In what was recorded, before any replacement, the check finds
+        // them all.
+        let raw = recorder.raw.lock().unwrap().clone();
+        assert_eq!(leaks(&raw, &known).len(), values.len());
+    }
+
     #[test]
     fn a_known_value_is_replaced_wherever_it_appears() {
         let line = json!({"response": {"body": {
@@ -1063,7 +1261,7 @@ mod tests {
             "registration_client_uri": "https://clerk.example/oauth/register/client_abc123",
             "list": ["x client_abc123 y"],
         }}});
-        let out = replace_known(&line, &[("client_abc123", "FAKE_CLIENT_ID")]);
+        let out = replace_known(&line, &[Known::new("client_abc123", "FAKE_CLIENT_ID")]);
         assert!(!out.to_string().contains("client_abc123"));
         assert_eq!(
             out["response"]["body"]["registration_client_uri"],
