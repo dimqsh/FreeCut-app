@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 
 use freecut_cloud::CancelToken;
 use freecut_cloud::catalogue::OutputKind;
-use freecut_cloud::guard::{PreflightGuard, is_uuid};
+use freecut_cloud::guard::{PreflightGuard, uuid_spans};
 use freecut_cloud::http::{TransportConfig, UreqTransport};
 use freecut_cloud::mcp::{LateQueue, StaticToken};
 use freecut_cloud::oauth::pkce::{Pkce, random_state};
@@ -727,36 +727,30 @@ impl Scrubber {
         out
     }
 
-    /// Replaces every UUID-shaped run of 36 characters that no hex digit
-    /// touches, wherever it sits: a whole word, inside an escaped JSON string
-    /// (`\"<id>\"`), in a URL path, after a prefix (`job-<id>`). The nil and
-    /// max UUIDs are values, not identifiers, and stay; so do the fakes.
+    /// Replaces every UUID-shaped run of 36 characters, wherever it sits
+    /// (the guard's scan, with no token boundaries): a whole word, inside
+    /// escaped JSON, in a URL path, after a prefix (`job-<id>`), right after
+    /// an escape that ends in a hex digit (`%2F<id>`, `\\b<id>`; review R28).
+    /// Replacing too much is the safe direction. The nil and max UUIDs are
+    /// values, not identifiers, and stay; so do the fakes.
     fn uuids(&mut self, text: &str) -> String {
-        const LEN: usize = 36;
-        let bytes = text.as_bytes();
         let mut out = String::with_capacity(text.len());
-        let mut start = 0;
-        let mut i = 0;
-        while i + LEN <= bytes.len() {
-            let candidate = text.get(i..i + LEN).filter(|c| is_uuid(c));
-            let free_before = i == 0 || !bytes[i - 1].is_ascii_hexdigit();
-            let free_after = bytes.get(i + LEN).is_none_or(|b| !b.is_ascii_hexdigit());
-            match candidate {
-                Some(uuid) if free_before && free_after && !keeps(uuid) => {
-                    out.push_str(&text[start..i]);
-                    let n = self.fakes.len() + 1;
-                    out.push_str(
-                        self.fakes
-                            .entry(uuid.to_ascii_lowercase())
-                            .or_insert_with(|| format!("{FAKE_UUID_PREFIX}{n:012}")),
-                    );
-                    i += LEN;
-                    start = i;
-                }
-                _ => i += 1,
+        let mut last = 0;
+        for (start, end) in uuid_spans(text) {
+            let uuid = &text[start..end];
+            if keeps(uuid) {
+                continue;
             }
+            out.push_str(&text[last..start]);
+            let n = self.fakes.len() + 1;
+            out.push_str(
+                self.fakes
+                    .entry(uuid.to_ascii_lowercase())
+                    .or_insert_with(|| format!("{FAKE_UUID_PREFIX}{n:012}")),
+            );
+            last = end;
         }
-        out.push_str(&text[start..]);
+        out.push_str(&text[last..]);
         out
     }
 
@@ -1314,9 +1308,21 @@ mod tests {
         }
         let pattern = "^([0-9a-f]{8}-…|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$";
         assert_eq!(s.text(pattern), pattern);
-        // A longer hex run is not a UUID.
-        let longer = format!("{id}0");
-        assert_eq!(s.text(&longer), longer);
+        // R28: right after an escape that ends in a hex digit (percent, \b,
+        // \f, \u00XX), and glued to more hex digits (the safe direction).
+        for text in [
+            format!("next=%2Fjobs%2F{id}"),
+            format!("id%3D{id}"),
+            format!("%22{id}%22"),
+            format!("https://x/_next/image?url=https%3A%2F%2Fcdn.example%2F{id}.webp&w=640"),
+            format!("\\b{id}"),
+            format!("\\f{id}"),
+            format!("\\u0022{id}"),
+            format!("{id}0"),
+        ] {
+            let out = s.text(&text);
+            assert!(!out.to_ascii_lowercase().contains(id), "{text} -> {out}");
+        }
     }
 
     /// Answers with every planted secret in its body (raw, percent-encoded,
