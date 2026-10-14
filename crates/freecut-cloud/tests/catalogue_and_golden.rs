@@ -44,10 +44,14 @@ fn the_recorded_listing_parses_without_skipping() {
     assert_eq!(c.skipped(), 0);
     assert_eq!(c.models().len(), 11 + 17 + 8);
     let counts = c.counts();
-    // Hidden: soul_2, ms_image (image); marketing_studio_video, sync_so,
-    // dubbing, voice_change, higgsfield_preset, clipify (video); the three
-    // game-pipeline models (audio).
-    assert_eq!((counts.image, counts.video, counts.audio), (9, 11, 5));
+    // Hidden: soul_2, ms_image, image_auto (image); marketing_studio_video,
+    // sync_so, dubbing, voice_change, higgsfield_preset, clipify (video); the
+    // three game-pipeline models (audio).
+    assert_eq!((counts.image, counts.video, counts.audio), (8, 11, 5));
+    assert_eq!(
+        c.get("image_auto").unwrap().hidden,
+        Some(HiddenReason::NotReviewed)
+    );
 }
 
 #[test]

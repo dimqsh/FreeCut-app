@@ -246,6 +246,9 @@ pub enum HiddenReason {
     OutOfScope,
     /// Dubbing, lip sync and voice change are not built (owner decision).
     VoiceToolNotBuilt,
+    /// Internal, pipeline or routing models, hidden until the owner reviews
+    /// them (2026-10-14).
+    NotReviewed,
 }
 
 /// One model.
@@ -430,12 +433,19 @@ const HIDDEN_IDS: &[(&str, HiddenReason)] = &[
     ("dubbing", HiddenReason::VoiceToolNotBuilt),
     ("voice_change", HiddenReason::VoiceToolNotBuilt),
     ("sync_so", HiddenReason::VoiceToolNotBuilt),
+    // Routes each prompt to a model of the service's choosing, so the model
+    // and its price are not known up front.
+    ("image_auto", HiddenReason::NotReviewed),
 ];
 
 const HIDDEN_PREFIXES: &[(&str, HiddenReason)] = &[
     ("soul_", HiddenReason::NeedsIdentityTraining),
     ("ms_", HiddenReason::ServiceStyles),
     ("marketing_studio", HiddenReason::ServiceStyles),
+    ("ad_multiplier", HiddenReason::NotReviewed),
+    ("hf_mult_", HiddenReason::NotReviewed),
+    ("3d_jutsu_", HiddenReason::NotReviewed),
+    ("cinematic_studio_soul_", HiddenReason::NotReviewed),
 ];
 
 fn hidden_reason(id: &str, description: &str) -> Option<HiddenReason> {
@@ -852,7 +862,23 @@ mod tests {
             Some(HiddenReason::ServicePipelineOnly)
         );
         assert_eq!(hidden_reason("seedance_2_5", "video"), None);
-        assert_eq!(hidden_reason("cinematic_studio_soul_cast", ""), None);
+        for id in [
+            "ad_multiplier",
+            "ad_multiplier_v2",
+            "hf_mult_motion_control",
+            "hf_mult_replace_object",
+            "3d_jutsu_angles",
+            "cinematic_studio_soul_cast",
+            "cinematic_studio_soul_location",
+            "image_auto",
+        ] {
+            assert_eq!(
+                hidden_reason(id, ""),
+                Some(HiddenReason::NotReviewed),
+                "{id}"
+            );
+        }
+        assert_eq!(hidden_reason("cinematic_studio_video", ""), None);
     }
 
     #[test]
