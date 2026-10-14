@@ -702,8 +702,12 @@ pub struct TokenManager {
     refreshing: Mutex<()>,
     /// One write to the store at a time: sign-in, pasted token, the write
     /// after a refresh, and disconnect (review SEC-1). Never held across a
-    /// network call.
+    /// network call. It also guards `unsaved`.
     writing: Mutex<()>,
+    /// Refreshed tokens the store would not take (review SEC-3). They are
+    /// newer than the stored ones, which the service may already have
+    /// invalidated by rotation, so they are used until a write succeeds.
+    unsaved: Mutex<Option<OAuthCredential>>,
 }
 
 impl fmt::Debug for TokenManager {
@@ -730,6 +734,7 @@ impl TokenManager {
             server: Mutex::new(None),
             refreshing: Mutex::new(()),
             writing: Mutex::new(()),
+            unsaved: Mutex::new(None),
         }
     }
 
@@ -748,10 +753,36 @@ impl TokenManager {
     /// # Errors
     /// [`CloudError::NotConnected`] when none is stored, or a store failure.
     pub fn credential(&self) -> Result<Credential, CloudError> {
+        if let Some(newer) = self.unsaved() {
+            return Ok(Credential::OAuth(newer));
+        }
         self.store
             .get(self.provider)
             .map_err(store_failed)?
             .ok_or(CloudError::NotConnected)
+    }
+
+    fn unsaved(&self) -> Option<OAuthCredential> {
+        self.unsaved
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn set_unsaved(&self, credential: Option<OAuthCredential>) {
+        *self.unsaved.lock().unwrap_or_else(PoisonError::into_inner) = credential;
+    }
+
+    /// Tries again to store refreshed tokens the store refused earlier.
+    /// Called with `writing` held.
+    fn flush_unsaved(&self) {
+        let Some(newer) = self.unsaved() else {
+            return;
+        };
+        match self.store.set(self.provider, &Credential::OAuth(newer)) {
+            Ok(()) => self.set_unsaved(None),
+            Err(e) => tracing::warn!(error = %e, "the refreshed sign-in still cannot be stored"),
+        }
     }
 
     /// Stores the tokens of a completed sign-in.
@@ -774,6 +805,7 @@ impl TokenManager {
         self.store
             .set(self.provider, &Credential::OAuth(credential.clone()))
             .map_err(store_failed)?;
+        self.set_unsaved(None);
         Ok(credential)
     }
 
@@ -785,7 +817,9 @@ impl TokenManager {
         let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         self.store
             .set(self.provider, &Credential::Bearer { token })
-            .map_err(store_failed)
+            .map_err(store_failed)?;
+        self.set_unsaved(None);
+        Ok(())
     }
 
     fn server_for(&self, issuer: &str, cancel: &CancelToken) -> Result<AuthServer, CloudError> {
@@ -817,6 +851,11 @@ impl TokenManager {
             .refreshing
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        {
+            // Before the next refresh, try again to store the last one.
+            let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+            self.flush_unsaved();
+        }
         let current = match self.credential()? {
             Credential::OAuth(c) => c,
             Credential::Bearer { .. } => return Err(CloudError::SignInExpired),
@@ -839,15 +878,28 @@ impl TokenManager {
             Some(&current),
         );
         let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
-        match self.store.get(self.provider).map_err(store_failed)? {
+        let now = match self.unsaved() {
+            Some(newer) => Some(Credential::OAuth(newer)),
+            None => self.store.get(self.provider).map_err(store_failed)?,
+        };
+        match now {
             None => {
                 tracing::debug!("signed out during a refresh; the new tokens are dropped");
                 Err(CloudError::NotConnected)
             }
             Some(Credential::OAuth(now)) if now.access == current.access => {
-                self.store
+                match self
+                    .store
                     .set(self.provider, &Credential::OAuth(renewed.clone()))
-                    .map_err(store_failed)?;
+                {
+                    Ok(()) => self.set_unsaved(None),
+                    // The old refresh token may be dead after rotation:
+                    // keep the new tokens in memory and store them later.
+                    Err(e) => {
+                        tracing::warn!(error = %e, "refreshed tokens kept in memory; the store refused them");
+                        self.set_unsaved(Some(renewed.clone()));
+                    }
+                }
                 tracing::debug!("access token refreshed");
                 Ok(renewed.access)
             }
@@ -880,6 +932,7 @@ impl TokenManager {
                 .unwrap_or(false);
         }
         let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        self.set_unsaved(None);
         self.store.delete(self.provider).map_err(store_failed)?;
         Ok(Disconnected { revoked })
     }

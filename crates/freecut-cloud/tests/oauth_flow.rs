@@ -338,7 +338,18 @@ fn a_full_browser_sign_in() {
     );
 }
 
+type Store = Arc<ChunkedSecretStore<MemoryEntryStore>>;
+
 fn signed_in(fake: &FakeService, now: i64, expires_in: u64) -> (Arc<TokenManager>, Arc<TestClock>) {
+    let (manager, clock, _) = signed_in_with_store(fake, now, expires_in);
+    (manager, clock)
+}
+
+fn signed_in_with_store(
+    fake: &FakeService,
+    now: i64,
+    expires_in: u64,
+) -> (Arc<TokenManager>, Arc<TestClock>, Store) {
     let cancel = CancelToken::new();
     let oauth = OAuthClient::new(Arc::new(fake.clone()), auth_policy());
     let server = oauth.discover(None, &cancel).unwrap().server;
@@ -346,7 +357,7 @@ fn signed_in(fake: &FakeService, now: i64, expires_in: u64) -> (Arc<TokenManager
     let clock = Arc::new(TestClock(Mutex::new(now)));
     let manager = Arc::new(TokenManager::new(
         ProviderId::HIGGSFIELD,
-        store,
+        store.clone(),
         oauth,
         clock.clone(),
     ));
@@ -368,7 +379,7 @@ fn signed_in(fake: &FakeService, now: i64, expires_in: u64) -> (Arc<TokenManager
             },
         )
         .unwrap();
-    (manager, clock)
+    (manager, clock, store)
 }
 
 #[test]
@@ -410,6 +421,67 @@ fn tokens_refresh_when_under_a_minute_remains_and_rotation_is_stored() {
     assert_eq!(c.refresh.unwrap().expose(), "rt-2");
     // The account tag survives refreshes.
     assert_eq!(c.subject_hash, Some(SubjectHash::of("user_2abc")));
+}
+
+/// SEC-3: refreshed tokens the keychain refuses are used, the superseded
+/// refresh token is never sent again, and they are stored once it works.
+#[test]
+fn refreshed_tokens_the_store_refuses_are_used_and_stored_later() {
+    let fake = signed_out_service();
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let log = sent.clone();
+    fake.on_route(Method::Post, TOKEN, move |req| {
+        let mut log = log.lock().unwrap();
+        log.push(
+            req.body["refresh_token"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        );
+        let n = log.len() + 1;
+        (
+            200,
+            token_answer(&format!("at-{n}"), Some(&format!("rt-{n}")), 100),
+        )
+    });
+    let (manager, clock, store) = signed_in_with_store(&fake, 0, 100);
+    let cancel = CancelToken::new();
+    let stored_access = || match store.get(ProviderId::HIGGSFIELD).unwrap() {
+        Some(Credential::OAuth(c)) => c.access.expose().to_owned(),
+        other => panic!("{other:?}"),
+    };
+
+    store.entries().crash_after(0); // the keychain refuses every write
+    *clock.0.lock().unwrap() = 90;
+    assert_eq!(
+        manager
+            .bearer(TokenPurpose::Ordinary, &cancel)
+            .unwrap()
+            .expose(),
+        "at-2"
+    );
+    assert_eq!(stored_access(), "at-1");
+    *clock.0.lock().unwrap() = 180;
+    assert_eq!(
+        manager
+            .bearer(TokenPurpose::Ordinary, &cancel)
+            .unwrap()
+            .expose(),
+        "at-3"
+    );
+    assert_eq!(*sent.lock().unwrap(), vec!["rt-1", "rt-2"]);
+
+    store.entries().recover();
+    *clock.0.lock().unwrap() = 270;
+    assert_eq!(
+        manager
+            .bearer(TokenPurpose::Ordinary, &cancel)
+            .unwrap()
+            .expose(),
+        "at-4"
+    );
+    assert_eq!(*sent.lock().unwrap(), vec!["rt-1", "rt-2", "rt-3"]);
+    assert_eq!(stored_access(), "at-4");
 }
 
 #[test]

@@ -1088,6 +1088,9 @@ Other notes:
   `LateToolResult` with every UUID in it (`McpClient::take_late_results`); the cloud worker
   drains the queue into the ledger after a cancel. The queue is in memory: until the ledger
   exists (H2), a late answer is kept only while FreeCut runs.
+- **Refreshed tokens the keychain refuses (§5.6, review SEC-3)** are kept in memory and used:
+  the stored refresh token may already be dead after rotation and is never sent again. The
+  write is retried before the next refresh; a disconnect or a new sign-in drops them.
 - **Device sign-in (§5.2, §5.4).** Registration asks for the device grant only when the server
   advertises a device endpoint and grant; if that registration is refused, FreeCut registers
   again without it (browser sign-in stays the main path) and reports whether *Use a code
