@@ -859,7 +859,7 @@ Messages from the service are shown as plain quoted text; no links in them are m
 | Fake MCP server | `FakeMcp` implements the `HttpTransport` trait in memory: scripted JSON-RPC exchanges, session ids, `404` session expiry, SSE responses, `401` then refresh, timeouts before and after the body is written | sans network |
 | Unknown-outcome property | For every scripted failure point of a paid submission (connect errors, each ureq timeout phase, reset after write, `401`, session `404`, concurrency refusal, unreadable answer, ledger write failure, crash after each write point), at most one submission is observed by the fake server, and the run ends in `NotSent`, `NotAccepted`, `OutcomeUnknown` or `Rejected`, never resubmitted | property test over the failure points |
 | Preflight guard | quote JSON always carries `get_cost: true`; no quote when the live schema lacks it; a server that ignores the flag yields one submission per Check cost and the "started run" path; preflights not retried after `MaybeSent` | units + fake server (§4.7) |
-| Send-state table | every `ureq::Error` variant maps to `NotSent` or `MaybeSent` as §4.5 lists | exhaustive match test |
+| Send-state table | every `ureq::Error` variant maps to `NotSent` or `MaybeSent` as §4.5 lists | table test over every variant built with FreeCut's features and every `Timeout`; `Protocol` from a loopback server |
 | Loopback integration | presigned `PUT` with progress and retry; download with `Range` resume and checksum; OAuth loopback callback with right and wrong `state` | `std::net::TcpListener` on `127.0.0.1:0` (feature `http`) |
 | Recorded fixtures | `initialize`, `tools/list`, `models_explore` listings, `get_cost` answers (all free), then one cheapest image run and one shortest video run of each operation as it is built (paid; the owner records them with their own account and explicit consent) | `crates/freecut-cloud/tests/fixtures/higgsfield/*.jsonl`, produced by `cargo run -p freecut-cloud --features http --example record`; a scrubber removes tokens, e-mails, subject ids, signed URL queries and job ids are replaced by stable fakes; reviewed before commit |
 | Contract check (manual, not CI) | compares live `tools/list` schemas and the catalogue with the fixtures and reports drift | `--example check-contract`, free calls only |
@@ -1075,7 +1075,10 @@ Other notes:
 
 - **Send-state table (§4.5).** `ureq::Error` is `#[non_exhaustive]`, so no match can make a new
   variant fail the build. Unlisted variants fall to `MaybeSent` (the safe side), `ureq` is pinned
-  `=3.4.2`, and a test lists every 3.4.2 variant.
+  `=3.4.2`, and a test lists every 3.4.2 variant built with FreeCut's features (no cookies,
+  charset, compression, json, multipart or native-tls) and every `Timeout` (review Q7);
+  `Error::Protocol`, whose payload is a ureq-proto type, comes from a loopback server that
+  sends a malformed answer.
 - **TLS.** `ureq` is built with `rustls-no-provider` and `platform-verifier`; the transport hands
   it ring as the crypto provider (`rustls` is a direct optional dependency for that and for its
   certificate errors). Certificates come only from the platform verifier, so `webpki-roots`

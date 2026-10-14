@@ -607,7 +607,11 @@ mod tests {
         );
     }
 
-    /// The send-state table of §4.5, pinned against ureq 3.4.2's variants.
+    /// The send-state table of §4.5, pinned against ureq 3.4.2's variants:
+    /// every variant built with FreeCut's features (no cookies, charset,
+    /// compression, json, multipart or native-tls) and every `Timeout`.
+    /// `Error::Protocol` holds a ureq-proto type, so the next test makes one
+    /// with a loopback server.
     #[test]
     fn send_state_table() {
         use ureq::Error;
@@ -631,10 +635,15 @@ mod tests {
         }
         let maybe_sent = [
             Error::StatusCode(500),
+            // Raised while building a request, but kept on the safe side.
+            Error::Http(ureq::http::Error::from(
+                ureq::http::StatusCode::from_u16(1000).unwrap_err(),
+            )),
             Error::BadUri("x".into()),
             Error::Timeout(ureq::Timeout::Global),
             Error::Timeout(ureq::Timeout::PerCall),
             Error::Timeout(ureq::Timeout::SendRequest),
+            Error::Timeout(ureq::Timeout::Await100),
             Error::Timeout(ureq::Timeout::SendBody),
             Error::Timeout(ureq::Timeout::RecvResponse),
             Error::Timeout(ureq::Timeout::RecvBody),
@@ -644,11 +653,13 @@ mod tests {
             Error::TooManyRedirects,
             Error::Tls("x"),
             Error::Rustls(rustls::Error::DecryptError),
+            Error::Pem(rustls::pki_types::pem::Error::NoItemsFound),
             Error::RequireHttpsOnly("x".into()),
             Error::LargeResponseHeader(1, 1),
             Error::ConnectProxyFailed("x".into()),
             Error::TlsRequired,
             Error::Other(Box::new(io::Error::other("x"))),
+            Error::BodyStalled,
             io(io::ErrorKind::ConnectionReset),
             io(io::ErrorKind::BrokenPipe),
             io(io::ErrorKind::TimedOut),
@@ -686,6 +697,28 @@ mod tests {
             matches!(err.kind, TransportErrorKind::Tls | TransportErrorKind::Io),
             "{err:?}"
         );
+    }
+
+    /// A malformed answer is `Error::Protocol`: the request went out.
+    #[test]
+    fn a_malformed_answer_is_a_protocol_error_that_may_have_been_sent() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                use std::io::{Read as _, Write as _};
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: many\r\n\r\n");
+            }
+        });
+        let err = agent_config(&loopback(), 0)
+            .new_agent()
+            .get(format!("http://127.0.0.1:{port}/mcp"))
+            .call()
+            .unwrap_err();
+        assert!(matches!(err, ureq::Error::Protocol(_)), "{err:?}");
+        assert_eq!(send_state(&err), SendState::MaybeSent);
     }
 
     /// M3: the gate runs after the connection is up and stops the request
