@@ -815,6 +815,42 @@ name. Colour keyframes are key tracks named `color.<slider>` (`color.exposure`, 
 with integer values, clamped like the static ones, and only on clips that take a stack. Unknown
 keys are kept on `color`, `color.light` and `color.color` by path. Step 9 → 10 writes nothing.
 
+**HSL, Curves and Wheels (format 11, CL-013 to CL-015, slice K2).** `color` gains `"hsl":
+{"red": {"hue", "saturation", "lightness"}, …}` (the eight bands red, orange, yellow, green,
+cyan, blue, purple, magenta; each level −100..=100), `"curves": {"luma", "red", "green",
+"blue"}`, each a list of `[x, y]` points in 0..=10000 left to right with the endpoints
+included, and `"wheels": {"strength": 0–100, "shadows" | "midtones" | "highlights" |
+"offset": {"x", "y", "luma"}}` (pucks on the disk x² + y² ≤ 1000², luminance −100..=100).
+Every part at its default is left out: a band at 0, a curve that is exactly the diagonal
+`[[0, 0], [10000, 10000]]`, a wheel with its puck centred and its luminance 0, Strength 100.
+Repairs counted as `ValuesClamped`: levels beyond their range, curve coordinates outside
+0..=10000, and pucks off the disk (pulled onto the rim along their direction). A list of points
+that breaks CL-014's rules (fewer than 2 or more than 16, x not at least 100 apart, the left
+endpoint past 2500 or the right one before 7500) is refused at its path
+(`….color.curves.red`). Keyframes: `color.hsl.<band>.<channel>`, `color.wheels.<wheel>.luma`,
+`color.wheels.strength` (integers) and `color.wheels.<wheel>.puck` with `{"x", "y"}` values,
+pulled onto the disk on load; curves take no keys. Unknown keys are kept on `color.hsl`, each
+band, `color.curves`, `color.wheels` and each wheel by path. Step 10 → 11 writes nothing.
+
+**The LUT slot and skin protection (format 12, CL-017, CL-030, slice K3).** `color` gains
+`"lut": {"hash": "<32 hex digits>", "file": "<original name>", "intensity": 0–100, "interp":
+"trilinear", "skin": {"on": true, "amount": 0–100}}` and `color.color` gains `"skin": {"on":
+true, "amount": 0–100}`. The hash is the XXH3-128 of the LUT file's bytes (big-endian, so its
+hex reads as the 128-bit number); the file itself lives in the user's LUT library or FreeCut's
+bundled set, never in the project. Left out at the defaults: no LUT, Intensity 100,
+`tetrahedral`, skin protection off at Amount 70. Repairs counted as `ValuesClamped`: Intensity
+and skin Amounts beyond 0..=100. Refused at their path: a `hash` that isn't 32 hex digits
+(`….color.lut.hash`) and an unknown `interp`. Keyframes: `color.lut.intensity`,
+`color.skin_amount` (the Color scope) and `color.lut.skin_amount`, integers clamped like the
+static values. Unknown keys are kept on `color.lut`, `color.lut.skin` and `color.color.skin` by
+path. Step 11 → 12 writes nothing.
+
+**Implementation note (2026-10-14): the LUT library index.** `<app data>/luts/index.json`
+(`freecut_project::luts`) is app state, not a project file: `{"version": 1, "luts": [{"hash",
+"name", "file", "kind": "cube" | "3dl", "size", "identity"?, "imported", "hidden"?}]}` in import
+order, next to one copy per file named `<hash>.<kind>`. A newer `version` or a damaged file is
+an error, never an empty library; copies and the index are written atomically.
+
 **Implementation note (2026-10-13): preset manifest files.** FX-030's manifests are not
 project files and do not use the envelope or `migrate::Chain`: each file carries a `"schema"`
 integer (1 today), a file with a newer schema is ignored with a log line, and unknown keys are

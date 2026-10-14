@@ -1,6 +1,6 @@
 {
   "format": "freecut-project",
-  "format_version": 10,
+  "format_version": 12,
   "app": "freecut 0.1.0",
   "ids_next": 100,
   "document": {
@@ -446,6 +446,52 @@
                           "interp": "ease-in-out-quad"
                         }
                       ]
+                    },
+                    {
+                      "prop": "color.hsl.green.saturation",
+                      "keys": [
+                        {
+                          "at": 470870400,
+                          "value": -55,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.lut.intensity",
+                      "keys": [
+                        {
+                          "at": 353152800,
+                          "value": 20,
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 824023200,
+                          "value": 90,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.wheels.midtones.puck",
+                      "keys": [
+                        {
+                          "at": 282522240,
+                          "value": {
+                            "x": -600,
+                            "y": 0
+                          },
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 706305600,
+                          "value": {
+                            "x": 300,
+                            "y": 700
+                          },
+                          "interp": "hold"
+                        }
+                      ]
                     }
                   ]
                 },
@@ -488,7 +534,8 @@
                 "color": {
                   "amount": 80,
                   "off": [
-                    "detail"
+                    "detail",
+                    "curves"
                   ],
                   "light": {
                     "brightness": 12,
@@ -500,7 +547,79 @@
                   "color": {
                     "temperature": 40,
                     "saturation": -100,
+                    "skin": {
+                      "on": true
+                    },
                     "x_skin": true
+                  },
+                  "hsl": {
+                    "red": {
+                      "saturation": -40
+                    },
+                    "orange": {
+                      "hue": 25
+                    },
+                    "blue": {
+                      "lightness": -100
+                    },
+                    "magenta": {
+                      "hue": 100
+                    }
+                  },
+                  "curves": {
+                    "luma": [
+                      [
+                        0,
+                        0
+                      ],
+                      [
+                        2500,
+                        2000
+                      ],
+                      [
+                        7500,
+                        8200
+                      ],
+                      [
+                        10000,
+                        10000
+                      ]
+                    ],
+                    "blue": [
+                      [
+                        1000,
+                        500
+                      ],
+                      [
+                        9000,
+                        10000
+                      ]
+                    ]
+                  },
+                  "wheels": {
+                    "strength": 80,
+                    "shadows": {
+                      "x": 120,
+                      "y": -340,
+                      "luma": 15
+                    },
+                    "highlights": {
+                      "luma": -20
+                    },
+                    "offset": {
+                      "x": -707,
+                      "y": 707
+                    }
+                  },
+                  "lut": {
+                    "hash": "0123456789abcdeffedcba9876543210",
+                    "file": "Teal \"night\" ✂.cube",
+                    "intensity": 60,
+                    "interp": "trilinear",
+                    "skin": {
+                      "on": true,
+                      "amount": 40
+                    }
                   },
                   "x_lut": {
                     "hash": "00",

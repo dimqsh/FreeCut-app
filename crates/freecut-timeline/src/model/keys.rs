@@ -110,7 +110,10 @@ pub enum PropValue {
     /// A colour slider's level (CL-028), in its control's range.
     Level(i16),
     /// A colour wheel's puck (CL-015), on the disk of radius 1000.
-    Puck { x: i16, y: i16 },
+    Puck {
+        x: i16,
+        y: i16,
+    },
 }
 
 impl PropValue {
@@ -353,17 +356,25 @@ impl PropPath {
     /// have it: text properties on other clips, transform properties on
     /// audio clips, the solid colour of a gradient fill, the angle of a
     /// fill that isn't linear, stops the gradient doesn't have, colour
-    /// sliders on clips without a colour stack (CL-001).
+    /// sliders on clips without a colour stack (CL-001), the LUT's sliders
+    /// on stacks without a LUT (CL-017).
     pub fn get(self, clip: &Clip) -> Option<PropValue> {
         match self {
             PropPath::Transform(p) => clip
                 .content
                 .is_visual()
                 .then(|| transform_value(&clip.transform, p)),
-            PropPath::Color(p) => clip
-                .content
-                .takes_color()
-                .then(|| PropValue::Level(ColorStack::of(clip.color.as_ref()).get(p))),
+            PropPath::Color(p) => {
+                if !clip.content.takes_color() {
+                    return None;
+                }
+                let stack = ColorStack::of(clip.color.as_ref());
+                // The LUT section's sliders exist only while there is a LUT.
+                if p.section() == Some(Section::Lut) && stack.lut.is_none() {
+                    return None;
+                }
+                Some(PropValue::Level(stack.get(p)))
+            }
             PropPath::ColorPuck(w) => clip.content.takes_color().then(|| {
                 let (x, y) = ColorStack::of(clip.color.as_ref()).puck(w);
                 PropValue::Puck { x, y }
@@ -817,7 +828,8 @@ impl Clip {
                 }
                 PropPath::ColorPuck(w) => {
                     let (x, y) = out.puck(w);
-                    let a = Animatable::from_shared(PropValue::Puck { x, y }, Arc::clone(&track.keys));
+                    let a =
+                        Animatable::from_shared(PropValue::Puck { x, y }, Arc::clone(&track.keys));
                     if let PropValue::Puck { x, y } = a.value_at(at) {
                         out = out.with_puck(w, x, y);
                     }

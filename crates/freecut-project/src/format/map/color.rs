@@ -1,5 +1,7 @@
 //! The colour stack of a clip (format 10, CL-001; format 11 adds HSL,
-//! Curves and Wheels): read and written with every default left out.
+//! Curves and Wheels; format 12 the LUT slot and skin protection): read
+//! and written with every default left out. A LUT hash that isn't 32 hex
+//! digits and an unknown interpolation are refused at their path.
 //! Values outside a slider's range are clamped into it, curve coordinates
 //! into 0–10000 and pucks onto their disk (and counted like other clamped
 //! values); a list of points that is no curve (CL-014's rules) and a stack
@@ -9,13 +11,15 @@
 
 use freecut_timeline::model::{
     ClipContent, ColorParamId, ColorStack, ColorWheels, Curve, CurveChannel, CurvePoint, Curves,
-    HslBand, HslChannel, HueBand, Section, Wheel, WheelId,
+    HslBand, HslChannel, HueBand, LutInterp, LutRef, LutSlot, Section, SkinProtect, SkinScope,
+    Wheel, WheelId, hash_hex, parse_hash_hex,
 };
 
 use super::{At, Give, fit};
 use crate::extras::{Extras, Owner};
 use crate::format::dto::{
-    ColorBalanceDto, ColorDto, CurvesDto, HslBandDto, HslDto, LightDto, WheelDto, WheelsDto,
+    ColorBalanceDto, ColorDto, CurvesDto, HslBandDto, HslDto, LightDto, LutDto, SkinDto, WheelDto,
+    WheelsDto,
 };
 use crate::open::OpenError;
 
@@ -176,6 +180,90 @@ fn read_wheels(
     extras.put(owner, part("wheels"), dto.extra);
 }
 
+/// Skin protection (CL-030) of `scope` into `stack`.
+fn read_skin(
+    dto: SkinDto,
+    scope: SkinScope,
+    stack: &mut ColorStack,
+    owner: Owner,
+    path: &str,
+    extras: &mut Extras,
+    clamped: &mut bool,
+) {
+    *stack = stack.with_skin(scope, dto.on);
+    if let Some(v) = dto.amount {
+        let id = ColorParamId::SkinAmount(scope);
+        *stack = stack.with(id, level(id, v, clamped));
+    }
+    extras.put(owner, part(path), dto.extra);
+}
+
+/// The LUT slot (CL-017) into `stack`.
+fn read_lut(
+    dto: LutDto,
+    at: &At,
+    stack: &mut ColorStack,
+    owner: Owner,
+    extras: &mut Extras,
+    clamped: &mut bool,
+) -> Result<(), OpenError> {
+    let Some(hash) = parse_hash_hex(&dto.hash) else {
+        return Err(at
+            .key("hash")
+            .bad("a LUT hash is 32 hex digits (the XXH3-128 of the file)"));
+    };
+    let interp = match dto.interp.as_deref() {
+        None => LutInterp::default(),
+        Some(name) => LutInterp::parse(name).ok_or_else(|| {
+            at.key("interp")
+                .bad(format!("`{name}` is not `tetrahedral` or `trilinear`"))
+        })?,
+    };
+    *stack = stack.with_lut(Some(LutSlot {
+        interp,
+        ..LutSlot::new(LutRef::new(hash, dto.file))
+    }));
+    if let Some(v) = dto.intensity {
+        let id = ColorParamId::LutIntensity;
+        *stack = stack.with(id, level(id, v, clamped));
+    }
+    if let Some(skin) = dto.skin {
+        read_skin(
+            skin,
+            SkinScope::Lut,
+            stack,
+            owner,
+            "lut.skin",
+            extras,
+            clamped,
+        );
+    }
+    extras.put(owner, part("lut"), dto.extra);
+    Ok(())
+}
+
+/// The DTO of a scope's skin protection, unless it is at its defaults.
+fn write_skin(skin: SkinProtect, give: &Give<'_>, path: &str) -> Option<SkinDto> {
+    let dto = SkinDto {
+        on: skin.on,
+        amount: (skin.amount != SkinProtect::default().amount).then_some(i64::from(skin.amount)),
+        extra: give.at(&part(path)),
+    };
+    let empty = !dto.on && dto.amount.is_none() && dto.extra.is_empty();
+    (!empty).then_some(dto)
+}
+
+fn write_lut(slot: &LutSlot, give: &Give<'_>) -> LutDto {
+    LutDto {
+        hash: hash_hex(&slot.lut.hash),
+        file: slot.lut.file_name.clone(),
+        intensity: (slot.intensity != 100).then_some(i64::from(slot.intensity)),
+        interp: (slot.interp != LutInterp::default()).then(|| slot.interp.as_str().to_string()),
+        skin: write_skin(slot.skin, give, "lut.skin"),
+        extra: give.at(&part("lut")),
+    }
+}
+
 fn write_hsl(stack: &ColorStack, give: &Give<'_>) -> Option<HslDto> {
     let mut dto = HslDto {
         extra: give.at(&part("hsl")),
@@ -235,7 +323,8 @@ fn write_wheels(wheels: &ColorWheels, give: &Give<'_>) -> Option<WheelsDto> {
             luma: nonzero(w.luma()),
             extra: give.at(&part(&format!("wheels.{}", id.as_str()))),
         };
-        let empty = out.x.is_none() && out.y.is_none() && out.luma.is_none() && out.extra.is_empty();
+        let empty =
+            out.x.is_none() && out.y.is_none() && out.luma.is_none() && out.extra.is_empty();
         *field = (!empty).then_some(out);
     }
     let empty = dto.strength.is_none()
@@ -300,16 +389,37 @@ pub(super) fn read_color(
                 stack = stack.with(id, level(id, v, clamped));
             }
         }
+        if let Some(skin) = balance.skin.take() {
+            read_skin(
+                skin,
+                SkinScope::Color,
+                &mut stack,
+                owner,
+                "color.skin",
+                extras,
+                clamped,
+            );
+        }
         extras.put(owner, "color.color", balance.extra);
     }
     if let Some(hsl) = dto.hsl.take() {
         read_hsl(hsl, &mut stack, owner, extras, clamped);
     }
     if let Some(curves) = dto.curves.take() {
-        read_curves(curves, &at.key("curves"), &mut stack, owner, extras, clamped)?;
+        read_curves(
+            curves,
+            &at.key("curves"),
+            &mut stack,
+            owner,
+            extras,
+            clamped,
+        )?;
     }
     if let Some(wheels) = dto.wheels.take() {
         read_wheels(wheels, &mut stack, owner, extras, clamped);
+    }
+    if let Some(lut) = dto.lut.take() {
+        read_lut(lut, &at.key("lut"), &mut stack, owner, extras, clamped)?;
     }
     extras.put(owner, "color", dto.extra);
     Ok((stack != ColorStack::default()).then_some(stack))
@@ -328,6 +438,7 @@ pub(super) fn write_color(stack: Option<&ColorStack>, give: &Give<'_>) -> Option
         *field = (v != id.spec().default).then_some(i64::from(v));
     }
     let mut balance = ColorBalanceDto {
+        skin: write_skin(stack.skin(SkinScope::Color), give, "color.skin"),
         extra: give.at("color.color"),
         ..ColorBalanceDto::default()
     };
@@ -350,6 +461,7 @@ pub(super) fn write_color(stack: Option<&ColorStack>, give: &Give<'_>) -> Option
         hsl: write_hsl(&stack, give),
         curves: write_curves(&stack.curves, give),
         wheels: write_wheels(&stack.wheels, give),
+        lut: stack.lut.as_ref().map(|l| write_lut(l, give)),
         extra: give.at("color"),
     };
     let empty = !dto.bypass
@@ -360,6 +472,7 @@ pub(super) fn write_color(stack: Option<&ColorStack>, give: &Give<'_>) -> Option
         && dto.hsl.is_none()
         && dto.curves.is_none()
         && dto.wheels.is_none()
+        && dto.lut.is_none()
         && dto.extra.is_empty();
     (!empty).then_some(dto)
 }

@@ -1,8 +1,8 @@
 //! Top-level application state: the open project, background jobs, the
 //! preview, sound playback, and the window layout.
 
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -109,6 +109,10 @@ enum Done {
     /// Takes interrupted by a crash were repaired for the project with this
     /// serial (PM-043): the takes, and what couldn't be repaired.
     Recovered(u64, Vec<PathBuf>, Vec<String>),
+    /// The LUT library's index was read at startup (CL-016).
+    LutLibrary(Result<freecut_project::luts::LutLibrary, String>),
+    /// A LUT import finished (CL-016).
+    LutsImported(Box<crate::jobs::luts::ImportReport>),
 }
 
 /// A media tile's poster (PM-050), made for item `id` of the project whose
@@ -241,6 +245,14 @@ pub struct FreeCutApp {
     /// The app-data folder (recordings of unsaved projects, PM-041);
     /// `None`: none (tests).
     app_data: Option<PathBuf>,
+    /// The bundled LUTs and the user's library, the LUT source of the
+    /// preview and of exports (CL-016, CL-017, CL-045).
+    luts: Arc<crate::luts::AppLuts>,
+    /// LUT files the preview couldn't read since the library last changed.
+    missing_luts: BTreeSet<[u8; 16]>,
+    /// What the Look lens's LUT select offers; handed to the project
+    /// every frame.
+    lut_choices: Arc<crate::luts::LutChoices>,
 }
 
 impl std::fmt::Debug for FreeCutApp {
@@ -288,6 +300,15 @@ impl FreeCutApp {
         }
         // Recordings of unsaved projects go to app data (PM-041).
         app.app_data = settings::settings_path().and_then(|p| p.parent().map(PathBuf::from));
+        // The LUT library's index (CL-016), read on the pool.
+        if let Some(data) = app.app_data.clone() {
+            app.jobs.spawn(move || {
+                Done::LutLibrary(
+                    freecut_project::luts::LutLibrary::in_app_data(&data)
+                        .map_err(|e| e.to_string()),
+                )
+            });
+        }
         // Home's cards (PM-017): read on the pool, never here.
         app.covers_dir = crate::recent::covers_dir();
         match crate::recent::registry_path() {
@@ -317,6 +338,8 @@ impl FreeCutApp {
         let wake_recorder: crate::recorder::Wake = Arc::new(move || ctx.request_repaint());
         let presets = Arc::new(load_presets());
         precompute_safety(&presets);
+        let luts = Arc::new(crate::luts::AppLuts::new());
+        let lut_choices = Arc::new(luts.choices(&BTreeSet::new()));
         let mut inspector = ui::inspector::InspectorState::default();
         inspector.motion.presets = Arc::clone(&presets);
         inspector.motion.posters = Some(crate::posters::PosterWorker::new(
@@ -327,7 +350,11 @@ impl FreeCutApp {
         FreeCutApp {
             project: None,
             jobs: Jobs::new(default_workers(), wake_jobs),
-            preview: Preview::new(fonts.clone(), Arc::clone(&presets), wake_preview),
+            preview: {
+                let preview = Preview::new(fonts.clone(), Arc::clone(&presets), wake_preview);
+                preview.set_luts(luts.clone());
+                preview
+            },
             preview_tex: None,
             preview_key: None,
             preview_layers: Vec::new(),
@@ -379,7 +406,45 @@ impl FreeCutApp {
             recorder: RecorderPanel::new(recorder_backend(), wake_recorder),
             muted_before_take: None,
             app_data: None,
+            luts,
+            missing_luts: BTreeSet::new(),
+            lut_choices,
         }
+    }
+
+    /// Rebuilds the LUT select's choices after the library or the missing
+    /// set changed.
+    fn refresh_luts(&mut self) {
+        self.lut_choices = Arc::new(self.luts.choices(&self.missing_luts));
+    }
+
+    /// Opens the LUT file dialog and imports what was picked (CL-016), on
+    /// the pool.
+    fn import_luts_dialog(&mut self) {
+        let Some(app_data) = self.app_data.clone() else {
+            self.say("LUTs can't be imported: FreeCut has no app-data folder here");
+            return;
+        };
+        let Some(paths) = rfd::FileDialog::new()
+            .set_title("Import LUT")
+            .add_filter("LUT files", &["cube", "3dl"])
+            .pick_files()
+        else {
+            return;
+        };
+        self.import_luts(paths, &app_data);
+    }
+
+    /// Imports LUT files and folders into the library in `app_data`, on the
+    /// pool.
+    fn import_luts(&mut self, paths: Vec<PathBuf>, app_data: &Path) {
+        let dir = app_data.join(freecut_project::luts::LIBRARY_FOLDER);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        self.jobs.spawn(move || {
+            Done::LutsImported(Box::new(crate::jobs::luts::import(&paths, &dir, now)))
+        });
     }
 
     /// Tells the user something in a toast (UI-040).
@@ -480,6 +545,23 @@ impl FreeCutApp {
         let mut hdr_found = Vec::new();
         for done in self.jobs.poll() {
             match done {
+                Done::LutLibrary(Ok(library)) => {
+                    self.luts.set_library(library);
+                    self.missing_luts.clear();
+                    self.refresh_luts();
+                }
+                Done::LutLibrary(Err(e)) => {
+                    self.say(format!("The LUT library couldn't be read: {e}"));
+                }
+                Done::LutsImported(report) => {
+                    let summary = report.summary();
+                    if let Some(library) = report.library {
+                        self.luts.set_library(library);
+                        self.missing_luts.clear();
+                        self.refresh_luts();
+                    }
+                    self.say(summary);
+                }
                 Done::Probed(result, ticket) => {
                     if let Some(e) = self.imports.finished(ticket, result) {
                         self.say(e);
@@ -809,6 +891,7 @@ impl FreeCutApp {
             presets: Arc::clone(&self.presets),
             // AU-012: export ignores solo unless "Export as heard".
             solo: dialog.export_solo(p),
+            luts: self.luts.clone(),
             slates_for_unreadable: slates,
         };
         let ctx = ctx.clone();
@@ -1445,6 +1528,12 @@ impl FreeCutApp {
             && frame.generation >= self.preview_shown
         {
             self.preview_shown = frame.generation;
+            let before = self.missing_luts.len();
+            self.missing_luts
+                .extend(frame.missing_luts.iter().map(|l| l.hash));
+            if self.missing_luts.len() != before {
+                self.refresh_luts();
+            }
             self.preview_layers = frame.layers;
             self.preview_canvas = frame.canvas;
             let color = ColorImage::from_rgba_unmultiplied(
@@ -2717,6 +2806,9 @@ impl FreeCutApp {
         if inspector.split {
             self.split();
         }
+        if inspector.import_luts {
+            self.import_luts_dialog();
+        }
         if inspector.delete {
             self.delete_clips(false);
         }
@@ -3240,8 +3332,15 @@ impl eframe::App for FreeCutApp {
         crate::theme::motion::set_reduced(&ctx, appearance.reduce_motion);
         crate::widgets::icon_button::track_keyboard_navigation(&ctx);
         self.handle_jobs(&ctx);
+        // The Look lens and the timeline read the LUT choices from the
+        // project (cheap: one shared pointer).
+        if let Some(p) = &mut self.project
+            && !Arc::ptr_eq(&p.luts, &self.lut_choices)
+        {
+            p.luts = Arc::clone(&self.lut_choices);
+        }
 
-        // Files dropped from the OS: projects open, media imports.
+        // Files dropped from the OS: projects open, LUTs and media import.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -3249,6 +3348,16 @@ impl eframe::App for FreeCutApp {
                 .map(|f| f.path().to_path_buf())
                 .collect()
         });
+        // LUT files go to the LUT library (CL-016).
+        let (luts, dropped): (Vec<_>, Vec<_>) = dropped
+            .into_iter()
+            .partition(|p| freecut_project::luts::LutFileKind::of_path(p).is_some());
+        if !luts.is_empty() {
+            match self.app_data.clone() {
+                Some(data) => self.import_luts(luts, &data),
+                None => self.say("LUTs can't be imported: FreeCut has no app-data folder here"),
+            }
+        }
         if !dropped.is_empty() {
             let (projects, media): (Vec<_>, Vec<_>) = dropped
                 .into_iter()

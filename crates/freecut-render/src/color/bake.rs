@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use freecut_timeline::model::ColorStack;
+use freecut_timeline::model::{ColorStack, Section};
 
 use super::eval::Evaluator;
 
@@ -26,9 +26,31 @@ impl BakeSize {
         }
     }
 
-    /// The size a stack needs. Every K1 curve is gentle enough for 33³.
-    pub fn for_stack(_stack: &ColorStack) -> BakeSize {
-        BakeSize::N33
+    /// The steepest curve slope a 33³ lattice follows within the accuracy
+    /// bound (README C52); steeper curves bake at 65³.
+    pub const STEEP_SLOPE: f32 = 4.0;
+
+    /// The size a stack needs without its LUT table: 65³ when an active
+    /// curve is steeper than [`BakeSize::STEEP_SLOPE`] somewhere, 33³
+    /// otherwise (every Light, Color, HSL and Wheels curve is gentle enough
+    /// for 33³).
+    pub fn for_stack(stack: &ColorStack) -> BakeSize {
+        let curves_on = stack.sections_enabled.is_on(Section::Curves);
+        if !curves_on || stack.curves.is_identity() {
+            return BakeSize::N33;
+        }
+        BakeSize::for_evaluator(&Evaluator::new(stack))
+    }
+
+    /// The size an evaluator needs: 65³ for a steep curve or a user LUT
+    /// finer than 33³ (README C52), 33³ otherwise.
+    pub fn for_evaluator(eval: &Evaluator) -> BakeSize {
+        if eval.curve_slope() > Self::STEEP_SLOPE || eval.lut_cube_size() > 33 || eval.needs_mask()
+        {
+            BakeSize::N65
+        } else {
+            BakeSize::N33
+        }
     }
 }
 
@@ -99,8 +121,8 @@ fn node_value(i: usize, n: usize) -> f32 {
     i as f32 / (n - 1) as f32
 }
 
-/// Bakes `stack`'s per-pixel stages (stages 5–7, 12 and the Amount blend
-/// in K1) into a lattice of `size`, on up to 8 threads.
+/// Bakes `stack`'s per-pixel stages (stages 5–9, 11, 12 and the Amount
+/// blend) into a lattice of `size`, on up to 8 threads.
 pub fn bake(stack: &ColorStack, size: BakeSize) -> Arc<Lattice> {
     let threads = std::thread::available_parallelism()
         .map_or(1, |n| n.get())
@@ -111,8 +133,14 @@ pub fn bake(stack: &ColorStack, size: BakeSize) -> Arc<Lattice> {
 /// [`bake`] on `threads` threads (at least one). Every node is evaluated on
 /// its own, so the result doesn't depend on the thread count.
 pub fn bake_with(stack: &ColorStack, size: BakeSize, threads: usize) -> Arc<Lattice> {
+    bake_eval(&Evaluator::new(stack), size, threads)
+}
+
+/// Bakes `eval`'s stages (a stack with its LUT table already looked up)
+/// into a lattice of `size` on `threads` threads (at least one).
+pub fn bake_eval(eval: &Evaluator, size: BakeSize, threads: usize) -> Arc<Lattice> {
     let n = size.nodes();
-    let eval = Evaluator::new(stack);
+    let per_channel = eval.balance_is_per_channel();
     let mut nodes = vec![[0.0f32; 3]; n * n * n];
     // One blue plane per unit of work: n planes of n² nodes.
     let plane = n * n;
@@ -124,8 +152,12 @@ pub fn bake_with(stack: &ColorStack, size: BakeSize, threads: usize) -> Arc<Latt
         for g in 0..n {
             for r in 0..n {
                 let input = [node_value(r, n), node_value(g, n), node_value(b, n)];
-                let pre = [balanced[r][0], balanced[g][1], balanced[b][2]];
-                out[g * n + r] = eval.eval_balanced(input, pre);
+                out[g * n + r] = if per_channel {
+                    let pre = [balanced[r][0], balanced[g][1], balanced[b][2]];
+                    eval.eval_balanced(input, pre)
+                } else {
+                    eval.eval(input)
+                };
             }
         }
     };

@@ -10,19 +10,25 @@
 //! default; the UI, the keyframe evaluator and the loader all read it. The
 //! pixel math lives in `freecut-render`.
 //!
-//! *Build note (K2):* the stack holds Light, Color, HSL, Curves and Wheels.
+//! *Build note (K3):* the stack holds Light, Color (with skin protection),
+//! the LUT slot, HSL, Curves and Wheels.
 //! The other sections of CL-043 already have their [`Section`] bit, so a
 //! switch and a reset can name them, and later slices add their values
 //! through format migrations with identity defaults.
 
 mod curve;
 mod hsl;
+mod lut;
 mod wheels;
 
 use std::sync::Arc;
 
 pub use curve::{Curve, CurveChannel, CurveError, CurvePoint, Curves};
 pub use hsl::{Hsl, HslBand, HslChannel, HueBand};
+pub use lut::{
+    LutInterp, LutRef, LutSlot, SKIN_AMOUNT_DEFAULT, SkinProtect, SkinScope, hash_hex,
+    parse_hash_hex,
+};
 pub use wheels::{ColorWheels, PUCK_RADIUS, Wheel, WheelId, on_disk};
 
 /// One section of the Color tab (CL-043), in display order.
@@ -128,7 +134,8 @@ impl Section {
     pub fn params(self) -> &'static [ColorParamId] {
         match self {
             Section::Light => &ColorParamId::LIGHT,
-            Section::Color => &ColorParamId::COLOR,
+            Section::Color => &ColorParamId::COLOR_SECTION,
+            Section::Lut => &ColorParamId::LUT,
             Section::Hsl => &ColorParamId::HSL,
             Section::Wheels => &ColorParamId::WHEELS,
             _ => &[],
@@ -206,6 +213,11 @@ pub enum ColorParamId {
     WheelLuma(WheelId),
     /// The Wheels section's Strength (CL-015), 0–100 %.
     WheelStrength,
+    /// The LUT's Intensity (CL-017), 0–100 %; nothing while the stack has
+    /// no LUT.
+    LutIntensity,
+    /// Skin protection's Amount (CL-030) in one scope, 0–100 %.
+    SkinAmount(SkinScope),
 }
 
 /// The range and default of a colour control, in its stored units
@@ -234,10 +246,17 @@ impl ColorParamSpec {
 /// default.
 pub const fn color_param_spec(id: ColorParamId) -> ColorParamSpec {
     match id {
-        ColorParamId::Amount | ColorParamId::WheelStrength => ColorParamSpec {
+        ColorParamId::Amount | ColorParamId::WheelStrength | ColorParamId::LutIntensity => {
+            ColorParamSpec {
+                min: 0,
+                max: 100,
+                default: 100,
+            }
+        }
+        ColorParamId::SkinAmount(_) => ColorParamSpec {
             min: 0,
             max: 100,
-            default: 100,
+            default: SKIN_AMOUNT_DEFAULT as i16,
         },
         _ => ColorParamSpec {
             min: -100,
@@ -250,13 +269,33 @@ pub const fn color_param_spec(id: ColorParamId) -> ColorParamSpec {
 /// Project-file names of the HSL sliders, by band and channel.
 const HSL_NAMES: [[&str; 3]; 8] = [
     ["hsl.red.hue", "hsl.red.saturation", "hsl.red.lightness"],
-    ["hsl.orange.hue", "hsl.orange.saturation", "hsl.orange.lightness"],
-    ["hsl.yellow.hue", "hsl.yellow.saturation", "hsl.yellow.lightness"],
-    ["hsl.green.hue", "hsl.green.saturation", "hsl.green.lightness"],
+    [
+        "hsl.orange.hue",
+        "hsl.orange.saturation",
+        "hsl.orange.lightness",
+    ],
+    [
+        "hsl.yellow.hue",
+        "hsl.yellow.saturation",
+        "hsl.yellow.lightness",
+    ],
+    [
+        "hsl.green.hue",
+        "hsl.green.saturation",
+        "hsl.green.lightness",
+    ],
     ["hsl.cyan.hue", "hsl.cyan.saturation", "hsl.cyan.lightness"],
     ["hsl.blue.hue", "hsl.blue.saturation", "hsl.blue.lightness"],
-    ["hsl.purple.hue", "hsl.purple.saturation", "hsl.purple.lightness"],
-    ["hsl.magenta.hue", "hsl.magenta.saturation", "hsl.magenta.lightness"],
+    [
+        "hsl.purple.hue",
+        "hsl.purple.saturation",
+        "hsl.purple.lightness",
+    ],
+    [
+        "hsl.magenta.hue",
+        "hsl.magenta.saturation",
+        "hsl.magenta.lightness",
+    ],
 ];
 
 /// Project-file names of the wheels' luminance sliders.
@@ -290,6 +329,23 @@ impl ColorParamId {
         ColorParamId::Vibrance,
     ];
 
+    /// Every slider of the Color section: [`ColorParamId::COLOR`] and skin
+    /// protection's Amount (CL-030).
+    pub const COLOR_SECTION: [ColorParamId; 6] = [
+        ColorParamId::Temperature,
+        ColorParamId::Tint,
+        ColorParamId::Hue,
+        ColorParamId::Saturation,
+        ColorParamId::Vibrance,
+        ColorParamId::SkinAmount(SkinScope::Color),
+    ];
+
+    /// The LUT section's sliders: Intensity and skin protection's Amount.
+    pub const LUT: [ColorParamId; 2] = [
+        ColorParamId::LutIntensity,
+        ColorParamId::SkinAmount(SkinScope::Lut),
+    ];
+
     /// The HSL section's sliders, band by band (hue, saturation,
     /// lightness).
     pub const HSL: [ColorParamId; 24] = {
@@ -319,9 +375,10 @@ impl ColorParamId {
         ColorParamId::WheelLuma(WheelId::Offset),
     ];
 
-    /// Every control: Light, Color, Amount, HSL, Wheels.
-    pub const ALL: [ColorParamId; 44] = {
-        let mut out = [ColorParamId::Amount; 44];
+    /// Every control: Light, Color, Amount, HSL, Wheels, the LUT's
+    /// Intensity and the two skin Amounts.
+    pub const ALL: [ColorParamId; 47] = {
+        let mut out = [ColorParamId::Amount; 47];
         let mut i = 0;
         while i < 9 {
             out[i] = ColorParamId::LIGHT[i];
@@ -343,6 +400,9 @@ impl ColorParamId {
             out[39 + w] = ColorParamId::WHEELS[w];
             w += 1;
         }
+        out[44] = ColorParamId::LutIntensity;
+        out[45] = ColorParamId::SkinAmount(SkinScope::Color);
+        out[46] = ColorParamId::SkinAmount(SkinScope::Lut);
         out
     };
 
@@ -363,7 +423,11 @@ impl ColorParamId {
             | ColorParamId::Tint
             | ColorParamId::Hue
             | ColorParamId::Saturation
-            | ColorParamId::Vibrance => Some(Section::Color),
+            | ColorParamId::Vibrance
+            | ColorParamId::SkinAmount(SkinScope::Color) => Some(Section::Color),
+            ColorParamId::LutIntensity | ColorParamId::SkinAmount(SkinScope::Lut) => {
+                Some(Section::Lut)
+            }
             ColorParamId::Amount => None,
             ColorParamId::Hsl { .. } => Some(Section::Hsl),
             ColorParamId::WheelLuma(_) | ColorParamId::WheelStrength => Some(Section::Wheels),
@@ -396,6 +460,9 @@ impl ColorParamId {
             ColorParamId::Hsl { band, channel } => HSL_NAMES[band.index()][channel as usize],
             ColorParamId::WheelLuma(w) => WHEEL_LUMA_NAMES[w as usize],
             ColorParamId::WheelStrength => "wheels.strength",
+            ColorParamId::LutIntensity => "lut.intensity",
+            ColorParamId::SkinAmount(SkinScope::Color) => "skin_amount",
+            ColorParamId::SkinAmount(SkinScope::Lut) => "lut.skin_amount",
         }
     }
 
@@ -422,6 +489,8 @@ pub struct BasicAdjust {
     pub hue: i16,
     pub saturation: i16,
     pub vibrance: i16,
+    /// Skin protection of the Color scope (CL-030).
+    pub skin: SkinProtect,
 }
 
 impl BasicAdjust {
@@ -444,7 +513,9 @@ impl BasicAdjust {
             ColorParamId::Amount
             | ColorParamId::Hsl { .. }
             | ColorParamId::WheelLuma(_)
-            | ColorParamId::WheelStrength => return None,
+            | ColorParamId::WheelStrength
+            | ColorParamId::LutIntensity
+            | ColorParamId::SkinAmount(_) => return None,
         })
     }
 
@@ -474,6 +545,8 @@ pub struct ColorStack {
     pub curves: Curves,
     /// Color wheels (CL-015).
     pub wheels: ColorWheels,
+    /// The user LUT (CL-017), with its skin protection (CL-030).
+    pub lut: Option<LutSlot>,
 }
 
 impl Default for ColorStack {
@@ -486,6 +559,7 @@ impl Default for ColorStack {
             hsl: Hsl::default(),
             curves: Curves::default(),
             wheels: ColorWheels::default(),
+            lut: None,
         }
     }
 }
@@ -498,7 +572,56 @@ impl ColorStack {
             ColorParamId::Hsl { band, channel } => self.hsl.band(band).get(channel),
             ColorParamId::WheelLuma(w) => self.wheels.wheel(w).luma(),
             ColorParamId::WheelStrength => i16::from(self.wheels.strength),
+            ColorParamId::LutIntensity => self
+                .lut
+                .as_ref()
+                .map_or(id.spec().default, |l| i16::from(l.intensity)),
+            ColorParamId::SkinAmount(scope) => i16::from(self.skin(scope).amount),
             _ => self.basic.get(id).unwrap_or(0),
+        }
+    }
+
+    /// Skin protection of `scope` (CL-030); the default for the LUT scope
+    /// while there is no LUT.
+    pub fn skin(&self, scope: SkinScope) -> SkinProtect {
+        match scope {
+            SkinScope::Color => self.basic.skin,
+            SkinScope::Lut => self
+                .lut
+                .as_ref()
+                .map_or_else(SkinProtect::default, |l| l.skin),
+        }
+    }
+
+    /// The stack with `scope`'s skin protection switched; the LUT scope
+    /// changes nothing while there is no LUT.
+    #[must_use]
+    pub fn with_skin(&self, scope: SkinScope, on: bool) -> ColorStack {
+        let mut out = self.clone();
+        match scope {
+            SkinScope::Color => out.basic.skin.on = on,
+            SkinScope::Lut => {
+                if let Some(l) = out.lut.as_mut() {
+                    l.skin.on = on;
+                }
+            }
+        }
+        out
+    }
+
+    /// The stack with `lut` in its LUT slot (`None` clears it).
+    #[must_use]
+    pub fn with_lut(&self, lut: Option<LutSlot>) -> ColorStack {
+        ColorStack {
+            lut: lut.map(|l| LutSlot {
+                intensity: l.intensity.min(100),
+                skin: SkinProtect {
+                    amount: l.skin.amount.min(100),
+                    ..l.skin
+                },
+                ..l
+            }),
+            ..self.clone()
         }
     }
 
@@ -511,6 +634,20 @@ impl ColorStack {
             // In range 0..=100 after the clamp.
             ColorParamId::Amount => out.amount = u8::try_from(v).unwrap_or(100),
             ColorParamId::WheelStrength => out.wheels.strength = u8::try_from(v).unwrap_or(100),
+            // In range 0..=100 after the clamp.
+            ColorParamId::LutIntensity => {
+                if let Some(l) = out.lut.as_mut() {
+                    l.intensity = u8::try_from(v).unwrap_or(100);
+                }
+            }
+            ColorParamId::SkinAmount(SkinScope::Color) => {
+                out.basic.skin.amount = u8::try_from(v).unwrap_or(SKIN_AMOUNT_DEFAULT);
+            }
+            ColorParamId::SkinAmount(SkinScope::Lut) => {
+                if let Some(l) = out.lut.as_mut() {
+                    l.skin.amount = u8::try_from(v).unwrap_or(SKIN_AMOUNT_DEFAULT);
+                }
+            }
             ColorParamId::Hsl { band, channel } => *out.hsl.band_mut(band).get_mut(channel) = v,
             ColorParamId::WheelLuma(w) => {
                 let wheel = out.wheels.wheel_mut(w);
@@ -573,6 +710,8 @@ impl ColorStack {
             Section::Wheels => WheelId::ALL
                 .iter()
                 .all(|w| self.wheels.wheel(*w).puck_is_centred()),
+            Section::Color => !self.basic.skin.on,
+            Section::Lut => self.lut.is_none(),
             _ => true,
         };
         extra
@@ -590,6 +729,11 @@ impl ColorStack {
             Section::Curves => !self.curves.is_identity(),
             Section::Wheels => self.wheels.strength > 0 && self.wheels.any_set(),
             Section::Hsl => !self.hsl.is_default(),
+            // Skin protection alone changes nothing (CL-030).
+            Section::Color => ColorParamId::COLOR
+                .iter()
+                .any(|id| self.get(*id) != id.spec().default),
+            Section::Lut => self.lut.as_ref().is_some_and(|l| l.intensity > 0),
             _ => section.params().iter().any(|id| {
                 let v = self.get(*id);
                 v != id.spec().default
@@ -621,6 +765,9 @@ impl ColorStack {
         match section {
             Section::Curves => out.curves = Curves::default(),
             Section::Wheels => out.wheels = ColorWheels::default(),
+            Section::Color => out.basic.skin = SkinProtect::default(),
+            // CL-017: the reset keeps the LUT choice.
+            Section::Lut => out.lut = out.lut.as_ref().map(LutSlot::reset),
             _ => {}
         }
         out.sections_enabled = out.sections_enabled.with(section, true);
@@ -689,10 +836,11 @@ mod tests {
         assert_eq!(ColorParamId::Amount.section(), None);
         assert_eq!(
             ColorParamId::LIGHT.len()
-                + ColorParamId::COLOR.len()
+                + ColorParamId::COLOR_SECTION.len()
                 + 1
                 + ColorParamId::HSL.len()
-                + ColorParamId::WHEELS.len(),
+                + ColorParamId::WHEELS.len()
+                + ColorParamId::LUT.len(),
             ColorParamId::ALL.len()
         );
         // Every control is listed once.
@@ -809,6 +957,65 @@ mod tests {
         let lum = ColorStack::default().with(ColorParamId::WheelLuma(WheelId::Offset), 300);
         assert_eq!(lum.wheels.offset.luma(), 100);
         assert!(lum.with_wheel_reset(WheelId::Offset).is_identity());
+    }
+
+    #[test]
+    fn the_lut_slot_and_skin_protection_count_as_sections() {
+        let slot = LutSlot::new(LutRef::new([7; 16], "teal.cube"));
+        let s = ColorStack::default().with_lut(Some(slot.clone()));
+        assert!(!s.is_identity() && !s.section_is_default(Section::Lut));
+        assert_eq!(s.get(ColorParamId::LutIntensity), 100);
+        let faint = s.with(ColorParamId::LutIntensity, 0);
+        assert!(
+            faint.is_identity(),
+            "Intensity 0 keeps the LUT but hides it"
+        );
+        assert_eq!(faint.lut.as_ref().map(|l| &l.lut), Some(&slot.lut));
+        // Intensity and the LUT scope's skin do nothing without a LUT.
+        let none = ColorStack::default()
+            .with(ColorParamId::LutIntensity, 20)
+            .with(ColorParamId::SkinAmount(SkinScope::Lut), 10)
+            .with_skin(SkinScope::Lut, true);
+        assert_eq!(none, ColorStack::default());
+        // A section reset keeps the file (CL-017).
+        let tuned = s
+            .with(ColorParamId::LutIntensity, 60)
+            .with(ColorParamId::SkinAmount(SkinScope::Lut), 30)
+            .with_skin(SkinScope::Lut, true);
+        assert_eq!(
+            tuned.skin(SkinScope::Lut),
+            SkinProtect {
+                on: true,
+                amount: 30
+            }
+        );
+        let r = tuned.with_section_reset(Section::Lut);
+        assert_eq!(r.lut, Some(slot));
+        // Skin protection of the Color scope alone changes nothing, but it
+        // is a non-default value, and a reset switches it off.
+        let skin = ColorStack::default()
+            .with_skin(SkinScope::Color, true)
+            .with(ColorParamId::SkinAmount(SkinScope::Color), 300);
+        assert_eq!(
+            skin.basic.skin,
+            SkinProtect {
+                on: true,
+                amount: 100
+            }
+        );
+        assert!(skin.is_identity() && !skin.section_is_default(Section::Color));
+        assert!(
+            skin.with_section_reset(Section::Color)
+                .section_is_default(Section::Color)
+        );
+        assert_eq!(
+            ColorParamId::parse("lut.skin_amount"),
+            Some(ColorParamId::SkinAmount(SkinScope::Lut))
+        );
+        assert_eq!(
+            color_param_spec(ColorParamId::SkinAmount(SkinScope::Color)).default,
+            70
+        );
     }
 
     #[test]

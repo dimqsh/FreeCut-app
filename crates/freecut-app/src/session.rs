@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
 use freecut_media::Probed;
@@ -51,6 +52,9 @@ pub struct Project {
     pub media_paths: BTreeMap<MediaId, PathBuf>,
     /// Media whose file can't be found (shown as offline slates).
     pub offline: BTreeSet<MediaId>,
+    /// The LUTs the Look lens offers and which of them are missing (CL-016,
+    /// CL-017); the app's, shared by every project and refreshed by it.
+    pub luts: Arc<crate::luts::LutChoices>,
     pub selection: Vec<ClipId>,
     /// The selected markers (TL-037): kept beside the clip selection, never
     /// undoable; markers that no longer exist drop out after every change.
@@ -96,6 +100,7 @@ impl Project {
             lock: None,
             media_paths: BTreeMap::new(),
             offline: BTreeSet::new(),
+            luts: Arc::default(),
             selection: Vec::new(),
             markers: BTreeSet::new(),
             playhead: Tick::ZERO,
@@ -649,6 +654,9 @@ pub fn op_name(op: OpKind) -> &'static str {
         OpKind::EditColor(ColorOp::Switch) => "Color Section",
         OpKind::EditColor(ColorOp::Bypass) => "Color On/Off",
         OpKind::EditColor(ColorOp::Reset) => "Reset Color",
+        OpKind::EditColor(ColorOp::Curve) => "Curve",
+        OpKind::EditColor(ColorOp::Puck) => "Color Wheel",
+        OpKind::EditColor(ColorOp::Lut) => "LUT",
     }
 }
 

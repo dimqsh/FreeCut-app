@@ -135,6 +135,9 @@ pub struct InspectorOutput {
     pub status: Option<String>,
     /// A keyframe arrow moved the playhead here (AU-008).
     pub seek: Option<Tick>,
+    /// The LUT section's Import LUT… was picked (CL-016): the app opens the
+    /// file dialog and runs the import.
+    pub import_luts: bool,
 }
 
 /// The debug timer of ui-concept §16.3's budget (an inspector build for a
@@ -1802,6 +1805,317 @@ mod tests {
                 .keys
                 .is_animated(PropPath::Color(ColorParamId::Exposure))
         );
+    }
+
+    #[test]
+    fn wheel_drags_and_curve_clicks_are_one_entry_each() {
+        use eframe::egui::{Event, Vec2};
+        use freecut_timeline::model::{ColorPage, CurveChannel, PropPath, PropValue, WheelId};
+
+        use crate::ui::drag::tests::button;
+
+        let (mut project, clip) = project_with_a_video();
+        let mut state = InspectorState::default();
+        state.workspace.set_lens(SelectionKind::Video, Lens::Look);
+        state
+            .workspace
+            .set_look_page(SelectionKind::Video, ColorPage::Wheels);
+        let mut frames = Frames::new();
+        let frame = |frames: &mut Frames,
+                     project: &mut Project,
+                     state: &mut InspectorState,
+                     events: Vec<Event>| {
+            let mut status = None;
+            frames.run(events, |ui| {
+                let view = CanvasView {
+                    canvas: (1920, 1080),
+                    layers: &[],
+                };
+                status = show(ui, project, state, &fonts(), &view).status;
+            });
+            let down = frames.ctx.input(|i| i.pointer.any_down());
+            assert_eq!(state.settle(Some(project), down), None);
+            status
+        };
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+
+        // Drag the Shadows puck from the centre to the right: one entry,
+        // luma untouched.
+        let wheel = widget_id(SelectionKind::Video, CardId::Wheels, "wheel").with("shadows");
+        let rect = frames
+            .ctx
+            .read_response(wheel)
+            .expect("the Shadows wheel")
+            .rect;
+        let start = rect.center();
+        let entries = project.editor.history().len();
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![Event::PointerMoved(start), button(start, true)],
+        );
+        for step in 1..=4 {
+            let to = start + Vec2::new(rect.width() * 0.08 * step as f32, 0.0);
+            frame(
+                &mut frames,
+                &mut project,
+                &mut state,
+                vec![Event::PointerMoved(to)],
+            );
+        }
+        let end = start + Vec2::new(rect.width() * 0.3, 0.0);
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![button(end, false)],
+        );
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let (x, y) = stack_of(&project, clip).puck(WheelId::Shadows);
+        assert!(x > 300 && y.abs() < 20, "puck at ({x}, {y})");
+        assert_eq!(project.editor.history().len(), entries + 1, "one entry");
+        project.undo().unwrap();
+        assert_eq!(stack_of(&project, clip).puck(WheelId::Shadows), (0, 0));
+        project.redo().unwrap();
+
+        // With the puck keyed, a drag sets the key at the playhead.
+        let seq = project.doc().root();
+        project
+            .apply(
+                &freecut_timeline::edit::EditRequest::EditKeys {
+                    seq,
+                    clips: vec![clip],
+                    prop: PropPath::ColorPuck(WheelId::Shadows),
+                    edit: KeyEdit::Add {
+                        at: Tick::ZERO,
+                        value: Some(PropValue::Puck { x: 0, y: 0 }),
+                    },
+                },
+                freecut_timeline::history::Coalesce::Never,
+            )
+            .unwrap();
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let at = frames.ctx.read_response(wheel).unwrap().rect.center();
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![Event::PointerMoved(at), button(at, true)],
+        );
+        let to = at + Vec2::new(0.0, -rect.height() * 0.25);
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![Event::PointerMoved(to)],
+        );
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![button(to, false)],
+        );
+        let keys = project
+            .doc()
+            .clip(clip)
+            .unwrap()
+            .keys
+            .keys(PropPath::ColorPuck(WheelId::Shadows))
+            .to_vec();
+        assert_eq!(keys.len(), 2, "a key added at the playhead");
+        let PropValue::Puck { y, .. } = keys[1].value else {
+            panic!("a puck key");
+        };
+        assert!(y > 200, "dragged up: {y}");
+
+        // Curves: a click above the diagonal adds a point (one entry); a
+        // double-click on it removes it.
+        state
+            .workspace
+            .set_look_page(SelectionKind::Video, ColorPage::Curves);
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let editor = widget_id(SelectionKind::Video, CardId::Curves, "curve_editor").with(0usize);
+        let rect = frames
+            .ctx
+            .read_response(editor)
+            .expect("the curve editor")
+            .rect;
+        let at = rect.center() + Vec2::new(0.0, -rect.height() * 0.15);
+        let entries = project.editor.history().len();
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![Event::PointerMoved(at), button(at, true), button(at, false)],
+        );
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let luma = stack_of(&project, clip)
+            .curves
+            .get(CurveChannel::Luma)
+            .clone();
+        assert_eq!(luma.points().len(), 3);
+        assert!(luma.points()[1].y > 6_000, "{:?}", luma.points());
+        assert_eq!(project.editor.history().len(), entries + 1);
+        // Far enough in time from the first click to count as a new
+        // double-click.
+        for _ in 0..40 {
+            frame(&mut frames, &mut project, &mut state, Vec::new());
+        }
+        let point = crate::widgets::curve_editor::to_screen(rect.shrink(6.5), luma.points()[1]);
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![
+                Event::PointerMoved(point),
+                button(point, true),
+                button(point, false),
+                button(point, true),
+                button(point, false),
+            ],
+        );
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let luma = stack_of(&project, clip)
+            .curves
+            .get(CurveChannel::Luma)
+            .clone();
+        assert!(luma.is_default(), "{:?}", luma.points());
+    }
+
+    #[test]
+    fn lut_picks_and_skin_switches_are_one_entry_each() {
+        use eframe::egui::{Event, Key, Modifiers};
+        use freecut_timeline::model::{ColorPage, LutInterp, SkinScope};
+
+        use crate::ui::drag::tests::{button, key};
+
+        let (mut project, clip) = project_with_a_video();
+        let luts = crate::luts::AppLuts::new();
+        project.luts = std::sync::Arc::new(luts.choices(&Default::default()));
+        let first = project.luts.bundled[0].lut.clone();
+        let mut state = InspectorState::default();
+        state.workspace.set_lens(SelectionKind::Video, Lens::Look);
+        state
+            .workspace
+            .set_look_page(SelectionKind::Video, ColorPage::Basic);
+        // Light and Color folded, so the LUT section fits in the test
+        // window.
+        for card in [CardId::Light, CardId::ColorBalance] {
+            state.workspace.card(SelectionKind::Video, card).open = false;
+        }
+        let mut frames = Frames::new();
+        let frame = |frames: &mut Frames,
+                     project: &mut Project,
+                     state: &mut InspectorState,
+                     events: Vec<Event>| {
+            let mut out = InspectorOutput::default();
+            frames.run(events, |ui| {
+                let view = CanvasView {
+                    canvas: (1920, 1080),
+                    layers: &[],
+                };
+                out = show(ui, project, state, &fonts(), &view);
+            });
+            let down = frames.ctx.input(|i| i.pointer.any_down());
+            assert_eq!(state.settle(Some(project), down), None);
+            out
+        };
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let click = |frames: &mut Frames,
+                     project: &mut Project,
+                     state: &mut InspectorState,
+                     id: egui::Id| {
+            let at = frames
+                .ctx
+                .read_response(id)
+                .unwrap_or_else(|| panic!("{id:?} is shown"))
+                .rect
+                .center();
+            frame(
+                frames,
+                project,
+                state,
+                vec![Event::PointerMoved(at), button(at, true)],
+            );
+            frame(frames, project, state, vec![button(at, false)]);
+            frame(frames, project, state, Vec::new())
+        };
+
+        // The select opens on None; Down skips the Bundled heading to the
+        // first bundled LUT; Enter picks it: one entry.
+        let select = widget_id(SelectionKind::Video, CardId::Lut, "lut").with("select");
+        let entries = project.editor.history().len();
+        click(&mut frames, &mut project, &mut state, select);
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![key(Key::ArrowDown, Modifiers::NONE)],
+        );
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![key(Key::Enter, Modifiers::NONE)],
+        );
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let slot = stack_of(&project, clip).lut.expect("a LUT was picked");
+        assert_eq!(slot.lut, first);
+        assert_eq!(project.editor.history().len(), entries + 1);
+
+        // Each Skin protection switch is one entry; the LUT's shows its
+        // Amount once on.
+        for (scope, row) in [(SkinScope::Lut, "lut_skin"), (SkinScope::Color, "skin")] {
+            let card = match scope {
+                SkinScope::Color => CardId::ColorBalance,
+                SkinScope::Lut => CardId::Lut,
+            };
+            if scope == SkinScope::Color {
+                // Color open, LUT folded.
+                state.workspace.card(SelectionKind::Video, CardId::Lut).open = false;
+                state.workspace.card(SelectionKind::Video, card).open = true;
+                frame(&mut frames, &mut project, &mut state, Vec::new());
+                frame(&mut frames, &mut project, &mut state, Vec::new());
+            }
+            let switch = widget_id(SelectionKind::Video, card, row).with("switch");
+            let before = project.editor.history().len();
+            click(&mut frames, &mut project, &mut state, switch);
+            assert!(stack_of(&project, clip).skin(scope).on, "{scope:?}");
+            assert_eq!(project.editor.history().len(), before + 1, "{scope:?}");
+        }
+        project.undo().unwrap();
+        assert!(!stack_of(&project, clip).skin(SkinScope::Color).on);
+        assert!(stack_of(&project, clip).skin(SkinScope::Lut).on);
+        assert_eq!(
+            stack_of(&project, clip).lut.unwrap().interp,
+            LutInterp::Tetrahedral
+        );
+
+        // Import LUT… is the select's last entry: it asks the app.
+        for (card, open) in [(CardId::ColorBalance, false), (CardId::Lut, true)] {
+            state.workspace.card(SelectionKind::Video, card).open = open;
+        }
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        click(&mut frames, &mut project, &mut state, select);
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![key(Key::End, Modifiers::NONE)],
+        );
+        let out = frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![key(Key::Enter, Modifiers::NONE)],
+        );
+        assert!(out.import_luts, "Import LUT… asks the app to import");
+        assert_eq!(stack_of(&project, clip).lut.map(|l| l.lut), Some(first));
     }
 
     /// Applies one text style edit to `clip`.

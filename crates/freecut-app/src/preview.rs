@@ -17,13 +17,14 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use freecut_render::color::LutSource;
 use freecut_render::media::{MediaFile, MediaImages};
 use freecut_render::{
     Compositor, FontRegistry, ImageFailure, LayerImages, Picture, TextLayer, TextSpec, fit_size,
 };
 use freecut_timeline::glam::{DMat3, DVec2};
 use freecut_timeline::ids::{ClipId, MediaId, TrackId};
-use freecut_timeline::model::{Document, RichText, TextClipData};
+use freecut_timeline::model::{Document, LutRef, RichText, TextClipData};
 use freecut_timeline::motion::PresetTable;
 use freecut_timeline::plan::{FramePlan, LayerPlan, LayerSource, PlanInputs, PlanNode};
 use freecut_timeline::time::Tick;
@@ -76,6 +77,9 @@ pub struct PreviewFrame {
     pub canvas: (u32, u32),
     /// Bottom to top.
     pub layers: Vec<LayerBox>,
+    /// The LUT files this frame named and the LUT source couldn't give
+    /// (CL-017's missing badge).
+    pub missing_luts: Vec<LutRef>,
 }
 
 type Slot = Arc<(Mutex<SlotState>, Condvar)>;
@@ -83,6 +87,8 @@ type Slot = Arc<(Mutex<SlotState>, Condvar)>;
 #[derive(Default)]
 struct SlotState {
     request: Option<PreviewRequest>,
+    /// A new LUT source for the compositor, taken with the next request.
+    luts: Option<Arc<dyn LutSource>>,
     stop: bool,
 }
 
@@ -131,6 +137,14 @@ impl Preview {
         }
     }
 
+    /// Grades user LUTs with `luts` from the next frame on (CL-017).
+    pub fn set_luts(&self, luts: Arc<dyn LutSource>) {
+        let (lock, _) = &*self.slot;
+        if let Ok(mut state) = lock.lock() {
+            state.luts = Some(luts);
+        }
+    }
+
     /// The newest finished frame, if any.
     pub fn poll(&self) -> Option<PreviewFrame> {
         self.frames.try_iter().last()
@@ -165,6 +179,9 @@ fn run(
             loop {
                 if state.stop {
                     return;
+                }
+                if let Some(luts) = state.luts.take() {
+                    renderer.compositor.set_luts(luts);
                 }
                 if let Some(r) = state.request.take() {
                     break r;
@@ -230,6 +247,7 @@ impl Renderer {
                 rgba: vec![0; width as usize * height as usize * 4],
                 canvas,
                 layers: Vec::new(),
+                missing_luts: Vec::new(),
             };
         };
         let mut images = WithDraft {
@@ -245,6 +263,7 @@ impl Renderer {
             rgba: frame.rgba,
             canvas,
             layers,
+            missing_luts: self.compositor.take_missing_luts(),
         }
     }
 

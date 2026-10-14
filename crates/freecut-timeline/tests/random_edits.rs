@@ -280,7 +280,7 @@ fn op() -> impl Strategy<Value = Op> {
             .prop_map(|(pick, layer, on)| Op::TextLayer { pick, layer, on }),
         2 => (any::<u16>(), 1u8..3, 0u8..7, any::<i32>())
             .prop_map(|(pick, count, which, value)| Op::SetTransform { pick, count, which, value }),
-        4 => (any::<u16>(), 1u8..3, 0u8..14, any::<i32>())
+        4 => (any::<u16>(), 1u8..3, 0u8..19, any::<i32>())
             .prop_map(|(pick, count, which, value)| Op::Color { pick, count, which, value }),
         4 => (any::<u16>(), 1u8..3, -30i64..30, -1i8..2)
             .prop_map(|(pick, count, delta, shift)| Op::Move { pick, count, delta, shift }),
@@ -302,7 +302,7 @@ fn op() -> impl Strategy<Value = Op> {
             .prop_map(|(pick, count, which, at, to, value)| Op::GainKeys { pick, count, which, at, to, value }),
         1 => (0u8..5, any::<bool>(), any::<i32>())
             .prop_map(|(track, pan, value)| Op::TrackStage { track, pan, value }),
-        6 => (any::<u16>(), 1u8..3, 0u8..21, 0u8..8, -20i64..120, -20i64..120, any::<i32>())
+        6 => (any::<u16>(), 1u8..3, 0u8..23, 0u8..8, -20i64..120, -20i64..120, any::<i32>())
             .prop_map(|(pick, count, prop, which, at, to, value)| Op::Keys { pick, count, prop, which, at, to, value }),
         3 => (any::<u16>(), 1u8..3, 0u8..3, 0u8..7, -2i64..80, any::<i32>())
             .prop_map(|(pick, count, slot, preset, len, value)| Op::Anim { pick, count, slot, preset, len, value }),
@@ -576,6 +576,24 @@ fn request(fx: &Fixture, op: &Op) -> Option<EditRequest> {
                     10 => E::ResetBand(band),
                     11 => E::ResetWheel(wheel),
                     12 => E::SetParam(C::HSL[(v as u32 as usize) % 24], (v >> 3) as i16),
+                    14 => E::SetLut(Some(freecut_timeline::model::LutSlot {
+                        intensity: (v >> 8) as u8,
+                        ..freecut_timeline::model::LutSlot::new(
+                            freecut_timeline::model::LutRef::new(
+                                [(v & 3) as u8; 16],
+                                format!("l{}.cube", v & 3),
+                            ),
+                        )
+                    })),
+                    15 => E::SetLut(None),
+                    16 => E::SetSkin {
+                        scope: freecut_timeline::model::SkinScope::ALL[(v as u32 as usize) % 2],
+                        on: v % 3 != 0,
+                    },
+                    17 => E::SetLutInterp(
+                        freecut_timeline::model::LutInterp::ALL[(v as u32 as usize) % 2],
+                    ),
+                    18 => E::SetParam(C::LUT[(v as u32 as usize) % 2], (v >> 2) as i16),
                     _ => E::ResetAll,
                 },
             }
@@ -1590,13 +1608,13 @@ fn key_prop(n: u8, v: i32) -> PropPath {
         14 => PropPath::Text(T::Font),
         16 => PropPath::Color(freecut_timeline::model::ColorParamId::Exposure),
         17 => PropPath::Color(freecut_timeline::model::ColorParamId::Amount),
-        18 => PropPath::ColorPuck(
-            freecut_timeline::model::WheelId::ALL[(v as u32 as usize) % 4],
-        ),
-        19 => PropPath::Color(
-            freecut_timeline::model::ColorParamId::HSL[(v as u32 as usize) % 24],
-        ),
+        18 => PropPath::ColorPuck(freecut_timeline::model::WheelId::ALL[(v as u32 as usize) % 4]),
+        19 => PropPath::Color(freecut_timeline::model::ColorParamId::HSL[(v as u32 as usize) % 24]),
         20 => PropPath::Color(freecut_timeline::model::ColorParamId::WheelStrength),
+        21 => PropPath::Color(freecut_timeline::model::ColorParamId::LutIntensity),
+        22 => PropPath::Color(freecut_timeline::model::ColorParamId::SkinAmount(
+            freecut_timeline::model::SkinScope::ALL[(v as u32 as usize) % 2],
+        )),
         _ => PropPath::Text(T::GlowColor),
     }
 }

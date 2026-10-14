@@ -1,0 +1,19 @@
+{
+  "id": "fc.lut.mono.neutral.01",
+  "name": "Mono · Neutral 01",
+  "tags": [
+    "mono",
+    "black and white"
+  ],
+  "rev": 1,
+  "summary": "Neutral black and white with a little more contrast.",
+  "file": "mono-neutral-01.cube",
+  "passes": [
+    {
+      "params": {
+        "saturation": -100,
+        "contrast": 12
+      }
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "fc.lut.night.blue.01",
+  "name": "Night · Blue 01",
+  "tags": [
+    "night",
+    "blue",
+    "cool"
+  ],
+  "rev": 1,
+  "summary": "Darker, bluer and quieter, for a night feel.",
+  "file": "night-blue-01.cube",
+  "passes": [
+    {
+      "params": {
+        "exposure": -25,
+        "temperature": -45,
+        "saturation": -30,
+        "contrast": 10
+      }
+    }
+  ]
+}

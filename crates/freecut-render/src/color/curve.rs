@@ -7,7 +7,7 @@
 //! Below the left endpoint and above the right one the curve holds the
 //! endpoint's level.
 
-use freecut_timeline::model::{Curve, CurvePoint};
+use freecut_timeline::model::{Curve, CurveChannel, CurvePoint, Curves};
 
 /// How many entries a curve table has (CL-014).
 pub const CURVE_TABLE_SIZE: usize = 1024;
@@ -129,6 +129,58 @@ impl CurveTable {
     }
 }
 
+/// Stage 9 (CL-014): the Luma curve on R, G and B alike, then each
+/// channel's own curve. Curves on the diagonal are skipped.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CurvesStage {
+    luma: Option<CurveTable>,
+    rgb: [Option<CurveTable>; 3],
+}
+
+impl CurvesStage {
+    /// The stage for `curves`; `None` when every curve is the diagonal.
+    pub(crate) fn new(curves: &Curves) -> Option<CurvesStage> {
+        if curves.is_identity() {
+            return None;
+        }
+        let table = |c: CurveChannel| {
+            let curve = curves.get(c);
+            (!curve.is_identity()).then(|| CurveTable::new(curve))
+        };
+        Some(CurvesStage {
+            luma: table(CurveChannel::Luma),
+            rgb: [
+                table(CurveChannel::Red),
+                table(CurveChannel::Green),
+                table(CurveChannel::Blue),
+            ],
+        })
+    }
+
+    pub(crate) fn apply(&self, c: [f32; 3]) -> [f32; 3] {
+        let mut out = c;
+        for (i, v) in out.iter_mut().enumerate() {
+            if let Some(t) = &self.luma {
+                *v = t.lookup(*v);
+            }
+            if let Some(t) = &self.rgb[i] {
+                *v = t.lookup(*v);
+            }
+        }
+        out
+    }
+
+    /// The steepest slope a channel goes through: the Luma table's times
+    /// the channel's own, since one follows the other.
+    pub(crate) fn max_slope(&self) -> f32 {
+        let luma = self.luma.as_ref().map_or(1.0, CurveTable::max_slope);
+        self.rgb
+            .iter()
+            .map(|t| luma * t.as_ref().map_or(1.0, CurveTable::max_slope))
+            .fold(0.0, f32::max)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +204,34 @@ mod tests {
         assert_eq!(levels.lookup(0.9), 1.0);
         assert!((levels.lookup(0.5) - 0.5).abs() < 1e-3);
         assert!((levels.max_slope() - 1.0 / 0.6).abs() < 0.01);
+    }
+
+    #[test]
+    fn no_overshoot_between_points() {
+        // Steps and spikes: a monotone cubic stays within each segment's
+        // two levels, so a sharp rise never rings past them.
+        for list in [
+            &[(0, 0), (4_000, 0), (4_200, 10_000), (10_000, 10_000)][..],
+            &[(0, 10_000), (5_000, 0), (5_100, 10_000), (10_000, 0)],
+            &[
+                (0, 0),
+                (1_000, 9_000),
+                (2_000, 1_000),
+                (3_000, 9_500),
+                (10_000, 2_000),
+            ],
+        ] {
+            let c = curve(list);
+            let t = CurveTable::new(&c);
+            let pts = c.points();
+            for (i, v) in t.values().iter().enumerate() {
+                let x = (i as f64 / 1023.0 * 10_000.0) as u16;
+                let k = pts.partition_point(|p| p.x <= x).clamp(1, pts.len() - 1);
+                let (a, b) = (pts[k - 1], pts[k]);
+                let lo = f32::from(a.y.min(b.y)) / 10_000.0;
+                let hi = f32::from(a.y.max(b.y)) / 10_000.0;
+                assert!(*v >= lo - 1e-6 && *v <= hi + 1e-6, "{list:?} at {x}: {v}");
+            }
+        }
     }
 }

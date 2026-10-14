@@ -1,6 +1,6 @@
 {
   "format": "freecut-project",
-  "format_version": 10,
+  "format_version": 12,
   "app": "freecut 0.1.0",
   "ids_next": 100,
   "document": {

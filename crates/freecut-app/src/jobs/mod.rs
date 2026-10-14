@@ -6,10 +6,12 @@
 //! - [`export`]: the export job (EX-022), which runs on threads of its own.
 //! - [`progress`]: its lock-free progress cell, ETA window and the text the
 //!   progress and result views show.
+//! - [`luts`]: importing LUT files into the library (CL-016).
 //! - [`platform`]: blocking OS calls for the export dialog (destination
 //!   checks, "Open" and "Show in folder"), run on the pool.
 
 pub mod export;
+pub mod luts;
 pub mod platform;
 pub mod progress;
 

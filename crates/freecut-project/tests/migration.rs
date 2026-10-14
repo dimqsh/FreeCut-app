@@ -20,7 +20,7 @@ use freecut_project::{CURRENT_FORMAT_VERSION, Extras, OpenWarning, Owner, decode
 use freecut_timeline::ids::{ClipId, MediaId};
 use freecut_timeline::model::{
     ClipAnimations, ClipAudio, ClipContent, ClipKeys, EmbeddedAudio, Fill, Markers, MediaOrigin,
-    MediaSource, PropPath, Rgba8, SequenceFlags, TextClipData, TrackAudio, Transform,
+    MediaSource, Rgba8, SequenceFlags, TextClipData, TrackAudio, Transform,
 };
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
@@ -577,23 +577,20 @@ fn a_format_9_file_opens_with_no_colour() {
         for (_, track) in seq.tracks() {
             for clip in track.clips() {
                 assert_eq!(clip.color, None, "clip {}", clip.id);
-                assert!(
-                    !clip
-                        .keys
+                let colour_tracks = |c: &freecut_timeline::model::Clip| {
+                    c.keys
                         .tracks()
                         .iter()
-                        .any(|t| matches!(t.prop(), PropPath::Color(_)))
-                );
+                        .filter(|t| freecut_timeline::edit::is_color_prop(t.prop()))
+                        .count()
+                };
+                assert_eq!(colour_tracks(clip), 0);
                 let mut today = (**sink.clip(clip.id).unwrap()).clone();
                 graded += usize::from(today.color.is_some());
                 today.color = None;
-                if today
-                    .keys
-                    .tracks()
-                    .iter()
-                    .any(|t| matches!(t.prop(), PropPath::Color(_)))
-                {
-                    assert_eq!(clip.keys.tracks().len() + 1, today.keys.tracks().len());
+                let keyed = colour_tracks(&today);
+                if keyed > 0 {
+                    assert_eq!(clip.keys.tracks().len() + keyed, today.keys.tracks().len());
                 } else {
                     assert_eq!(&**clip, &today, "clip {}", clip.id);
                 }
@@ -624,8 +621,127 @@ fn the_frozen_v9_kitchen_sink_opens_without_colour() {
     check_expected(&opened, "v9/kitchen_sink.expected.freecut");
 }
 
+/// Today's kitchen sink without what format 11 added (what format 10
+/// holds).
+fn kitchen_sink_without_k2() -> freecut_timeline::model::Document {
+    let mut v = kitchen_value();
+    strip_k3(&mut v);
+    strip_k2(&mut v);
+    decode(&compact(&v)).unwrap().document
+}
+
+/// Today's kitchen sink without what format 12 added (what format 11
+/// holds).
+fn kitchen_sink_without_k3() -> freecut_timeline::model::Document {
+    let mut v = kitchen_value();
+    strip_k3(&mut v);
+    decode(&compact(&v)).unwrap().document
+}
+
+#[test]
+fn the_frozen_v11_kitchen_sink_opens_without_luts_or_skin_protection() {
+    let v11 = std::fs::read(fixture("v11/kitchen_sink.freecut")).unwrap();
+    assert_eq!(
+        to_value(&v11)["format_version"],
+        11,
+        "the fixture is frozen"
+    );
+    let opened = decode(&v11).unwrap();
+    assert_eq!(
+        opened.warnings[0],
+        OpenWarning::Migrated {
+            from: 11,
+            to: CURRENT_FORMAT_VERSION
+        }
+    );
+    assert!(!opened.needs_save, "an upgrade alone is not a change");
+    assert!(opened.backup_on_save(), "but the original is kept once");
+    let sink = kitchen_sink_without_k3();
+    for seq in opened.document.sequences() {
+        assert_eq!(Some(seq), sink.sequence(seq.id), "sequence {}", seq.id);
+    }
+    // Every stack has no LUT and no skin protection.
+    for seq in opened.document.sequences() {
+        for (_, track) in seq.tracks() {
+            for clip in track.clips() {
+                let s = freecut_timeline::model::ColorStack::of(clip.color.as_ref());
+                assert!(s.lut.is_none() && !s.basic.skin.on);
+            }
+        }
+    }
+    check_expected(&opened, "v11/kitchen_sink.expected.freecut");
+}
+
+#[test]
+fn the_frozen_v10_kitchen_sink_opens_without_hsl_curves_or_wheels() {
+    let v10 = std::fs::read(fixture("v10/kitchen_sink.freecut")).unwrap();
+    assert_eq!(
+        to_value(&v10)["format_version"],
+        10,
+        "the fixture is frozen"
+    );
+    let opened = decode(&v10).unwrap();
+    assert_eq!(
+        opened.warnings[0],
+        OpenWarning::Migrated {
+            from: 10,
+            to: CURRENT_FORMAT_VERSION
+        }
+    );
+    assert!(!opened.needs_save, "an upgrade alone is not a change");
+    assert!(opened.backup_on_save(), "but the original is kept once");
+    let sink = kitchen_sink_without_k2();
+    for seq in opened.document.sequences() {
+        assert_eq!(Some(seq), sink.sequence(seq.id), "sequence {}", seq.id);
+    }
+    // Every stack has its bands at 0, its curves on the diagonal and its
+    // pucks centred.
+    for seq in opened.document.sequences() {
+        for (_, track) in seq.tracks() {
+            for clip in track.clips() {
+                let s = freecut_timeline::model::ColorStack::of(clip.color.as_ref());
+                assert!(s.hsl.is_default() && s.curves.is_identity());
+                assert!(!s.wheels.any_set() && s.wheels.strength == 100);
+            }
+        }
+    }
+    check_expected(&opened, "v10/kitchen_sink.expected.freecut");
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 128, ..ProptestConfig::default() })]
+
+    /// A format-11 file opens to the document today's editor makes from the
+    /// same edits, and saving it again writes the current format.
+    #[test]
+    fn v11_files_open_to_what_the_editor_makes_today(plan in doc_plan_v11()) {
+        let (doc, ids) = build(&plan);
+        let current = encode(&doc, ids, &Extras::new()).unwrap();
+        let v11 = to_v11(&to_value(&current));
+        let opened = decode(&compact(&v11)).unwrap();
+        prop_assert_eq!(opened.ids.next(), ids);
+        prop_assert_eq!(
+            &opened.warnings,
+            &vec![OpenWarning::Migrated { from: 11, to: CURRENT_FORMAT_VERSION }]
+        );
+        prop_assert_eq!(&opened.document, &doc);
+    }
+
+    /// A format-10 file opens to the document today's editor makes from the
+    /// same edits, and saving it again writes the current format.
+    #[test]
+    fn v10_files_open_to_what_the_editor_makes_today(plan in doc_plan_v10()) {
+        let (doc, ids) = build(&plan);
+        let current = encode(&doc, ids, &Extras::new()).unwrap();
+        let v10 = to_v10(&to_value(&current));
+        let opened = decode(&compact(&v10)).unwrap();
+        prop_assert_eq!(opened.ids.next(), ids);
+        prop_assert_eq!(
+            &opened.warnings,
+            &vec![OpenWarning::Migrated { from: 10, to: CURRENT_FORMAT_VERSION }]
+        );
+        prop_assert_eq!(&opened.document, &doc);
+    }
 
     /// A format-9 file opens to the document today's editor makes from the
     /// same edits, and saving it again writes the current format.

@@ -155,3 +155,17 @@ fn render_stays_independent_of_ui_and_project() {
         );
     }
 }
+
+/// The LUT library lives in `freecut-project` but never parses a LUT: the
+/// app validates files with `freecut-media` first (README C54, CL-016).
+#[test]
+fn the_project_crate_never_reaches_media() {
+    let deps = workspace_deps();
+    for dep in &deps["freecut-project"] {
+        assert!(
+            !["freecut-media", "freecut-render", "freecut-audio"].contains(&dep.name.as_str()),
+            "freecut-project must not depend on {}",
+            dep.name
+        );
+    }
+}

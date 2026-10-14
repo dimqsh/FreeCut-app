@@ -21,6 +21,8 @@
 //!   its parser and the presets compiled in from `resources/`.
 //! - [`recordings`]: where voiceover takes are written and the startup scan
 //!   that recovers takes interrupted by a crash (AU-027, PM-041).
+//! - [`luts`]: the user's LUT library in app data, an index and hashed
+//!   copies (CL-016); it never parses a LUT.
 //!
 //! # Design rules
 //!
@@ -41,6 +43,7 @@ mod extras;
 mod format;
 pub mod fs;
 pub mod lock;
+pub mod luts;
 pub mod migrate;
 mod names;
 mod open;

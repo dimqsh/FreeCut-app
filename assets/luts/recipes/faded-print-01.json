@@ -1,0 +1,22 @@
+{
+  "id": "fc.lut.faded.print.01",
+  "name": "Faded · Print 01",
+  "tags": [
+    "faded",
+    "film"
+  ],
+  "rev": 1,
+  "summary": "Lifted blacks, softer whites and quieter colour, like an old print.",
+  "file": "faded-print-01.cube",
+  "passes": [
+    {
+      "params": {
+        "blacks": 40,
+        "whites": -15,
+        "contrast": -15,
+        "saturation": -25,
+        "temperature": 8
+      }
+    }
+  ]
+}

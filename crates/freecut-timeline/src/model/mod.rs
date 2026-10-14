@@ -37,8 +37,9 @@ pub use audio::{ClipAudio, EmbeddedAudio, FadeCurve, GainDb, MasterAudio, Pan, T
 pub use clip::{Clip, ClipContent, GeneratedKind, MediaKind, StreamSel};
 pub use color::{
     BasicAdjust, ColorPage, ColorParamId, ColorParamSpec, ColorStack, ColorWheels, Curve,
-    CurveChannel, CurveError, CurvePoint, Curves, Hsl, HslBand, HslChannel, HueBand, PUCK_RADIUS,
-    Section, SectionMask, Wheel, WheelId, color_param_spec, on_disk,
+    CurveChannel, CurveError, CurvePoint, Curves, Hsl, HslBand, HslChannel, HueBand, LutInterp,
+    LutRef, LutSlot, PUCK_RADIUS, SKIN_AMOUNT_DEFAULT, Section, SectionMask, SkinProtect,
+    SkinScope, Wheel, WheelId, color_param_spec, hash_hex, on_disk, parse_hash_hex,
 };
 pub use follow::{
     Attachment, FollowKind, FollowKinds, attach_all, attachment_for, expected_start, follow_kind,

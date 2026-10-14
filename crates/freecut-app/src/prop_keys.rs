@@ -184,6 +184,10 @@ pub fn transform_prop(edit: &TransformEdit) -> Option<(PropPath, PropValue)> {
 pub fn color_prop(edit: &ColorEdit) -> Option<(PropPath, PropValue)> {
     match edit {
         ColorEdit::SetParam(id, v) => Some((PropPath::Color(*id), PropValue::Level(*v))),
+        ColorEdit::SetPuck { wheel, x, y } => Some((
+            PropPath::ColorPuck(*wheel),
+            PropValue::Puck { x: *x, y: *y },
+        )),
         _ => None,
     }
 }
@@ -199,6 +203,7 @@ pub fn prop_label(prop: PropPath) -> String {
         PropPath::FillStopColor(i) => return format!("Stop {} colour", u16::from(i) + 1),
         PropPath::Reveal => "Reveal",
         PropPath::Color(id) => crate::ui::look::param_label(id),
+        PropPath::ColorPuck(w) => crate::ui::look::puck_label(w),
         PropPath::Text(p) => match p {
             P::Size => "Size",
             P::FillColor => "Fill colour",
@@ -249,6 +254,12 @@ pub fn value_label(value: PropValue) -> String {
         PropValue::Color(c) => crate::ui::rows::hex(c),
         PropValue::TailTip(t) => format!("{:.0} · {:.0}", t.x.as_f64(), t.y.as_f64()),
         PropValue::Level(v) => format!("{v:+}"),
+        // On the disk of radius 1000: shown as percentages of the rim.
+        PropValue::Puck { x, y } => format!(
+            "{:+.0} % · {:+.0} %",
+            f64::from(x) / 10.0,
+            f64::from(y) / 10.0
+        ),
     }
 }
 

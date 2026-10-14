@@ -1,0 +1,77 @@
+{
+  "license": "CC0-1.0",
+  "luts": [
+    {
+      "id": "fc.lut.contrast.neutral.01",
+      "name": "Contrast · Neutral 01",
+      "tags": ["contrast", "neutral"],
+      "rev": 1,
+      "summary": "More contrast with the colours left as they are.",
+      "file": "contrast-neutral-01.cube",
+      "hash": "866ab88d15ac290e746b9c7ff7f4dc78"
+    },
+    {
+      "id": "fc.lut.cool.gentle.01",
+      "name": "Cool · Gentle 01",
+      "tags": ["cool", "balance"],
+      "rev": 1,
+      "summary": "A gentle shift toward cool light.",
+      "file": "cool-gentle-01.cube",
+      "hash": "b0997125336962eb58854baa46f1567a"
+    },
+    {
+      "id": "fc.lut.faded.print.01",
+      "name": "Faded · Print 01",
+      "tags": ["faded", "film"],
+      "rev": 1,
+      "summary": "Lifted blacks, softer whites and quieter colour, like an old print.",
+      "file": "faded-print-01.cube",
+      "hash": "c0c07acf6843163f13476d94dbb9409a"
+    },
+    {
+      "id": "fc.lut.mono.neutral.01",
+      "name": "Mono · Neutral 01",
+      "tags": ["mono", "black and white"],
+      "rev": 1,
+      "summary": "Neutral black and white with a little more contrast.",
+      "file": "mono-neutral-01.cube",
+      "hash": "469254220bea658f252ae627baeb2859"
+    },
+    {
+      "id": "fc.lut.mono.warm.01",
+      "name": "Mono · Warm 01",
+      "tags": ["mono", "warm"],
+      "rev": 1,
+      "summary": "Black and white with a warm paper tone.",
+      "file": "mono-warm-01.cube",
+      "hash": "edd55b1da0d1fb09fa974ec948d5db16"
+    },
+    {
+      "id": "fc.lut.night.blue.01",
+      "name": "Night · Blue 01",
+      "tags": ["night", "blue", "cool"],
+      "rev": 1,
+      "summary": "Darker, bluer and quieter, for a night feel.",
+      "file": "night-blue-01.cube",
+      "hash": "e9b656ea07e483f5df1de8d951933e5d"
+    },
+    {
+      "id": "fc.lut.split.teal-warm.01",
+      "name": "Split · Teal and Warm 01",
+      "tags": ["split", "teal", "warm", "cinematic"],
+      "rev": 1,
+      "summary": "Teal in the shadows and warm highlights.",
+      "file": "split-teal-warm-01.cube",
+      "hash": "b9b8f58fe91a19595b61532439013d14"
+    },
+    {
+      "id": "fc.lut.warm.gentle.01",
+      "name": "Warm · Gentle 01",
+      "tags": ["warm", "balance"],
+      "rev": 1,
+      "summary": "A gentle shift toward warm light.",
+      "file": "warm-gentle-01.cube",
+      "hash": "c50e9d9c193533de74daf67fef6f60f8"
+    }
+  ]
+}

@@ -12,7 +12,7 @@
 
 use freecut_timeline::model::{Hsl, HueBand};
 
-use super::eval::{luma, mix_from_luma, rotate_hue};
+use super::eval::{luma, mix_from_luma, rotate_hue, smoothstep};
 
 /// Hue ±100 shifts by this many degrees (CL-013).
 const HUE_SHIFT_DEGREES: f32 = 30.0;
@@ -27,11 +27,6 @@ const PICK_MIN_LUMA: f32 = 0.03;
 /// The band centres in degrees, with red repeated at 360 to close the
 /// circle.
 const CENTRES: [f32; 9] = [0.0, 30.0, 60.0, 120.0, 180.0, 240.0, 270.0, 300.0, 360.0];
-
-fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
-    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
 
 /// The HSV hue of `c` in degrees, `0..360`, and its chroma (`max − min`);
 /// `None` for a grey.

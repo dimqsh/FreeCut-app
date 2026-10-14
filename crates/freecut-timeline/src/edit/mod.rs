@@ -22,8 +22,8 @@ pub use ops::{
     InsertTarget, KeyEdit, MarkerOwner, MarkerPatch, MarkerSelector, MoveReq, NewClip, NewMedia,
     RecordTarget, ResetScope, SplitReq, SplitTargets, SyncOffset, TextLayoutEdit, TextStyleEdit,
     TrackPosition, TransformEdit, TrimReq, TrimTargets, Unavailable, change_case,
-    first_free_audio_track, has_color, is_color_prop, linked_audio, recorded_start, stream_doubled_by,
-    sync_offset, sync_offsets, trim_to_playhead_available,
+    first_free_audio_track, has_color, is_color_prop, linked_audio, recorded_start,
+    stream_doubled_by, sync_offset, sync_offsets, trim_to_playhead_available,
 };
 
 use crate::ids::{ClipId, MediaId, SeqId, TrackId};

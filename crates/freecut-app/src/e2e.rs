@@ -990,6 +990,7 @@ fn export_request(
         fonts: FontRegistry::bundled(),
         presets: presets(),
         solo: None,
+        luts: Arc::new(crate::luts::AppLuts::new()),
         slates_for_unreadable: false,
     }
 }

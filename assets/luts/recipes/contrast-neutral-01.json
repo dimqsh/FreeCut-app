@@ -1,0 +1,19 @@
+{
+  "id": "fc.lut.contrast.neutral.01",
+  "name": "Contrast · Neutral 01",
+  "tags": [
+    "contrast",
+    "neutral"
+  ],
+  "rev": 1,
+  "summary": "More contrast with the colours left as they are.",
+  "file": "contrast-neutral-01.cube",
+  "passes": [
+    {
+      "params": {
+        "contrast": 30,
+        "saturation": 6
+      }
+    }
+  ]
+}

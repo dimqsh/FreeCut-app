@@ -26,6 +26,7 @@
 //! | 9 | Media origins (PM-041, AU-027): library item `origin` (absent = imported). | `v8_to_v9` |
 //! | 10 | Colour stacks (CL-001, CL-007, CL-008, CL-023, CL-035): clip `color` (absent = the default stack) and `color.*` keyframe paths. | `v9_to_v10` |
 //! | 11 | HSL, Curves and Wheels (CL-013, CL-014, CL-015): `color.hsl`, `color.curves` and `color.wheels` (absent = defaults), and `color.wheels.<wheel>.puck` keyframes. | `v10_to_v11` |
+//! | 12 | The LUT slot and skin protection (CL-017, CL-030): `color.lut` (absent = no LUT) and `color.color.skin` (absent = off, Amount 70), and the `color.lut.intensity`, `color.skin_amount` and `color.lut.skin_amount` keyframes. | `v11_to_v12` |
 //!
 //! Each superseded version keeps a frozen file written by its writer under
 //! `tests/fixtures/format/v<N>/`; the tests open it with every step since.
@@ -33,6 +34,8 @@
 //! three format changes were merged together), so the tests derive their
 //! files from today's instead.
 
+mod v10_to_v11;
+mod v11_to_v12;
 mod v1_to_v2;
 mod v2_to_v3;
 mod v3_to_v4;
@@ -42,12 +45,11 @@ mod v6_to_v7;
 mod v7_to_v8;
 mod v8_to_v9;
 mod v9_to_v10;
-mod v10_to_v11;
 
 use serde_json::Value;
 
 /// The format version this build reads and writes.
-pub const CURRENT_FORMAT_VERSION: u32 = 11;
+pub const CURRENT_FORMAT_VERSION: u32 = 12;
 
 /// The oldest format version this build can migrate from.
 pub const OLDEST_READABLE: u32 = 1;
@@ -67,6 +69,7 @@ const STEPS: &[Step] = &[
     v8_to_v9::migrate,
     v9_to_v10::migrate,
     v10_to_v11::migrate,
+    v11_to_v12::migrate,
 ];
 
 const _: () = assert!(

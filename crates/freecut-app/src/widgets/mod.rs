@@ -7,7 +7,9 @@
 //! state survives selection changes (ui-concept §16.3).
 
 pub mod card;
+pub mod color_wheel;
 pub mod colour;
+pub mod curve_editor;
 pub mod empty;
 pub mod field;
 pub mod gradient;

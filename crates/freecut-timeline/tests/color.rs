@@ -18,8 +18,9 @@ use freecut_timeline::edit::{
 use freecut_timeline::ids::ClipId;
 use freecut_timeline::model::{
     Clip, ClipContent, ColorParamId, ColorStack, Curve, CurveChannel, CurvePoint, Document,
-    GeneratedKind, HslChannel, HueBand, Interp, InvariantViolation, PropGroup, PropPath, PropValue,
-    Section, Sequence, TextClipData, Track, TrackFlags, TrackHeader, ValidateCtx, WheelId,
+    GeneratedKind, HslChannel, HueBand, Interp, InvariantViolation, LutInterp, LutRef, LutSlot,
+    PropGroup, PropPath, PropValue, Section, Sequence, SkinProtect, SkinScope, TextClipData, Track,
+    TrackFlags, TrackHeader, ValidateCtx, WheelId,
 };
 use freecut_timeline::plan::{PlanInputs, PlanNode, frame_plan};
 use pretty_assertions::assert_eq;
@@ -710,26 +711,59 @@ fn band_and_wheel_resets_remove_only_their_keys() {
         0,
         20,
     );
-    key(&mut fx, video, ColorParamId::WheelLuma(WheelId::Offset), 0, 5);
+    key(
+        &mut fx,
+        video,
+        ColorParamId::WheelLuma(WheelId::Offset),
+        0,
+        5,
+    );
     color(&mut fx, vec![video], ColorEdit::ResetBand(HueBand::Blue)).unwrap();
-    color(&mut fx, vec![video], ColorEdit::ResetWheel(WheelId::Highlights)).unwrap();
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::ResetWheel(WheelId::Highlights),
+    )
+    .unwrap();
     let c = fx.doc().clip(video).unwrap().clone();
-    assert!(!c.keys.is_animated(PropPath::Color(hsl(HueBand::Blue, HslChannel::Hue))));
-    assert!(c.keys.is_animated(PropPath::Color(hsl(HueBand::Cyan, HslChannel::Hue))));
+    assert!(
+        !c.keys
+            .is_animated(PropPath::Color(hsl(HueBand::Blue, HslChannel::Hue)))
+    );
+    assert!(
+        c.keys
+            .is_animated(PropPath::Color(hsl(HueBand::Cyan, HslChannel::Hue)))
+    );
     assert!(!c.keys.is_animated(PropPath::ColorPuck(WheelId::Highlights)));
     assert!(!c.keys.is_animated(PropPath::Color(ColorParamId::WheelLuma(
         WheelId::Highlights
     ))));
-    assert!(c.keys.is_animated(PropPath::Color(ColorParamId::WheelLuma(WheelId::Offset))));
+    assert!(
+        c.keys
+            .is_animated(PropPath::Color(ColorParamId::WheelLuma(WheelId::Offset)))
+    );
     // The Wheels section reset takes the pucks' keys too; Reset all the rest.
     puck_key(&mut fx, video, WheelId::Shadows, 3, -200, 0);
-    color(&mut fx, vec![video], ColorEdit::ResetSection(Section::Wheels)).unwrap();
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::ResetSection(Section::Wheels),
+    )
+    .unwrap();
     let c = fx.doc().clip(video).unwrap().clone();
     assert!(!c.keys.is_animated(PropPath::ColorPuck(WheelId::Shadows)));
-    assert!(!c.keys.is_animated(PropPath::Color(ColorParamId::WheelLuma(WheelId::Offset))));
-    assert!(c.keys.is_animated(PropPath::Color(hsl(HueBand::Cyan, HslChannel::Hue))));
+    assert!(
+        !c.keys
+            .is_animated(PropPath::Color(ColorParamId::WheelLuma(WheelId::Offset)))
+    );
+    assert!(
+        c.keys
+            .is_animated(PropPath::Color(hsl(HueBand::Cyan, HslChannel::Hue)))
+    );
     puck_key(&mut fx, video, WheelId::Offset, 3, 50, 0);
-    assert!(freecut_timeline::edit::has_color(fx.doc().clip(video).unwrap()));
+    assert!(freecut_timeline::edit::has_color(
+        fx.doc().clip(video).unwrap()
+    ));
     color(&mut fx, vec![video], ColorEdit::ResetAll).unwrap();
     assert!(fx.doc().clip(video).unwrap().keys.is_empty());
 }
@@ -761,7 +795,12 @@ fn keyed_pucks_travel_straight_and_stay_on_the_disk() {
     let props = PropGroup::Color(Section::Wheels).props(&c);
     assert!(props.contains(&PropPath::ColorPuck(WheelId::Offset)));
     assert!(props.contains(&PropPath::Color(ColorParamId::WheelStrength)));
-    assert!(!PropGroup::Color(Section::Curves).props(&c).iter().any(|p| p.is_animatable()));
+    assert!(
+        !PropGroup::Color(Section::Curves)
+            .props(&c)
+            .iter()
+            .any(|p| p.is_animatable())
+    );
 }
 
 #[test]
@@ -795,7 +834,11 @@ fn hsl_curves_and_wheels_reach_the_plan() {
         ColorEdit::SetSectionEnabled(Section::Curves, false),
     )
     .unwrap();
-    assert_eq!(plan_color(&fx, 1), None, "a switched-off curve does nothing");
+    assert_eq!(
+        plan_color(&fx, 1),
+        None,
+        "a switched-off curve does nothing"
+    );
     // Wheels at Strength 0 do nothing either.
     color(
         &mut fx,
@@ -836,4 +879,189 @@ fn k2_paths_round_trip_their_names() {
     );
     assert_eq!(PropPath::parse("color.wheels.nope.puck"), None);
     assert_eq!(PropPath::parse("color.hsl.red"), None);
+}
+
+fn lut(n: u8, name: &str) -> LutSlot {
+    LutSlot::new(LutRef::new([n; 16], name))
+}
+
+#[test]
+fn every_k3_edit_applies_undoes_and_redoes() {
+    let mut fx = Fixture::new();
+    let (video, image, adjust, ..) = kinds(&mut fx);
+    let edits = [
+        ColorEdit::SetLut(Some(lut(1, "teal.cube"))),
+        ColorEdit::SetParam(ColorParamId::LutIntensity, 60),
+        ColorEdit::SetSkin {
+            scope: SkinScope::Lut,
+            on: true,
+        },
+        ColorEdit::SetParam(ColorParamId::SkinAmount(SkinScope::Lut), 40),
+        ColorEdit::SetLutInterp(LutInterp::Trilinear),
+        ColorEdit::SetLut(Some(lut(2, "warm.3dl"))),
+        ColorEdit::SetSkin {
+            scope: SkinScope::Color,
+            on: true,
+        },
+        ColorEdit::SetParam(ColorParamId::SkinAmount(SkinScope::Color), 90),
+        ColorEdit::SetSectionEnabled(Section::Lut, false),
+        ColorEdit::ResetSection(Section::Lut),
+        ColorEdit::ResetSection(Section::Color),
+        ColorEdit::SetLut(None),
+    ];
+    for edit in edits {
+        let op = edit.op();
+        color(&mut fx, vec![video, image, adjust], edit.clone()).unwrap();
+        assert_eq!(label(&fx), (OpKind::EditColor(op), 3), "{edit:?}");
+        if edit == ColorEdit::SetLut(Some(lut(2, "warm.3dl"))) {
+            // Replacing kept the first LUT's settings (CL-017).
+            let slot = stack(&fx, video).lut.unwrap();
+            assert_eq!(slot.lut.file_name, "warm.3dl");
+            assert_eq!(slot.intensity, 60);
+            assert_eq!(slot.interp, LutInterp::Trilinear);
+            assert_eq!(
+                slot.skin,
+                SkinProtect {
+                    on: true,
+                    amount: 40
+                }
+            );
+        }
+        if edit == ColorEdit::ResetSection(Section::Lut) {
+            let s = stack(&fx, image);
+            assert_eq!(s.lut, Some(lut(2, "warm.3dl")), "a reset keeps the file");
+            assert!(s.sections_enabled.is_on(Section::Lut));
+        }
+    }
+    for c in [video, image, adjust] {
+        assert_eq!(fx.doc().clip(c).unwrap().color, None, "{c:?}");
+    }
+}
+
+#[test]
+fn lut_keys_need_a_lut_and_go_with_it() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    // No LUT: its Intensity takes no keys.
+    assert!(
+        fx.apply(EditRequest::EditKeys {
+            seq: fx.seq_id(),
+            clips: vec![video],
+            prop: PropPath::Color(ColorParamId::LutIntensity),
+            edit: KeyEdit::Add {
+                at: f(0),
+                value: Some(PropValue::Level(50)),
+            },
+        })
+        .is_err()
+    );
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetLut(Some(lut(3, "a.cube"))),
+    )
+    .unwrap();
+    key(&mut fx, video, ColorParamId::LutIntensity, 0, 0);
+    key(&mut fx, video, ColorParamId::LutIntensity, 10, 100);
+    key(
+        &mut fx,
+        video,
+        ColorParamId::SkinAmount(SkinScope::Color),
+        0,
+        20,
+    );
+    let clip = fx.doc().clip(video).unwrap().clone();
+    assert_eq!(
+        clip.color_at(f(5)).unwrap().get(ColorParamId::LutIntensity),
+        50
+    );
+    assert_eq!(
+        PropGroup::Color(Section::Lut).props(&clip),
+        vec![
+            PropPath::Color(ColorParamId::LutIntensity),
+            PropPath::Color(ColorParamId::SkinAmount(SkinScope::Lut)),
+        ]
+    );
+    // Clearing the slot takes the LUT's keys with it, in one entry; the
+    // Color scope's skin key stays.
+    color(&mut fx, vec![video], ColorEdit::SetLut(None)).unwrap();
+    let props: Vec<PropPath> = fx
+        .doc()
+        .clip(video)
+        .unwrap()
+        .keys
+        .tracks()
+        .iter()
+        .map(|t| t.prop())
+        .collect();
+    assert_eq!(
+        props,
+        vec![PropPath::Color(ColorParamId::SkinAmount(SkinScope::Color))]
+    );
+    fx.editor.undo().unwrap();
+    assert_eq!(fx.doc().clip(video).unwrap().keys.tracks().len(), 2);
+}
+
+#[test]
+fn the_lut_reaches_the_plan_and_intensity_0_skips_it() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    let offline = BTreeSet::new();
+    let inputs = PlanInputs { offline: &offline };
+    let plan_color = |fx: &Fixture| {
+        let plan = frame_plan(fx.doc(), fx.seq_id(), f(1), &inputs).unwrap();
+        plan.nodes
+            .into_iter()
+            .map(|PlanNode::Layer(l)| l)
+            .find(|l| l.clip == video)
+            .unwrap()
+            .color
+    };
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetLut(Some(lut(4, "b.cube"))),
+    )
+    .unwrap();
+    assert_eq!(plan_color(&fx).unwrap().lut, Some(lut(4, "b.cube")));
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetParam(ColorParamId::LutIntensity, 0),
+    )
+    .unwrap();
+    assert_eq!(plan_color(&fx), None, "Intensity 0 hides the LUT");
+    // Skin protection alone changes nothing either.
+    color(&mut fx, vec![video], ColorEdit::SetLut(None)).unwrap();
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetSkin {
+            scope: SkinScope::Color,
+            on: true,
+        },
+    )
+    .unwrap();
+    assert!(fx.doc().clip(video).unwrap().color.is_some());
+    assert_eq!(plan_color(&fx), None);
+}
+
+#[test]
+fn k3_paths_round_trip_their_names() {
+    for id in [
+        ColorParamId::LutIntensity,
+        ColorParamId::SkinAmount(SkinScope::Color),
+        ColorParamId::SkinAmount(SkinScope::Lut),
+    ] {
+        let p = PropPath::Color(id);
+        assert_eq!(PropPath::parse(&p.to_path_string()), Some(p));
+    }
+    assert_eq!(
+        PropPath::Color(ColorParamId::LutIntensity).to_path_string(),
+        "color.lut.intensity"
+    );
+    assert_eq!(
+        PropPath::Color(ColorParamId::SkinAmount(SkinScope::Color)).group(),
+        Some(PropGroup::Color(Section::Color))
+    );
 }

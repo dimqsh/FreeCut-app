@@ -40,8 +40,8 @@ use freecut_timeline::model::{
     Markers, MediaOrigin, PaletteColor,
 };
 use freecut_timeline::model::{
-    ColorParamId, ColorStack, Curve, CurveChannel, CurvePoint, HslChannel, HueBand, Section,
-    SectionMask, WheelId,
+    ColorParamId, ColorStack, Curve, CurveChannel, CurvePoint, HslChannel, HueBand, LutInterp,
+    LutRef, LutSlot, Section, SectionMask, SkinProtect, SkinScope, WheelId,
 };
 use freecut_timeline::time::{
     FrameRate, MarkRange, Rational, SampleRate, TICKS_PER_SECOND, Tick, TimeRange,
@@ -211,7 +211,34 @@ pub fn kitchen_intro_color() -> ColorStack {
         sections_enabled: s.sections_enabled.with(Section::Detail, false),
         ..s
     };
-    kitchen_k2(s)
+    kitchen_k3(kitchen_k2(s))
+}
+
+/// The LUT file the kitchen sink names (a made-up hash).
+pub fn kitchen_lut() -> LutRef {
+    LutRef::new(
+        [
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
+            0x32, 0x10,
+        ],
+        "Teal \"night\" ✂.cube",
+    )
+}
+
+/// Format 12's parts of the intro's stack: a LUT at 60 % sampled
+/// trilinearly with skin protection at 40 %, and the Color section's skin
+/// protection on at its default Amount.
+pub fn kitchen_k3(s: ColorStack) -> ColorStack {
+    s.with_lut(Some(LutSlot {
+        intensity: 60,
+        interp: LutInterp::Trilinear,
+        skin: SkinProtect {
+            on: true,
+            amount: 40,
+        },
+        ..LutSlot::new(kitchen_lut())
+    }))
+    .with_skin(SkinScope::Color, true)
 }
 
 /// Format 11's parts of the intro's stack: HSL on three bands, a master
@@ -508,6 +535,14 @@ pub fn kitchen_sink_with_title(title_text: TextClipData) -> (Document, NonZeroU6
                     channel: HslChannel::Saturation,
                 }),
                 vec![key_of(fr(20), PropValue::Level(-55), Interp::Linear)],
+            ),
+            // Format 12: a keyed LUT Intensity.
+            (
+                PropPath::Color(ColorParamId::LutIntensity),
+                vec![
+                    key_of(fr(15), PropValue::Level(20), Interp::Linear),
+                    key_of(fr(35), PropValue::Level(90), Interp::Linear),
+                ],
             ),
         ],
     )
@@ -1335,6 +1370,23 @@ pub enum Op {
         a: i16,
         b: i16,
     },
+    // Edits added with format 11: HSL and wheel sliders, pucks, curves,
+    // band and wheel resets, and their keys.
+    ColorK2 {
+        pick: u16,
+        edit: u8,
+        a: i16,
+        b: i16,
+        c: i16,
+    },
+    // Edits added with format 12: the LUT slot, its sampling, skin
+    // protection and their keys.
+    ColorK3 {
+        pick: u16,
+        edit: u8,
+        a: i16,
+        b: i16,
+    },
 }
 
 /// Probe-like data for one random media item.
@@ -1548,12 +1600,41 @@ fn op_v9() -> impl Strategy<Value = Op> {
     ]
 }
 
-/// Every edit, including format 10's colour stacks.
-fn op() -> impl Strategy<Value = Op> {
+/// Edits that existed in format 10: colour stacks without HSL, Curves and
+/// Wheels.
+fn op_v10() -> impl Strategy<Value = Op> {
     prop_oneof![
         95 => op_v9(),
         4 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
             .prop_map(|(pick, edit, a, b)| Op::Color { pick, edit, a, b }),
+    ]
+}
+
+/// Edits that existed in format 11: colour stacks without the LUT slot and
+/// skin protection. Built on [`op_v9`] rather than [`op_v10`] so the
+/// strategy is no deeper than before (a deeper one overflows the test
+/// thread's stack in debug builds).
+fn op_v11() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        95 => op_v9(),
+        2 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::Color { pick, edit, a, b }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b, c)| Op::ColorK2 { pick, edit, a, b, c }),
+    ]
+}
+
+/// Every edit, including format 12's LUT slot and skin protection; as
+/// shallow as [`op_v11`].
+fn op() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        95 => op_v9(),
+        2 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::Color { pick, edit, a, b }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b, c)| Op::ColorK2 { pick, edit, a, b, c }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::ColorK3 { pick, edit, a, b }),
     ]
 }
 
@@ -1611,6 +1692,16 @@ fn plan_of(ops: impl Strategy<Value = Op>) -> impl Strategy<Value = DocPlan> {
             media,
             ops,
         })
+}
+
+/// Like [`doc_plan`] with format-11 edits only.
+pub fn doc_plan_v11() -> impl Strategy<Value = DocPlan> {
+    plan_of(op_v11())
+}
+
+/// Like [`doc_plan`] with format-10 edits only.
+pub fn doc_plan_v10() -> impl Strategy<Value = DocPlan> {
+    plan_of(op_v10())
 }
 
 /// Like [`doc_plan`] with format-9 edits only.
@@ -2194,11 +2285,12 @@ fn request(editor: &Editor, op: &Op) -> Option<EditRequest> {
             let clip = doc.clip(id)?;
             let mut props: Vec<PropPath> = TransformProp::ALL.map(PropPath::Transform).to_vec();
             if clip.content.text().is_some() {
-                props.extend(
-                    PropPath::all_fixed()
-                        .into_iter()
-                        .filter(|p| !matches!(p, PropPath::Transform(_) | PropPath::Color(_))),
-                );
+                props.extend(PropPath::all_fixed().into_iter().filter(|p| {
+                    !matches!(
+                        p,
+                        PropPath::Transform(_) | PropPath::Color(_) | PropPath::ColorPuck(_)
+                    )
+                }));
                 props.extend((0..4).map(PropPath::FillStopColor));
             }
             // Edits of existing keys mostly pick a property that has some.
@@ -2431,7 +2523,9 @@ fn request(editor: &Editor, op: &Op) -> Option<EditRequest> {
             use freecut_timeline::edit::ColorEdit as E;
             let id = pick_where(*pick, &|c| c.content.takes_color())?;
             let clip = doc.clip(id)?;
-            let param = ColorParamId::ALL[usize::from(a.unsigned_abs()) % ColorParamId::ALL.len()];
+            // Format 10's sliders: Light, Color and Amount.
+            let k1 = &ColorParamId::ALL[..15];
+            let param = k1[usize::from(a.unsigned_abs()) % k1.len()];
             let section = Section::ALL[usize::from(b.unsigned_abs()) % Section::ALL.len()];
             let wild = |v: i16| v % 160;
             let request = |edit| EditRequest::EditColor {
@@ -2464,6 +2558,142 @@ fn request(editor: &Editor, op: &Op) -> Option<EditRequest> {
                         },
                     }
                 }
+            }
+        }
+        Op::ColorK2 {
+            pick,
+            edit,
+            a,
+            b,
+            c,
+        } => {
+            use freecut_timeline::edit::ColorEdit as E;
+            let id = pick_where(*pick, &|c| c.content.takes_color())?;
+            let clip = doc.clip(id)?;
+            // Format 11's sliders: HSL and Wheels.
+            let k2 = &ColorParamId::ALL[15..44];
+            let param = k2[usize::from(a.unsigned_abs()) % k2.len()];
+            let band = HueBand::ALL[usize::from(b.unsigned_abs()) % 8];
+            let wheel = WheelId::ALL[usize::from(c.unsigned_abs()) % 4];
+            let channel = CurveChannel::ALL[usize::from(a.unsigned_abs()) % 4];
+            let request = |edit| EditRequest::EditColor {
+                seq,
+                clips: vec![id],
+                edit,
+            };
+            let at = Tick::from_raw(
+                clip.start().raw()
+                    + clip.duration().raw() * i64::from(b.unsigned_abs() % 256) / 256,
+            );
+            match edit % 8 {
+                0 => request(E::SetParam(param, b % 160)),
+                1 => request(E::SetPuck {
+                    wheel,
+                    x: *a,
+                    y: *b,
+                }),
+                2 => {
+                    // A curve through up to three random inner points; a
+                    // list that breaks a rule leaves the curve as it is.
+                    let base = ColorStack::of(clip.color.as_ref())
+                        .curves
+                        .get(channel)
+                        .clone();
+                    let x = 300 + (a.unsigned_abs() % 9_400);
+                    let y = b.unsigned_abs() % 10_001;
+                    let curve = base.with_point(CurvePoint::new(x, y)).unwrap_or_else(|_| {
+                        base.moved(0, CurvePoint::new(c.unsigned_abs() % 3_000, y))
+                    });
+                    request(E::SetCurve { channel, curve })
+                }
+                3 => {
+                    let base = ColorStack::of(clip.color.as_ref())
+                        .curves
+                        .get(channel)
+                        .clone();
+                    let n = base.points().len();
+                    let curve = base
+                        .without_point(usize::from(c.unsigned_abs()) % n)
+                        .unwrap_or(base);
+                    request(E::SetCurve { channel, curve })
+                }
+                4 => request(E::ResetBand(band)),
+                5 => request(E::ResetWheel(wheel)),
+                6 => EditRequest::EditKeys {
+                    seq,
+                    clips: vec![id],
+                    prop: PropPath::ColorPuck(wheel),
+                    edit: KeyEdit::Add {
+                        at,
+                        value: (c % 4 != 0).then_some(PropValue::Puck { x: *a, y: *c }),
+                    },
+                },
+                _ => EditRequest::EditKeys {
+                    seq,
+                    clips: vec![id],
+                    prop: PropPath::Color(param),
+                    edit: KeyEdit::Add {
+                        at,
+                        value: Some(PropValue::Level(c % 160)),
+                    },
+                },
+            }
+        }
+        Op::ColorK3 { pick, edit, a, b } => {
+            use freecut_timeline::edit::ColorEdit as E;
+            let id = pick_where(*pick, &|c| c.content.takes_color())?;
+            let clip = doc.clip(id)?;
+            // Format 12's sliders: the LUT's Intensity and the skin Amounts
+            // (the LUT's only while the clip has a LUT).
+            let has_lut = clip.color.as_ref().is_some_and(|c| c.lut.is_some());
+            let k3 = if has_lut {
+                &ColorParamId::ALL[44..]
+            } else {
+                &ColorParamId::ALL[45..46]
+            };
+            let param = k3[usize::from(a.unsigned_abs()) % k3.len()];
+            let scope = SkinScope::ALL[usize::from(b.unsigned_abs()) % 2];
+            let request = |edit| EditRequest::EditColor {
+                seq,
+                clips: vec![id],
+                edit,
+            };
+            let lut = |n: i16| {
+                let n = n.unsigned_abs() % 3;
+                let mut hash = [0x5au8; 16];
+                hash[0] = n as u8;
+                LutRef::new(hash, format!("look {n}.cube"))
+            };
+            match edit % 7 {
+                0 | 1 => request(E::SetLut(Some(LutSlot {
+                    intensity: (b.unsigned_abs() % 101) as u8,
+                    skin: SkinProtect {
+                        on: b % 2 == 0,
+                        amount: (a.unsigned_abs() % 101) as u8,
+                    },
+                    ..LutSlot::new(lut(*a))
+                }))),
+                2 => request(E::SetLut(None)),
+                3 => request(E::SetLutInterp(
+                    LutInterp::ALL[usize::from(a.unsigned_abs()) % 2],
+                )),
+                4 => request(E::SetSkin {
+                    scope,
+                    on: a % 3 != 0,
+                }),
+                5 => request(E::SetParam(param, b % 160)),
+                _ => EditRequest::EditKeys {
+                    seq,
+                    clips: vec![id],
+                    prop: PropPath::Color(param),
+                    edit: KeyEdit::Add {
+                        at: Tick::from_raw(
+                            clip.start().raw()
+                                + clip.duration().raw() * i64::from(b.unsigned_abs() % 256) / 256,
+                        ),
+                        value: Some(PropValue::Level(b % 160)),
+                    },
+                },
             }
         }
     })
@@ -2776,10 +3006,116 @@ fn clips_mut(v: &mut Value) -> impl Iterator<Item = &mut serde_json::Map<String,
         .map(|clip| clip.as_object_mut().unwrap())
 }
 
+/// Whether a keyframe path is one format 12 added (the LUT's Intensity
+/// and the skin Amounts).
+pub fn is_k3_key(prop: &str) -> bool {
+    prop.starts_with("color.lut.") || prop == "color.skin_amount"
+}
+
+/// `v`, a current file, as format 11 wrote it: format 12 added `lut` inside
+/// `color`, `skin` inside its Color section, and keyframes of the LUT's
+/// Intensity and the skin Amounts. Only faithful for documents without
+/// them.
+pub fn to_v11(v: &Value) -> Value {
+    let mut v = v.clone();
+    v["format_version"] = Value::from(11);
+    for clip in clips_mut(&mut v) {
+        if let Some(color) = clip.get("color") {
+            assert!(color.get("lut").is_none(), "format 11 had no LUT");
+            assert!(
+                color.get("color").and_then(|c| c.get("skin")).is_none(),
+                "format 11 had no skin protection"
+            );
+        }
+        if let Some(tracks) = clip.get("keys").and_then(|k| k["tracks"].as_array()) {
+            for t in tracks {
+                assert!(
+                    !is_k3_key(t["prop"].as_str().unwrap()),
+                    "format 11 had no K3 keys"
+                );
+            }
+        }
+    }
+    v
+}
+
+/// The kitchen sink's file without what format 12 added: no `lut`, no
+/// `skin` and no LUT or skin keyframes.
+pub fn strip_k3(v: &mut Value) {
+    for clip in clips_mut(v) {
+        if let Some(Value::Object(color)) = clip.get_mut("color") {
+            color.remove("lut");
+            if let Some(Value::Object(balance)) = color.get_mut("color") {
+                balance.remove("skin");
+                if balance.is_empty() {
+                    color.remove("color");
+                }
+            }
+        }
+        let keys = clip.get_mut("keys").and_then(|k| k.get_mut("tracks"));
+        if let Some(Value::Array(tracks)) = keys {
+            tracks.retain(|t| !is_k3_key(t["prop"].as_str().unwrap_or("")));
+        }
+    }
+}
+
+/// Whether a keyframe path is one format 11 added (pucks, HSL and wheel
+/// sliders).
+pub fn is_k2_key(prop: &str) -> bool {
+    prop.starts_with("color.hsl.") || prop.starts_with("color.wheels.")
+}
+
+/// `v`, a current file, as format 10 wrote it: format 11 added `hsl`,
+/// `curves` and `wheels` inside `color`, and keyframes of pucks, HSL and
+/// wheel sliders. Only faithful for documents without them.
+pub fn to_v10(v: &Value) -> Value {
+    let mut v = to_v11(v);
+    v["format_version"] = Value::from(10);
+    for clip in clips_mut(&mut v) {
+        if let Some(color) = clip.get("color") {
+            for part in ["hsl", "curves", "wheels"] {
+                assert!(color.get(part).is_none(), "format 10 had no {part}");
+            }
+        }
+        if let Some(tracks) = clip.get("keys").and_then(|k| k["tracks"].as_array()) {
+            for t in tracks {
+                assert!(
+                    !is_k2_key(t["prop"].as_str().unwrap()),
+                    "format 10 had no K2 keys"
+                );
+            }
+        }
+    }
+    v
+}
+
+/// The kitchen sink's file without what format 11 added: no `hsl`,
+/// `curves` or `wheels` in `color`, no puck, HSL or wheel keyframes, and
+/// no Curves switch.
+pub fn strip_k2(v: &mut Value) {
+    for clip in clips_mut(v) {
+        if let Some(Value::Object(color)) = clip.get_mut("color") {
+            for part in ["hsl", "curves", "wheels"] {
+                color.remove(part);
+            }
+            if let Some(Value::Array(off)) = color.get_mut("off") {
+                off.retain(|s| s != "curves");
+                if off.is_empty() {
+                    color.remove("off");
+                }
+            }
+        }
+        let keys = clip.get_mut("keys").and_then(|k| k.get_mut("tracks"));
+        if let Some(Value::Array(tracks)) = keys {
+            tracks.retain(|t| !is_k2_key(t["prop"].as_str().unwrap_or("")));
+        }
+    }
+}
+
 /// `v`, a current file, as format 9 wrote it: format 10 added clip `color`
 /// and `color.*` keyframes. Only faithful for documents without colour.
 pub fn to_v9(v: &Value) -> Value {
-    let mut v = v.clone();
+    let mut v = to_v10(v);
     v["format_version"] = Value::from(9);
     for clip in clips_mut(&mut v) {
         assert!(clip.get("color").is_none(), "format 9 had no colour");

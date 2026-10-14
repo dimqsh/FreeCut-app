@@ -334,6 +334,10 @@ enum Inspect {
     /// The beach video graded (a keyed Exposure, Contrast, a warm
     /// Temperature, Saturation and Amount 85 %), on the Look lens's page.
     Look(freecut_timeline::model::ColorPage),
+    /// The graded video's Basic page with Light folded, so Color (with
+    /// Skin protection) shows, and with Color folded too, so the LUT
+    /// section does; `missing`: its LUT's file is (K3).
+    LookLut { missing: bool, fold_color: bool },
     /// Nothing selected: the Project lens.
     Project,
     /// The title and the video together.
@@ -503,6 +507,27 @@ fn main_window_snapshots() {
             WINDOW,
             I::Look(freecut_timeline::model::ColorPage::Basic),
         ),
+        inspect(
+            "k2-look-curves-dark",
+            T::Dark,
+            WINDOW,
+            I::Look(freecut_timeline::model::ColorPage::Curves),
+        ),
+        inspect(
+            "k2-look-wheels-dark",
+            T::Dark,
+            WINDOW,
+            I::Look(freecut_timeline::model::ColorPage::Wheels),
+        ),
+        inspect(
+            "k3-look-lut-missing-dark",
+            T::Dark,
+            WINDOW,
+            I::LookLut {
+                missing: true,
+                fold_color: true,
+            },
+        ),
     ];
     // Every lens in both themes only when pictures are wanted: each scene
     // costs a window.
@@ -542,22 +567,54 @@ fn main_window_snapshots() {
             egui::vec2(1100.0, 700.0),
             I::Video(Lens::Picture),
         ));
-        // K1: the Look lens.
+        // K1 and K2: the Look lens.
         use freecut_timeline::model::ColorPage as P;
+        let compact = egui::vec2(1100.0, 700.0);
+        let tall = egui::vec2(1440.0, 1400.0);
         for (name, theme, size, page) in [
             ("k1-look-basic-dark", T::Dark, WINDOW, P::Basic),
             ("k1-look-basic-light", T::Light, WINDOW, P::Basic),
             ("k1-look-basic-hc", T::HighContrast, WINDOW, P::Basic),
-            ("k1-look-curves-dark", T::Dark, WINDOW, P::Curves),
             ("k1-look-masks-light", T::Light, WINDOW, P::Masks),
-            (
-                "k1-look-basic-compact-dark",
-                T::Dark,
-                egui::vec2(1100.0, 700.0),
-                P::Basic,
-            ),
+            ("k1-look-basic-compact-dark", T::Dark, compact, P::Basic),
+            ("k2-look-hsl-dark", T::Dark, WINDOW, P::Hsl),
+            ("k2-look-hsl-light", T::Light, WINDOW, P::Hsl),
+            ("k2-look-curves-dark", T::Dark, WINDOW, P::Curves),
+            ("k2-look-curves-hc", T::HighContrast, WINDOW, P::Curves),
+            ("k2-look-wheels-dark", T::Dark, WINDOW, P::Wheels),
+            ("k2-look-wheels-light", T::Light, WINDOW, P::Wheels),
+            ("k2-look-wheels-compact-dark", T::Dark, compact, P::Wheels),
+            ("k2-look-curves-compact-light", T::Light, compact, P::Curves),
+            // Tall windows, so each page shows whole.
+            ("k2-look-tall-hsl-dark", T::Dark, tall, P::Hsl),
+            ("k2-look-tall-curves-light", T::Light, tall, P::Curves),
+            ("k2-look-tall-wheels-dark", T::Dark, tall, P::Wheels),
+            ("k2-look-tall-wheels-hc", T::HighContrast, tall, P::Wheels),
         ] {
             r4.push(inspect(name, theme, size, I::Look(page)));
+        }
+        // K3: Color's Skin protection and the LUT section.
+        for (name, theme, size, missing, fold_color) in [
+            ("k3-look-skin-dark", T::Dark, tall, false, false),
+            ("k3-look-skin-light", T::Light, tall, false, false),
+            ("k3-look-lut-tall-dark", T::Dark, tall, false, true),
+            ("k3-look-lut-tall-hc", T::HighContrast, tall, false, true),
+            ("k3-look-lut-dark", T::Dark, WINDOW, false, true),
+            ("k3-look-lut-light", T::Light, WINDOW, false, true),
+            ("k3-look-lut-hc", T::HighContrast, WINDOW, false, true),
+            ("k3-look-lut-compact-dark", T::Dark, compact, false, true),
+            ("k3-look-lut-missing-dark", T::Dark, WINDOW, true, true),
+            ("k3-look-lut-missing-light", T::Light, WINDOW, true, true),
+        ] {
+            r4.push(inspect(
+                name,
+                theme,
+                size,
+                I::LookLut {
+                    missing,
+                    fold_color,
+                },
+            ));
         }
     }
     let timeline = |name, theme, size, look| Scene {
@@ -882,7 +939,9 @@ fn main_window_snapshots() {
                 let (kind, lens, everything) = match what {
                     Inspect::Text(lens, all) => (SelectionKind::Text, lens, all),
                     Inspect::Video(lens) => (SelectionKind::Video, lens, false),
-                    Inspect::Look(_) => (SelectionKind::Video, Lens::Look, false),
+                    Inspect::Look(_) | Inspect::LookLut { .. } => {
+                        (SelectionKind::Video, Lens::Look, false)
+                    }
                     Inspect::Project => (SelectionKind::Nothing, Lens::Project, false),
                     Inspect::Several => (SelectionKind::Several, Lens::Style, false),
                 };
@@ -897,6 +956,13 @@ fn main_window_snapshots() {
                     (SelectionKind::Text, Lens::BoxBubble, _) => &[CardId::Placement],
                     (SelectionKind::Text, Lens::Style, true) => &[CardId::Type, CardId::Fill],
                     (SelectionKind::Video, Lens::Motion, _) => &[CardId::Animation],
+                    (SelectionKind::Video, Lens::Look, _) => match what {
+                        Inspect::LookLut {
+                            fold_color: true, ..
+                        } => &[CardId::Light, CardId::ColorBalance],
+                        Inspect::LookLut { .. } => &[CardId::Light],
+                        _ => &[],
+                    },
                     _ => &[],
                 };
                 for card in folded {
@@ -904,6 +970,11 @@ fn main_window_snapshots() {
                 }
                 if let Inspect::Look(page) = what {
                     ws.set_look_page(kind, page);
+                }
+                if let Inspect::LookLut { .. } = what {
+                    ws.set_look_page(kind, freecut_timeline::model::ColorPage::Basic);
+                    // The LUT section's More is open, to show Interpolation.
+                    ws.card(kind, CardId::Lut).more = true;
                 }
                 settle(&mut harness);
             }
@@ -1006,14 +1077,14 @@ fn inspect_project(dir: &Path, what: Inspect) -> Project {
         .map(|c| c.id);
     project.selection = match (what, video) {
         (Inspect::Text(..), _) | (_, None) => vec![title],
-        (Inspect::Video(_) | Inspect::Look(_), Some(v)) => vec![v],
+        (Inspect::Video(_) | Inspect::Look(_) | Inspect::LookLut { .. }, Some(v)) => vec![v],
         (Inspect::Project, _) => Vec::new(),
         (Inspect::Several, Some(v)) => vec![title, v],
     };
     if matches!(what, Inspect::Project) {
         project.selection.clear();
     }
-    if let (Inspect::Look(_), Some(v)) = (what, video) {
+    if let (Inspect::Look(_) | Inspect::LookLut { .. }, Some(v)) = (what, video) {
         use freecut_timeline::edit::ColorEdit;
         use freecut_timeline::model::{ColorParamId as C, PropValue};
         let req = EditRequest::EditColor {
@@ -1027,6 +1098,110 @@ fn inspect_project(dir: &Path, what: Inspect) -> Project {
             ]),
         };
         project.apply(&req, Coalesce::Never).unwrap();
+        // K2: two HSL bands, a master S-curve and a red curve, two pucks
+        // (one keyed), a luminance and Strength 80 %.
+        use freecut_timeline::model::{
+            Curve, CurveChannel, CurvePoint, HslChannel, HueBand, WheelId,
+        };
+        let curve = |pts: &[(u16, u16)]| {
+            Curve::new(pts.iter().map(|(x, y)| CurvePoint::new(*x, *y)).collect()).unwrap()
+        };
+        for edit in [
+            ColorEdit::SetParams(vec![
+                (
+                    C::Hsl {
+                        band: HueBand::Orange,
+                        channel: HslChannel::Saturation,
+                    },
+                    -30,
+                ),
+                (
+                    C::Hsl {
+                        band: HueBand::Blue,
+                        channel: HslChannel::Hue,
+                    },
+                    25,
+                ),
+                (C::WheelLuma(WheelId::Highlights), -15),
+                (C::WheelStrength, 80),
+            ]),
+            ColorEdit::SetCurve {
+                channel: CurveChannel::Luma,
+                curve: curve(&[(0, 600), (2_500, 1_900), (7_500, 8_300), (10_000, 9_600)]),
+            },
+            ColorEdit::SetCurve {
+                channel: CurveChannel::Red,
+                curve: curve(&[(0, 0), (4_500, 5_300), (10_000, 10_000)]),
+            },
+            ColorEdit::SetPuck {
+                wheel: WheelId::Shadows,
+                x: 420,
+                y: -380,
+            },
+        ] {
+            let req = EditRequest::EditColor {
+                seq,
+                clips: vec![v],
+                edit,
+            };
+            project.apply(&req, Coalesce::Never).unwrap();
+        }
+        for (secs, x, y) in [(0, -300, 200), (4, 350, 450)] {
+            let req = EditRequest::EditKeys {
+                seq,
+                clips: vec![v],
+                prop: PropPath::ColorPuck(WheelId::Highlights),
+                edit: KeyEdit::Add {
+                    at: freecut_timeline::time::Tick::from_secs(secs).unwrap(),
+                    value: Some(PropValue::Puck { x, y }),
+                },
+            };
+            project.apply(&req, Coalesce::Never).unwrap();
+        }
+        // K3: a LUT at 60 % with Skin protection (FreeCut's bundled split
+        // look, or a file this machine lacks), the Color section's Skin
+        // protection, and a keyed Intensity.
+        let lut = match what {
+            Inspect::LookLut { missing: true, .. } => {
+                freecut_timeline::model::LutRef::new([0xab; 16], "Night drive.cube")
+            }
+            _ => crate::luts::bundled()
+                .into_iter()
+                .find(|b| b.file == "split-teal-warm-01.cube")
+                .expect("the bundled split look")
+                .lut_ref(),
+        };
+        for edit in [
+            ColorEdit::SetLut(Some(freecut_timeline::model::LutSlot::new(lut))),
+            ColorEdit::SetSkin {
+                scope: freecut_timeline::model::SkinScope::Lut,
+                on: true,
+            },
+            ColorEdit::SetSkin {
+                scope: freecut_timeline::model::SkinScope::Color,
+                on: true,
+            },
+            ColorEdit::SetParam(C::SkinAmount(freecut_timeline::model::SkinScope::Color), 55),
+        ] {
+            let req = EditRequest::EditColor {
+                seq,
+                clips: vec![v],
+                edit,
+            };
+            project.apply(&req, Coalesce::Never).unwrap();
+        }
+        for (secs, value) in [(0, 40), (4, 80)] {
+            let req = EditRequest::EditKeys {
+                seq,
+                clips: vec![v],
+                prop: PropPath::Color(C::LutIntensity),
+                edit: KeyEdit::Add {
+                    at: freecut_timeline::time::Tick::from_secs(secs).unwrap(),
+                    value: Some(PropValue::Level(value)),
+                },
+            };
+            project.apply(&req, Coalesce::Never).unwrap();
+        }
         for (secs, value) in [(0, -10), (4, 25)] {
             let req = EditRequest::EditKeys {
                 seq,

@@ -458,9 +458,11 @@ pub(crate) struct ClipDto {
 }
 
 /// A clip's colour stack (format 10, CL-001, CL-007, CL-008, CL-023,
-/// CL-035; format 11 adds HSL, Curves and Wheels, CL-013 to CL-015). Every
-/// part at its default is left out: Amount 100, no bypass, every section
-/// on, sliders at 0, curves on the diagonal, pucks centred.
+/// CL-035; format 11 adds HSL, Curves and Wheels, CL-013 to CL-015; format
+/// 12 the LUT slot and skin protection, CL-017, CL-030). Every part at its
+/// default is left out: Amount 100, no bypass, every section on, sliders at
+/// 0, curves on the diagonal, pucks centred, no LUT, skin protection off at
+/// Amount 70.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ColorDto {
     /// The master bypass (CL-023); absent is off.
@@ -488,6 +490,43 @@ pub(crate) struct ColorDto {
     /// Format 11: the colour wheels (CL-015) that aren't at their defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wheels: Option<WheelsDto>,
+    /// Format 12: the user LUT (CL-017); absent is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lut: Option<LutDto>,
+    #[serde(flatten)]
+    pub extra: Fields,
+}
+
+/// The LUT slot (format 12, CL-017): the file by the XXH3-128 hash of its
+/// bytes (32 hex digits) and its original name, then its settings, each
+/// left out at its default (Intensity 100, tetrahedral, no skin
+/// protection).
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct LutDto {
+    pub hash: String,
+    pub file: String,
+    /// 0–100 %; absent is 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intensity: Option<i64>,
+    /// `tetrahedral` or `trilinear`; absent is tetrahedral.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interp: Option<String>,
+    /// Skin protection of the LUT (CL-030); absent is off at Amount 70.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<SkinDto>,
+    #[serde(flatten)]
+    pub extra: Fields,
+}
+
+/// Skin protection of one scope (format 12, CL-030).
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(crate) struct SkinDto {
+    /// The switch; absent is off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub on: bool,
+    /// 0–100 %; absent is 70.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<i64>,
     #[serde(flatten)]
     pub extra: Fields,
 }
@@ -616,6 +655,10 @@ pub(crate) struct ColorBalanceDto {
     pub saturation: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vibrance: Option<i64>,
+    /// Format 12: skin protection of the Color section (CL-030); absent is
+    /// off at Amount 70.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<SkinDto>,
     #[serde(flatten)]
     pub extra: Fields,
 }

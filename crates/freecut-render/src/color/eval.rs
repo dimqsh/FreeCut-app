@@ -1,7 +1,10 @@
 //! The reference evaluator of the per-pixel colour stages (CL-001's stage
-//! table, CL-007, CL-008, CL-035; render-compositor.md §17): one function
-//! per stage, in the stack's order. It is the oracle of the baked lattice
-//! and, later, of the GPU path.
+//! table, CL-007, CL-008, CL-013 to CL-015, CL-017, CL-030, CL-035;
+//! render-compositor.md §17): one function per stage, in the stack's order
+//! (white balance, exposure, tone, wheels, curves, HSL,
+//! hue/saturation/vibrance, the user LUT, Amount), with skin protection
+//! blending stages 5, 11–12 and 13 back toward their inputs.
+//! It is the oracle of the baked lattice and, later, of the GPU path.
 //!
 //! **Working space.** Display-referred Rec.709 code values, 0–1, as
 //! decoded (CL-002). Linear light only inside white balance and exposure,
@@ -22,10 +25,23 @@
 //! curves with bounded ends, extended linearly outside 0–1), so the
 //! 33³ lattice follows it within the accuracy bound.
 
-use freecut_timeline::model::{ColorStack, Section};
+use std::sync::Arc;
+
+use freecut_media::lut::Lut;
+use freecut_timeline::model::{ColorStack, Section, SkinScope};
+
+use super::curve::CurvesStage;
+use super::hsl::HslStage;
+use super::lut::{LutSource, LutStage, active_slot};
+use super::skin::skin_mask;
+use super::wheels::WheelStage;
 
 /// Rec.709 luma weights, applied to code values (README C52).
 pub const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
+/// The Rec.709 colour-difference scales: `Cb = (B − Y)/KB`,
+/// `Cr = (R − Y)/KR`.
+pub(crate) const KB: f32 = 1.8556;
+pub(crate) const KR: f32 = 1.5748;
 
 /// Exposure ±100 is ±3 EV (CL-007).
 const EXPOSURE_EV: f32 = 3.0;
@@ -91,7 +107,7 @@ fn lift_bump(y: f32) -> f32 {
     }
 }
 
-fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+pub(crate) fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
@@ -100,13 +116,13 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 /// linearly outside `[0, 1]`: `x(1+a)/(1+ax)` (lifts) or its mirror
 /// `x/(1+a(1−x))` (lowers).
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Rational {
-    a: f32,
-    lift: bool,
+pub(crate) struct Rational {
+    pub(crate) a: f32,
+    pub(crate) lift: bool,
 }
 
 impl Rational {
-    fn apply(self, x: f32) -> f32 {
+    pub(crate) fn apply(self, x: f32) -> f32 {
         let a = self.a;
         if self.lift {
             if x < 0.0 {
@@ -168,6 +184,12 @@ impl Contrast {
 pub struct Evaluator {
     /// Stages 5 and 6: per-channel gains in linear light.
     gains: Option<[f32; 3]>,
+    /// Stage 5 alone and stage 6 alone, for when skin protection blends
+    /// white balance back on skin (CL-030).
+    wb: Option<[f32; 3]>,
+    exposure: Option<f32>,
+    /// The Color scope's skin Amount, 0–1, while it is active (CL-030).
+    skin_color: Option<f32>,
     /// Stage 7.
     ends: Option<(f32, f32)>,
     shadows: f32,
@@ -175,10 +197,18 @@ pub struct Evaluator {
     tone_lift: f32,
     brightness: Option<Rational>,
     contrast: Option<Contrast>,
+    /// Stage 8, the colour wheels (CL-015).
+    wheels: Option<WheelStage>,
+    /// Stage 9, the curves (CL-014).
+    curves: Option<CurvesStage>,
+    /// Stage 11, HSL per hue band (CL-013).
+    hsl: Option<HslStage>,
     /// Stage 12.
     hue: Option<(f32, f32)>,
     saturation: Option<f32>,
     vibrance: Option<f32>,
+    /// Stage 13, the user LUT (CL-017).
+    lut: Option<LutStage>,
     /// Stage 19: the share of the graded picture (1 shows it alone).
     amount: f32,
 }
@@ -188,7 +218,20 @@ fn level(v: i16) -> f32 {
 }
 
 impl Evaluator {
+    /// The evaluator of `stack` without a LUT table: a LUT slot grades
+    /// nothing, as when its file is missing (CL-017).
     pub fn new(stack: &ColorStack) -> Evaluator {
+        Evaluator::with_table(stack, None)
+    }
+
+    /// The evaluator of `stack` with its LUT looked up in `luts`.
+    pub fn with_luts(stack: &ColorStack, luts: &dyn LutSource) -> Evaluator {
+        let table = active_slot(stack).and_then(|slot| luts.lut(&slot.lut.hash));
+        Evaluator::with_table(stack, table)
+    }
+
+    /// The evaluator of `stack` with `table` as its LUT slot's table.
+    pub fn with_table(stack: &ColorStack, table: Option<Arc<Lut>>) -> Evaluator {
         let b = &stack.basic;
         let light = stack.sections_enabled.is_on(Section::Light);
         let color = stack.sections_enabled.is_on(Section::Color);
@@ -207,10 +250,11 @@ impl Evaluator {
         });
         // Stage 6, exposure.
         let ev = level(on(light, b.exposure)) * EXPOSURE_EV;
-        let gains = match (wb, ev != 0.0) {
-            (None, false) => None,
-            (wb, _) => {
-                let e = if ev != 0.0 { libm::exp2f(ev) } else { 1.0 };
+        let exposure = (ev != 0.0).then(|| libm::exp2f(ev));
+        let gains = match (wb, exposure) {
+            (None, None) => None,
+            (wb, e) => {
+                let e = e.unwrap_or(1.0);
                 let w = wb.unwrap_or([1.0; 3]);
                 Some([w[0] * e, w[1] * e, w[2] * e])
             }
@@ -257,25 +301,112 @@ impl Evaluator {
         let vib = on(color, b.vibrance);
         let vibrance = (vib != 0).then(|| level(vib));
 
+        let sections = stack.sections_enabled;
+        let wheels = sections
+            .is_on(Section::Wheels)
+            .then(|| WheelStage::new(&stack.wheels))
+            .flatten();
+        let curves = sections
+            .is_on(Section::Curves)
+            .then(|| CurvesStage::new(&stack.curves))
+            .flatten();
+        let hsl = sections
+            .is_on(Section::Hsl)
+            .then(|| HslStage::new(&stack.hsl))
+            .flatten();
+        // Skin protection of the Color scope (CL-030) only matters while
+        // something it blends back is active, and it belongs to the Color
+        // section's switch.
+        let color_skin = stack.skin(SkinScope::Color);
+        let skin_color = (color
+            && color_skin.is_active()
+            && (wb.is_some()
+                || hsl.is_some()
+                || hue.is_some()
+                || saturation.is_some()
+                || vibrance.is_some()))
+        .then(|| f32::from(color_skin.amount.min(100)) / 100.0);
+        let lut = table.and_then(|t| LutStage::new(stack, t));
+
         Evaluator {
             gains,
+            wb,
+            exposure,
+            skin_color,
             ends,
             shadows,
             highlights,
             tone_lift,
             brightness,
             contrast,
+            wheels,
+            curves,
+            hsl,
             hue,
             saturation,
             vibrance,
+            lut,
             amount: f32::from(stack.amount.min(100)) / 100.0,
         }
     }
 
+    /// Whether a pixel's skin mask is needed (CL-030).
+    pub(crate) fn needs_mask(&self) -> bool {
+        self.skin_color.is_some() || self.lut.as_ref().is_some_and(|l| l.skin.is_some())
+    }
+
+    /// Whether stages 5–6 act on each channel alone, so the bake can work
+    /// them out once per node value ([`Evaluator::balance`]): not while
+    /// skin protection blends white balance back by a mask of the whole
+    /// pixel.
+    pub(crate) fn balance_is_per_channel(&self) -> bool {
+        !(self.skin_color.is_some() && self.wb.is_some())
+    }
+
+    /// Whether the evaluator has a LUT stage.
+    pub(crate) fn has_lut(&self) -> bool {
+        self.lut.is_some()
+    }
+
+    /// The LUT stage (stage 13), when there is one.
+    pub(crate) fn lut_stage(&self) -> Option<&LutStage> {
+        self.lut.as_ref()
+    }
+
+    /// The size of the LUT's 3D table (0 without one).
+    pub(crate) fn lut_cube_size(&self) -> u32 {
+        self.lut.as_ref().map_or(0, LutStage::cube_size)
+    }
+
     /// The stack's per-pixel stages on one pixel of code values.
     pub fn eval(&self, input: [f32; 3]) -> [f32; 3] {
-        let balanced = [0, 1, 2].map(|i| self.balance(i, input[i]));
-        self.eval_balanced(input, balanced)
+        let (balanced, m) = self.balanced(input);
+        self.eval_rest(input, balanced, m)
+    }
+
+    /// Stages 5–6 on `input`, and its skin mask (0 when nothing needs it).
+    fn balanced(&self, input: [f32; 3]) -> ([f32; 3], f32) {
+        if self.balance_is_per_channel() {
+            let m = if self.needs_mask() {
+                skin_mask(input)
+            } else {
+                0.0
+            };
+            return ([0, 1, 2].map(|i| self.balance(i, input[i])), m);
+        }
+        // Stage 5, then its skin blend (CL-030), then stage 6.
+        let m = skin_mask(input);
+        let t = m * self.skin_color.unwrap_or(0.0);
+        let wb = self.wb.unwrap_or([1.0; 3]);
+        let balanced = [0, 1, 2].map(|i| {
+            let five = linear_to_ws(ws_to_linear(input[i]) * wb[i]);
+            let blended = five + t * (input[i] - five);
+            match self.exposure {
+                Some(e) => linear_to_ws(ws_to_linear(blended) * e),
+                None => blended,
+            }
+        });
+        (balanced, m)
     }
 
     /// Stages 5–6 on channel `i` alone: white balance and exposure are
@@ -287,11 +418,61 @@ impl Evaluator {
         }
     }
 
-    /// The rest of [`Evaluator::eval`] after [`Evaluator::balance`].
+    /// The rest of [`Evaluator::eval`] after [`Evaluator::balance`] (only
+    /// while [`Evaluator::balance_is_per_channel`]).
     pub(crate) fn eval_balanced(&self, input: [f32; 3], balanced: [f32; 3]) -> [f32; 3] {
-        let c = self.tone(balanced);
-        let c = self.color(c);
+        let m = if self.needs_mask() {
+            skin_mask(input)
+        } else {
+            0.0
+        };
+        self.eval_rest(input, balanced, m)
+    }
+
+    /// Stages 7–13 and the Amount blend, with `m` the pixel's skin mask.
+    fn eval_rest(&self, input: [f32; 3], balanced: [f32; 3], m: f32) -> [f32; 3] {
+        let before = self.before_hsl(balanced);
+        let c = match &self.hsl {
+            Some(stage) => stage.apply(before),
+            None => before,
+        };
+        let mut c = self.color(c);
+        if let Some(a) = self.skin_color {
+            // Stages 11–12 back toward their input on skin (CL-030).
+            let t = m * a;
+            if t > 0.0 {
+                c = [0, 1, 2].map(|i| c[i] + t * (before[i] - c[i]));
+            }
+        }
+        if let Some(lut) = &self.lut {
+            c = lut.apply(c, m);
+        }
         amount_blend(input, c, self.amount)
+    }
+
+    /// Stages 7–9 after the balance: what the HSL stage receives.
+    fn before_hsl(&self, balanced: [f32; 3]) -> [f32; 3] {
+        let c = self.tone(balanced);
+        let c = match &self.wheels {
+            Some(stage) => stage.apply(c),
+            None => c,
+        };
+        match &self.curves {
+            Some(stage) => stage.apply(c),
+            None => c,
+        }
+    }
+
+    /// The pixel as it enters the HSL stage (stage 11): what CL-013's
+    /// eyedropper samples.
+    pub fn hsl_input(&self, input: [f32; 3]) -> [f32; 3] {
+        self.before_hsl(self.balanced(input).0)
+    }
+
+    /// The steepest slope of the active curve tables (0 without curves):
+    /// what decides the lattice size.
+    pub(crate) fn curve_slope(&self) -> f32 {
+        self.curves.as_ref().map_or(0.0, CurvesStage::max_slope)
     }
 
     fn tone(&self, mut c: [f32; 3]) -> [f32; 3] {
@@ -339,14 +520,20 @@ impl Evaluator {
 }
 
 /// [`Evaluator::eval`] for one pixel: the reference the lattice is checked
-/// against (render-compositor.md §17).
+/// against (render-compositor.md §17). A LUT slot grades nothing here; see
+/// [`eval_pixel_with`].
 pub fn eval_pixel(stack: &ColorStack, rgb: [f32; 3]) -> [f32; 3] {
     Evaluator::new(stack).eval(rgb)
 }
 
+/// [`eval_pixel`] with the stack's LUT looked up in `luts`.
+pub fn eval_pixel_with(stack: &ColorStack, luts: &dyn LutSource, rgb: [f32; 3]) -> [f32; 3] {
+    Evaluator::with_luts(stack, luts).eval(rgb)
+}
+
 /// `y + s·(c − y)` with `y` the pixel's luma: 0 is grey (R = G = B
 /// exactly), 2 doubles the distance from grey (CL-008).
-fn mix_from_luma(c: [f32; 3], s: f32) -> [f32; 3] {
+pub(crate) fn mix_from_luma(c: [f32; 3], s: f32) -> [f32; 3] {
     let y = luma(c);
     c.map(|x| y + s * (x - y))
 }
@@ -381,9 +568,7 @@ fn skin_band(c: [f32; 3]) -> f32 {
 /// is linear in code values, so the lattice reproduces it exactly, and it
 /// keeps CL-008's promises (lightness as luma stays, ±100 agree, greys
 /// stay).
-fn rotate_hue(c: [f32; 3], cos: f32, sin: f32) -> [f32; 3] {
-    const KB: f32 = 1.8556;
-    const KR: f32 = 1.5748;
+pub(crate) fn rotate_hue(c: [f32; 3], cos: f32, sin: f32) -> [f32; 3] {
     let y = luma(c);
     let cb = (c[2] - y) / KB;
     let cr = (c[0] - y) / KR;

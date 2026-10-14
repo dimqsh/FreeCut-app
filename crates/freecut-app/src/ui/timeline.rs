@@ -2757,8 +2757,9 @@ enum Badge {
 }
 
 /// A clip's name (with the kind glyph on all-strip clips) and its badges
-/// at the strip's right end: the out-of-sync offset (TL-030), offline,
-/// detached sound, muted, In / Out / Loop animation, keyframes.
+/// at the strip's right end: the out-of-sync offset (TL-030), offline, a
+/// missing LUT (CL-017), detached sound, muted, In / Out / Loop animation,
+/// keyframes.
 fn draw_label(cx: &ClipCtx<'_>, d: &ClipDraw, mark: Color32, offline: bool, sync: Option<String>) {
     let p = cx.look.palette;
     let clip = &d.clip;
@@ -2780,6 +2781,12 @@ fn draw_label(cx: &ClipCtx<'_>, d: &ClipDraw, mark: Color32, offline: bool, sync
     }
     if offline {
         badges.push(Badge::Text("Offline".to_owned(), p.danger));
+    }
+    // CL-017: a LUT whose file can't be found grades nothing.
+    if let Some(slot) = clip.color.as_ref().and_then(|c| c.lut.as_ref())
+        && cx.project.luts.is_missing(&slot.lut)
+    {
+        badges.push(Badge::Text("LUT missing".to_owned(), p.danger));
     }
     match &clip.audio {
         EmbeddedAudio::Detached(_) => badges.push(Badge::Icon(icons::LINK)),

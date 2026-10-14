@@ -17,6 +17,8 @@ serde_json = { workspace = true, features = ["arbitrary_precision"] }
 serde_path_to_error.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+# The XXH3-128 hash that names LUT files in the library (CL-016).
+xxhash-rust.workspace = true
 # Host name for the lock file's holder metadata (PM-013). Apache-2.0.
 gethostname = "1.1.0"
 

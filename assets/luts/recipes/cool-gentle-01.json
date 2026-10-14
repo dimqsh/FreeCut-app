@@ -1,0 +1,19 @@
+{
+  "id": "fc.lut.cool.gentle.01",
+  "name": "Cool · Gentle 01",
+  "tags": [
+    "cool",
+    "balance"
+  ],
+  "rev": 1,
+  "summary": "A gentle shift toward cool light.",
+  "file": "cool-gentle-01.cube",
+  "passes": [
+    {
+      "params": {
+        "temperature": -25,
+        "tint": -3
+      }
+    }
+  ]
+}

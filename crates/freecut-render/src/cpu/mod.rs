@@ -301,6 +301,7 @@ pub struct Compositor {
     mips: mip::MipCache,
     blurs: effects::BlurCache,
     grades: crate::color::GradeCache,
+    luts: std::sync::Arc<dyn crate::color::LutSource>,
     text_options: TextMotionOptions,
 }
 
@@ -332,8 +333,29 @@ impl Compositor {
             mips: mip::MipCache::default(),
             blurs: effects::BlurCache::default(),
             grades: crate::color::GradeCache::default(),
+            luts: std::sync::Arc::new(crate::color::NoLuts),
             text_options: TextMotionOptions::default(),
         }
+    }
+
+    /// Sets where the user LUTs of colour stacks come from (CL-017,
+    /// render-compositor.md §17). Without one every LUT is missing: it
+    /// grades nothing and [`Compositor::take_missing_luts`] reports it.
+    pub fn with_luts(mut self, luts: std::sync::Arc<dyn crate::color::LutSource>) -> Compositor {
+        self.luts = luts;
+        self
+    }
+
+    /// [`Compositor::with_luts`] on a compositor in use.
+    pub fn set_luts(&mut self, luts: std::sync::Arc<dyn crate::color::LutSource>) {
+        self.luts = luts;
+    }
+
+    /// The LUT files that frames drawn since the last call named and the
+    /// LUT source didn't have, each once (for the missing-LUT badge and the
+    /// export preflight, CL-017).
+    pub fn take_missing_luts(&mut self) -> Vec<freecut_timeline::model::LutRef> {
+        self.grades.take_missing()
     }
 
     /// Sets the options of per-unit text animation (TX-056's Typewriter
@@ -519,7 +541,7 @@ impl Compositor {
             picture
                 .filter(|p| p.is_valid() && !p.is_empty())
                 .map(|p| match &layer.color {
-                    Some(stack) => self.grades.graded(&p, stack, self.threads),
+                    Some(stack) => self.grades.graded(&p, stack, &*self.luts, self.threads),
                     None => p,
                 });
         match picture {

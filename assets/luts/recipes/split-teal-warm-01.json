@@ -1,0 +1,31 @@
+{
+  "id": "fc.lut.split.teal-warm.01",
+  "name": "Split · Teal and Warm 01",
+  "tags": [
+    "split",
+    "teal",
+    "warm",
+    "cinematic"
+  ],
+  "rev": 1,
+  "summary": "Teal in the shadows and warm highlights.",
+  "file": "split-teal-warm-01.cube",
+  "passes": [
+    {
+      "params": {
+        "contrast": 12,
+        "saturation": 10
+      },
+      "pucks": {
+        "shadows": [
+          450,
+          -450
+        ],
+        "highlights": [
+          -220,
+          220
+        ]
+      }
+    }
+  ]
+}

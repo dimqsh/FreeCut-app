@@ -1,0 +1,24 @@
+{
+  "id": "fc.lut.mono.warm.01",
+  "name": "Mono · Warm 01",
+  "tags": [
+    "mono",
+    "warm"
+  ],
+  "rev": 1,
+  "summary": "Black and white with a warm paper tone.",
+  "file": "mono-warm-01.cube",
+  "passes": [
+    {
+      "params": {
+        "saturation": -100,
+        "contrast": 8
+      }
+    },
+    {
+      "params": {
+        "temperature": 35
+      }
+    }
+  ]
+}

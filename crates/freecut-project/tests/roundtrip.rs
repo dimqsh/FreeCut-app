@@ -261,8 +261,9 @@ fn random_plans_reach_text_and_transforms() {
 
 /// The random plans above really exercise the format-6 data: their
 /// documents hold transform and text keys with eased segments, all three
-/// animation slots, and eased volume keys; and format 10's colour stacks
-/// and colour keys.
+/// animation slots, and eased volume keys; format 10's colour stacks and
+/// colour keys; format 11's HSL, curves, wheels and puck keys; and
+/// format 12's LUT slots, skin protection and their keys.
 #[test]
 fn random_plans_reach_keys_and_animations() {
     use freecut_timeline::model::{Interp, PropPath, Slot};
@@ -274,9 +275,11 @@ fn random_plans_reach_keys_and_animations() {
     );
     let eased = |i: Interp| !matches!(i, Interp::Linear | Interp::Hold);
     let (mut transform_keys, mut text_keys, mut eased_keys, mut eased_gain) = (0, 0, 0, 0);
-    let (mut graded, mut color_keys) = (0, 0);
+    let (mut graded, mut color_keys, mut puck_keys) = (0, 0, 0);
+    let (mut hsl, mut curves, mut wheels) = (0, 0, 0);
+    let (mut luts, mut skins, mut k3_keys) = (0, 0, 0);
     let mut slots = [0; 3];
-    for _ in 0..64 {
+    for _ in 0..96 {
         let plan = doc_plan().new_tree(&mut runner).unwrap().current();
         let (doc, _) = build(&plan);
         for clip in doc
@@ -287,12 +290,24 @@ fn random_plans_reach_keys_and_animations() {
             for track in clip.keys.tracks() {
                 match track.prop() {
                     PropPath::Transform(_) => transform_keys += 1,
+                    PropPath::Color(
+                        freecut_timeline::model::ColorParamId::LutIntensity
+                        | freecut_timeline::model::ColorParamId::SkinAmount(_),
+                    ) => k3_keys += 1,
                     PropPath::Color(_) => color_keys += 1,
+                    PropPath::ColorPuck(_) => puck_keys += 1,
                     _ => text_keys += 1,
                 }
                 eased_keys += track.keys().iter().filter(|k| eased(k.interp)).count();
             }
             graded += usize::from(clip.color.is_some());
+            if let Some(c) = &clip.color {
+                hsl += usize::from(!c.hsl.is_default());
+                curves += usize::from(!c.curves.is_identity());
+                wheels += usize::from(c.wheels.any_set());
+                luts += usize::from(c.lut.is_some());
+                skins += usize::from(c.basic.skin.on || c.lut.as_ref().is_some_and(|l| l.skin.on));
+            }
             for (n, slot) in slots.iter_mut().zip(Slot::ALL) {
                 *n += usize::from(clip.animations.get(slot).is_some());
             }
@@ -308,6 +323,16 @@ fn random_plans_reach_keys_and_animations() {
     assert!(slots.iter().all(|n| *n > 0), "{slots:?}");
     // Format 10: colour stacks and colour keys.
     assert!(graded > 0 && color_keys > 0, "{graded} {color_keys}");
+    // Format 11: HSL, curves, wheels and keyed pucks.
+    assert!(
+        hsl > 0 && curves > 0 && wheels > 0 && puck_keys > 0,
+        "{hsl} {curves} {wheels} {puck_keys}"
+    );
+    // Format 12: LUT slots, skin protection and their keys.
+    assert!(
+        luts > 0 && skins > 0 && k3_keys > 0,
+        "{luts} {skins} {k3_keys}"
+    );
 }
 
 /// The random plans above really exercise the format-7 to 9 data: their

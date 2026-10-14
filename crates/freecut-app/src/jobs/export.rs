@@ -86,6 +86,9 @@ pub struct ExportRequest {
     /// "Export as heard" (AU-012): only these soloed tracks sound. `None`
     /// exports every track, ignoring solo (the default).
     pub solo: Option<BTreeSet<TrackId>>,
+    /// Where the user LUTs of colour stacks come from, the preview's own
+    /// (CL-017), so the file matches the preview.
+    pub luts: Arc<dyn freecut_render::color::LutSource>,
     /// "Retry using slates for unreadable frames" (EX-022 `decode-error`):
     /// a picture that can't be read draws the error slate (EX-005) instead
     /// of stopping the export, and the result lists those frames.
@@ -772,7 +775,7 @@ fn render_frames(
     free: &Receiver<Vec<u8>>,
     stop: &AtomicBool,
 ) -> Vec<String> {
-    let compositor = Compositor::new(request.fonts.clone());
+    let compositor = Compositor::new(request.fonts.clone()).with_luts(Arc::clone(&request.luts));
     let renderer = ExportRenderer::with_media(
         Arc::clone(&request.doc),
         request.seq,

@@ -219,6 +219,14 @@ pub enum CardId {
     Light,
     /// Look lens, Basic page: Color (CL-008).
     ColorBalance,
+    /// Look lens, Basic page: LUT (CL-017, CL-030).
+    Lut,
+    /// Look lens, HSL page (CL-013).
+    Hsl,
+    /// Look lens, Curves page (CL-014).
+    Curves,
+    /// Look lens, Wheels page (CL-015).
+    Wheels,
 }
 
 impl CardId {
@@ -352,6 +360,10 @@ keys!(CardId {
     Grade => "grade",
     Light => "light",
     ColorBalance => "color_balance",
+    Lut => "lut",
+    Hsl => "hsl",
+    Curves => "curves",
+    Wheels => "wheels",
 });
 
 /// The name a Look page is written as in `workspace.json`.

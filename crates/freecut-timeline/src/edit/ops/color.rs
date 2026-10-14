@@ -1,5 +1,5 @@
-//! Colour adjustments (CL-007, CL-008, CL-013, CL-014, CL-015, CL-023,
-//! CL-024, CL-035): one
+//! Colour adjustments (CL-007, CL-008, CL-013, CL-014, CL-015, CL-017,
+//! CL-023, CL-024, CL-030, CL-035): one
 //! [`ColorEdit`] on every listed clip that takes a colour stack (video,
 //! images and adjustment clips). Others are skipped; the edit is refused
 //! when none takes one, and clips on locked tracks refuse it.
@@ -15,7 +15,8 @@ use crate::edit::tx::Tx;
 use crate::edit::{EditError, OpKind, Plan};
 use crate::ids::{ClipId, SeqId};
 use crate::model::{
-    Clip, ColorParamId, ColorStack, Curve, CurveChannel, HueBand, PropPath, Section, WheelId,
+    Clip, ColorParamId, ColorStack, Curve, CurveChannel, HueBand, LutInterp, LutSlot, PropGroup,
+    PropPath, Section, SkinScope, WheelId,
 };
 
 /// One change to the colour stacks of clips.
@@ -48,6 +49,17 @@ pub enum ColorEdit {
     /// One wheel's puck centred and its luminance at 0 (CL-015's reset
     /// button), its keys removed in the same entry.
     ResetWheel(WheelId),
+    /// The LUT slot (CL-017). `Some` puts the slot's file in place; a clip
+    /// that already has a LUT keeps its Intensity, interpolation and skin
+    /// protection (CL-017: applying a LUT replaces it and keeps the
+    /// intensity), one without takes the slot as given. `None` clears the
+    /// slot and removes the LUT section's keys in the same entry.
+    SetLut(Option<LutSlot>),
+    /// How the LUT is sampled (CL-017's More); nothing without a LUT.
+    SetLutInterp(LutInterp),
+    /// Skin protection's switch in one scope (CL-030); the LUT scope does
+    /// nothing without a LUT.
+    SetSkin { scope: SkinScope, on: bool },
 }
 
 /// What a colour edit did, for its undo label.
@@ -65,13 +77,16 @@ pub enum ColorOp {
     Curve,
     /// A wheel's puck.
     Puck,
+    /// The LUT slot: its file or its sampling.
+    Lut,
 }
 
 impl ColorEdit {
     pub fn op(&self) -> ColorOp {
         match self {
             ColorEdit::SetParam(..) | ColorEdit::SetParams(_) => ColorOp::Set,
-            ColorEdit::SetSectionEnabled(..) => ColorOp::Switch,
+            ColorEdit::SetSectionEnabled(..) | ColorEdit::SetSkin { .. } => ColorOp::Switch,
+            ColorEdit::SetLut(_) | ColorEdit::SetLutInterp(_) => ColorOp::Lut,
             ColorEdit::SetBypass(_) => ColorOp::Bypass,
             ColorEdit::ResetSection(_)
             | ColorEdit::ResetAll
@@ -104,7 +119,7 @@ impl ColorEdit {
                 let section = *section;
                 out.keys = out
                     .keys
-                    .without(|p| p.group() == Some(crate::model::PropGroup::Color(section)));
+                    .without(|p| p.group() == Some(PropGroup::Color(section)));
                 stack.with_section_reset(section)
             }
             ColorEdit::ResetAll => {
@@ -128,6 +143,30 @@ impl ColorEdit {
                 });
                 stack.with_wheel_reset(wheel)
             }
+            ColorEdit::SetLut(Some(slot)) => {
+                let slot = match &stack.lut {
+                    Some(old) => LutSlot {
+                        lut: slot.lut.clone(),
+                        ..old.clone()
+                    },
+                    None => slot.clone(),
+                };
+                stack.with_lut(Some(slot))
+            }
+            ColorEdit::SetLut(None) => {
+                out.keys = out
+                    .keys
+                    .without(|p| p.group() == Some(PropGroup::Color(Section::Lut)));
+                stack.with_lut(None)
+            }
+            ColorEdit::SetLutInterp(interp) => {
+                let lut = stack.lut.clone().map(|l| LutSlot {
+                    interp: *interp,
+                    ..l
+                });
+                stack.with_lut(lut)
+            }
+            ColorEdit::SetSkin { scope, on } => stack.with_skin(*scope, *on),
         };
         out.color = ColorStack::stored(after);
         Some(out)
@@ -206,6 +245,51 @@ mod tests {
         .unwrap();
         let s = clamped.color.unwrap();
         assert_eq!((s.basic.exposure, s.amount), (100, 40));
+    }
+
+    #[test]
+    fn choosing_a_lut_keeps_the_settings_of_the_one_it_replaces() {
+        use crate::model::{LutRef, SkinProtect};
+        let v = video();
+        let a = LutSlot::new(LutRef::new([1; 16], "a.cube"));
+        let with_a = ColorEdit::SetLut(Some(a.clone())).applied_to(&v).unwrap();
+        let tuned = ColorEdit::SetParam(ColorParamId::LutIntensity, 40)
+            .applied_to(&with_a)
+            .unwrap();
+        let tuned = ColorEdit::SetSkin {
+            scope: SkinScope::Lut,
+            on: true,
+        }
+        .applied_to(&tuned)
+        .unwrap();
+        let tuned = ColorEdit::SetLutInterp(LutInterp::Trilinear)
+            .applied_to(&tuned)
+            .unwrap();
+        let b = LutRef::new([2; 16], "b.3dl");
+        let with_b = ColorEdit::SetLut(Some(LutSlot::new(b.clone())))
+            .applied_to(&tuned)
+            .unwrap();
+        let slot = with_b.color.unwrap().lut.clone().unwrap();
+        assert_eq!(
+            slot,
+            LutSlot {
+                lut: b,
+                intensity: 40,
+                interp: LutInterp::Trilinear,
+                skin: SkinProtect {
+                    on: true,
+                    amount: 70
+                },
+            }
+        );
+        let cleared = ColorEdit::SetLut(None).applied_to(&with_a).unwrap();
+        assert_eq!(cleared, v, "no LUT is the default stack again");
+        // The LUT's settings do nothing without a LUT.
+        assert_eq!(
+            ColorEdit::SetLutInterp(LutInterp::Trilinear).applied_to(&v),
+            Some(v.clone())
+        );
+        assert_eq!(ColorEdit::SetLut(None).op(), ColorOp::Lut);
     }
 
     #[test]

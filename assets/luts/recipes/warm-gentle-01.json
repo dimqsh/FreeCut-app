@@ -1,0 +1,20 @@
+{
+  "id": "fc.lut.warm.gentle.01",
+  "name": "Warm · Gentle 01",
+  "tags": [
+    "warm",
+    "balance"
+  ],
+  "rev": 1,
+  "summary": "A gentle shift toward warm light.",
+  "file": "warm-gentle-01.cube",
+  "passes": [
+    {
+      "params": {
+        "temperature": 25,
+        "tint": 4,
+        "saturation": 5
+      }
+    }
+  ]
+}

@@ -29,6 +29,7 @@ zeno.workspace = true
 image.workspace = true
 pretty_assertions.workspace = true
 proptest.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 
 [lints]

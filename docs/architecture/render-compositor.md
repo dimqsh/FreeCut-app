@@ -1657,6 +1657,34 @@ design of §6 L5 stays the target; this is the reference it will be checked agai
   so the bake works them out once per node value. Measured (release, 11-core machine under load
   ≈ 11): bake 33³ 1.2 ms on 8 threads (5.6 ms on 1), grading a 1080p picture 2.7 ms on 8
   threads (10.7 ms on 1); `color_bench` reprints these.
+- **As built in K2.** `color::{curve, hsl, wheels}` add stages 8 (`WheelStage`: luma-free
+  puck offsets weighted `1 − y`, `4y(1 − y)`, `y`, 1; lift, gain, a rational midtone curve and
+  offset for the luminance sliders; all scaled by Strength), 9 (`CurvesStage`: 1024-entry
+  Fritsch–Carlson `CurveTable`s, Luma then R/G/B, values clamped into 0–1 before the lookup)
+  and 11 (`HslStage`: HSV-hue raised-cosine weights between the two neighbouring band centres,
+  faded by chroma). `BakeSize::for_stack` picks 65³ when the steepest slope a channel goes
+  through (the Luma table's times its own) exceeds `BakeSize::STEEP_SLOPE` = 4.
+  `ColorDigest` now covers HSL, Curves (every point) and Wheels (pucks, luminance, Strength)
+  while their sections are on, and `COLOR_ALGO_VERSION` is 2. `probe_hsl_input(stack,
+  picture, x, y)` and `hsl_band_at(rgb)` serve CL-013's eyedropper; `Evaluator::hsl_input`
+  is the stage-11 input. Measurements: color-and-filters.md › CL-001 › *K2 as built*.
+- **As built in K3.** `color::{lut, skin}` add stage 13 and CL-030's mask. `LutSource` (`Send +
+  Sync + Debug`, `lut(&hash) -> Option<Arc<Lut>>`) comes with `NoLuts` and the in-memory
+  `LutSet`; `Compositor::with_luts`/`set_luts` take an `Arc<dyn LutSource>` (none: every LUT is
+  missing). `Evaluator::with_luts`/`with_table` look the table up once; `eval_pixel_with` is the
+  oracle with LUTs. The skin mask (`skin_mask`, HSV of the stack input with raised-cosine
+  shoulders) blends stage 5 and stages 11–12 back toward their inputs (Color scope; while that
+  scope is active white balance is applied apart from exposure so the blend sits between them)
+  and scales the LUT's intensity (LUT scope). `CompiledStack::with_luts` picks the LUT-only
+  fast path (only the LUT section active, no LUT skin protection, Amount 100: the user's table
+  with its own interpolation and domain, per pixel) or the lattice; `CompiledStack::baked`
+  forces the lattice for tests. `BakeSize::for_evaluator` is 65³ for a steep curve, a user
+  table finer than 33³ or an active skin scope. A slot whose table its source lacks is dropped
+  before compiling (the stage renders as identity, CL-017) and collected for
+  `Compositor::take_missing_luts`; the digest then is the digest of the stack without its LUT,
+  and a found LUT's hash, interpolation and skin switch are part of the digest. FreeCut's eight
+  bundled LUTs (`assets/luts/`, CL-045) are baked from their recipes through `eval_pixel` by
+  `tests/bundled_luts.rs`, which also checks that the checked-in files re-bake byte for byte.
 - **Bake.** `bake(&ColorStack, BakeSize) -> Arc<Lattice>`: for every node `(i, j, k)` of an
   `n³` grid (`n` = 33, or 65 when a curve's steepest baked segment exceeds a slope of 4 or the
   user LUT is larger than 33³), the input `(i, j, k) / (n − 1)` goes through `eval_pixel`'s
@@ -1704,7 +1732,7 @@ design of §6 L5 stays the target; this is the reference it will be checked agai
   test chart per control extreme, checked in and later used as the GPU goldens.
 
 Still to do on this path (not the GPU design): blend modes, clip masks (color masks
-share their core, above), effects and transitions; the color stack's K2–K6 stages and
+share their core, above), effects and transitions; the color stack's K4–K6 stages and
 adjustment clips; trilinear filtering between mip levels; per-glyph hue and glow modulation
 (only the tint/lightness style channel has a per-glyph form).
 
