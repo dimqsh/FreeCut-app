@@ -553,8 +553,9 @@ do not change.
   first list was built from the recorded listing (an excerpt) on 2026-10-14: image
   `gpt_image_2`, `gpt_image_2_5`, `nano_banana_2`, `nano_banana_pro`, `seedream_v5_pro`; video
   `seedance_2_5`, `kling3_0`, `veo3_1`, `minimax_hailuo`, `wan3_0`, `cinematic_studio_3_0`,
-  `cinematic_studio_video`. The owner confirms it, and the code comment records who reviewed it
-  and when. Adding a model is a reviewed code change with its fixture entry.
+  `cinematic_studio_video`. The owner confirmed it on 2026-10-14; against the full listing
+  recorded that day (45 image, 57 video, 8 audio models) it shows these 12 and nothing else.
+  Adding a model is a reviewed code change with its fixture entry.
 - **Hidden with a specific reason** (a list in code, plus any model whose description marks it
   as restricted to the service's own pipelines): `sonilo_music`, `mirelo_text_to_audio`, `inworld_text_to_speech`
   (game pipeline only), `higgsfield_preset` (legacy recipes), `ms_image` and the other marketing

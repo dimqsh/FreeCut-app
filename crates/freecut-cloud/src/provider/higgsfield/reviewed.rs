@@ -58,8 +58,10 @@ const fn video(id: &'static str) -> ReviewedModel {
 /// or references. Left out until someone reviews them: models without a
 /// description (`nano_banana_2_shots`, `cinematic_studio_video_3_5`), tools
 /// that are not generation (background removal, upscaling, reframe), and the
-/// service's own pipelines. **Owner confirmation pending**; update this note
-/// with who confirmed it and when.
+/// service's own pipelines. Confirmed by the owner on 2026-10-14. A full
+/// listing recorded the same day (`--example record`: 45 image, 57 video, 8
+/// audio models) shows these 12 and nothing else; every other model waits for
+/// a review.
 pub const REVIEWED_MODELS: &[ReviewedModel] = &[
     image("gpt_image_2"),
     image("gpt_image_2_5"),
