@@ -110,7 +110,7 @@ The user asked to "bring their own token". As published, the MCP server has no t
 **Behavior / output:**
 - The estimate comes from the service's own cost preflight for the exact arguments, which submits nothing. Changing any setting invalidates it, and the sheet fetches a new one.
 - The preflight uses the same service tool as the paid run, with one flag that asks for the price only. FreeCut guards that flag in code (architecture §4.7): it refuses to send a preflight without it, sends a preflight only when the tool's live schema still offers it, never retries a preflight that may have reached the service, and treats a preflight answer that contains job ids as a run that started: the run is recorded in the ledger and polled, the user is told "Higgsfield started a run while FreeCut only asked for the price", and cost checks for that tool stop until FreeCut restarts.
-- When the estimate cannot be shown to cover every variant (the answer gives one figure and the service does not say what it covers), Variants is limited to 1 for that model.
+- When the estimate cannot be shown to cover every variant (the answer gives one figure and the service does not say what it covers), Variants is limited to 1 for that model. As of 2026-10-14 this applies to every model: a cost check for 2 variants answered the same figure as for 1 (architecture §15.1).
 - An estimate older than 5 minutes (FreeCut default) is fetched again when Run is pressed; if it went up, the sheet shows the new figure and asks again.
 - Run starts the job (CG-009). Uploads come first, then the submission. The sheet closes at once; progress is in the task list.
 - Credits are the service's unit; FreeCut never converts them to money.

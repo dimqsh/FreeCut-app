@@ -1010,6 +1010,49 @@ README).
     the first release that has it (for example, on only after H2's acceptance and Higgsfield's
     answer to item 3).
 
+### 15.1 Confirmed with free calls (H1, 2026-10-14)
+
+Only discovery, one client registration, `models_explore` and `get_cost: true` were called.
+Recordings: `crates/freecut-cloud/tests/fixtures/higgsfield/` (its README lists each source).
+
+| Question (item 5) | Finding |
+|---|---|
+| Authorization server | **Changed since 2026-10-13.** The protected-resource metadata now lists `https://clerk.higgsfield.ai` and `https://fnf-device-auth.higgsfield.ai`, not `mcp.higgsfield.ai` (whose own metadata is still served but no longer referenced). Clerk's metadata: `/oauth/authorize`, `/oauth/token`, `/oauth/token/revoke`, `/oauth/device_authorization`, `/oauth/register`, PKCE S256, `authorization_response_iss_parameter_supported: true`. §5.1's origin check therefore becomes: every sign-in endpoint is HTTPS on `higgsfield.ai` or a subdomain, the resource equals the MCP endpoint, and the issuer equals the server it was fetched for. The callback's `iss` is checked (RFC 9207). A non-standard `higgsfield_auth_hints` block names example clients; FreeCut ignores it. |
+| DCR with a loopback redirect | **Accepted.** §5.2's request → `201`, public client (`token_endpoint_auth_method: none`), redirect `http://127.0.0.1/callback` echoed. `client_id_issued_at` is in milliseconds (RFC 7591 says seconds); FreeCut does not read it. One FreeCut registration now exists at Higgsfield's Clerk; its id is in no file. No client-metadata document is needed (item 10 closes). |
+| Loopback port | The authorize endpoint accepts `http://127.0.0.1:<any port>/callback` for that registration and continues to Higgsfield's sign-in page; an unregistered host gets `400 invalid_request`. |
+| Device code | Clerk advertises `device_authorization_endpoint`; `fnf-device-auth.higgsfield.ai` has no discovery document (404). Not exercised: FreeCut registers without the device grant (§5.2), so device sign-in needs a registration that includes it (open). |
+| Transport | Unauthenticated `POST`/`GET /mcp` → `401`, JSON body, `WWW-Authenticate: Bearer resource_metadata=…/oauth-protected-resource/mcp, scope="openid email offline_access"`. The authenticated framing (JSON or SSE answers, `Mcp-Session-Id`, negotiated revision) is **not yet observed**; the client handles all of them. |
+| `models_explore` | `{items, has_more, unlim: {available, remaining, expires_at}}`. Items: `id, name, provider_name, description, output_type, parameters[], medias[{name, type, max?, required?, roles[]}], aspect_ratios, tags, supports_unlim?` and durations as a top-level `durations` set, a top-level `duration_range`, or a `duration` parameter (`options` or `min`/`max`, one model with `min: -1`, one without `max`). Parameters: `required: "optional" | "required"`, types `string`, `number`, `bool`, `string_array`. One media group has no `roles`. Counts: 45 image, 57 video, 8 audio, each `has_more: false`; pages use `after` with `next_page_token`. New actions `search` and `recommend`, output type `3d`. |
+| `get_cost` answers | `{"cost": {"credits": 0.25, "credits_exact": 0.25}}` (image) and `{"cost": {"credits": 35, "credits_exact": 35}}` (video): JSON numbers, **no job ids** (item 14). The image check with `count: 2` answered the same figure as `count: 1`, so an estimate is taken to cover one variant and CG-005's rule limits Variants to 1. `get_cost` sits inside `params`, and `params` is `anyOf` object or JSON string. New optional fields `use_free_gens` and `preset_session_id` exist; FreeCut never sends them. |
+| Errors | An unknown model answers the tool error `Invalid request: unknown model "…". Use models_explore…` (classified as model unavailable). |
+
+**Still unknown:** the authenticated transport framing; session and token lifetimes
+(`expires_in`), refresh-token rotation and revocation behaviour; whether Clerk's tokens carry the
+`resource` audience the MCP server expects; whether Clerk sends `iss` on the redirect as it
+advertises; device sign-in; the shapes of `unlim_choice`, `adjustments` and `recovery_tool`. The
+first need one signed-in FreeCut session (free calls, the owner signs in); the last need runs.
+
+### 15.2 Implementation notes (H1 core, `freecut-cloud`)
+
+- **Send-state table (§4.5).** `ureq::Error` is `#[non_exhaustive]`, so no match can make a new
+  variant fail the build. Unlisted variants fall to `MaybeSent` (the safe side), `ureq` is pinned
+  `=3.4.2`, and a test lists every 3.4.2 variant. `rustls` is a direct optional dependency only to
+  name its certificate errors.
+- **Keychain entries (§5.6).** Parts are named `<provider>/access.<generation>.<n>`; each write
+  uses a new generation and replaces `meta` last, which is what makes "old or new set, never a
+  mix" hold.
+- **Server requests (§4.1).** `ping` gets the empty result MCP requires; every other server
+  request gets `-32601`.
+- **A failed handshake before a call** reports that call as not sent; a session `404` on a paid
+  call or preflight is *not accepted* even if opening the new session then fails.
+- **Contracts (§6.1).** A provider is built with a `TokenSource`, so `connect` takes no
+  `Credential`; `quote` takes the `Operation` alone (inputs are `RoleRef`s with service media
+  ids). `QuoteOutcome` gains `StartedRun` (§4.7 rule 4).
+- **Pure helpers always built.** PKCE (`sha2`, `base64`, `getrandom`) and URL handling (`url`) are
+  not behind `http`; only `ureq` and `rustls` are.
+- **Catalogue hiding** adds `dubbing`, `voice_change` and `sync_so` (they are listed as video
+  models; the voice tools are not built).
+
 ---
 
 ## Sources
