@@ -18,7 +18,8 @@
 //! one exchange per line) is scrubbed first. Every secret the run holds (the
 //! client id, state, PKCE verifier, code, tokens, and the e-mail and subject
 //! in the ID token) is replaced wherever it appears, raw, percent-encoded or
-//! JSON-escaped, and the file is not written if any is left. Only the headers on
+//! JSON-escaped, and the file is not written if any is left. The account's
+//! allowance (`unlim`, and its prose) gets fixed values. Only the headers on
 //! [`RECORDED_HEADERS`] are kept, request and response (no `Authorization`,
 //! cookies, trace ids or CDN headers); token, code, client id and other
 //! secret fields are replaced;
@@ -543,6 +544,36 @@ fn body_json(bytes: &[u8]) -> Value {
     Value::String(text.into_owned())
 }
 
+/// What replaces the allowance prose a listing carries (review R24).
+const ALLOWANCE_PROSE: &str =
+    "Allowance: not recorded (the FreeCut recorder removes the account's allowance).";
+
+/// The `unlim` allowance with fixed values of the same shape: false, 0,
+/// `<removed>`, null and empty lists (review R24).
+fn fake_allowance(value: &Value) -> Value {
+    match value {
+        Value::Bool(_) => Value::Bool(false),
+        Value::Number(_) => json!(0),
+        Value::String(_) => Value::String("<removed>".into()),
+        Value::Array(_) => json!([]),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), fake_allowance(v)))
+                .collect(),
+        ),
+        Value::Null => Value::Null,
+    }
+}
+
+/// A text item that describes the allowance in prose (it names `unlim` and
+/// is not JSON).
+fn allowance_prose(item: &serde_json::Map<String, Value>) -> bool {
+    item.get("type").and_then(Value::as_str) == Some("text")
+        && item.get("text").and_then(Value::as_str).is_some_and(|t| {
+            t.to_ascii_lowercase().contains("unlim") && serde_json::from_str::<Value>(t).is_err()
+        })
+}
+
 /// Whether `key` names a secret field (`redact::SECRET_FIELDS`).
 fn secret_key(key: &str) -> bool {
     redact::SECRET_FIELDS
@@ -578,6 +609,10 @@ impl Scrubber {
                     .map(|(k, v)| {
                         let v = if k == "mcp-session-id" {
                             Value::String(self.fake(v.as_str().unwrap_or_default(), "fake-session"))
+                        } else if k == "unlim" {
+                            fake_allowance(v)
+                        } else if k == "text" && allowance_prose(map) {
+                            Value::String(ALLOWANCE_PROSE.into())
                         } else if secret_key(k)
                             && matches!(v, Value::String(_) | Value::Number(_) | Value::Bool(_))
                         {
@@ -1291,6 +1326,52 @@ mod tests {
             s.value(&body_json(answer.to_string().as_bytes()))["result"]["tools"][0]["inputSchema"],
             schema
         );
+    }
+
+    /// R24: the account's allowance is not recorded: the `unlim` object in
+    /// every copy gets fixed values of the same shape, and the allowance
+    /// prose fixed text. Other text items stay.
+    #[test]
+    fn the_accounts_allowance_is_not_recorded() {
+        let fake = fake();
+        fake.set_stream(StreamMode::Sse { chunk: 64 });
+        fake.on_tool("models_explore", |_| {
+            let listing = json!({"items": [], "has_more": false, "unlim":
+                {"available": true, "remaining": 4242, "expires_at": "2031-07-15T00:00:00Z"}});
+            ToolReply::Raw(json!({"structuredContent": listing, "content": [
+                {"type": "text", "text": listing.to_string()},
+                {"type": "text", "text": "Free-trial unlim: 4242 generations left until 2031-07-15."},
+                {"type": "text", "text": "Models are listed by type."}]}))
+        });
+        let recorder = Arc::new(Recorder::new(Arc::new(fake.clone())));
+        let provider = HiggsfieldProvider::with_endpoint(
+            ENDPOINT,
+            recorder.clone(),
+            Arc::new(StaticToken(Secret::new("t1"))),
+            Arc::new(NoWait),
+            "0.1.0",
+            Arc::new(PreflightGuard::new()),
+            Arc::new(LateQueue::new()),
+        );
+        provider.catalogue(&CancelToken::new()).unwrap();
+        let lines = recorder.lines();
+        let bodies: String = lines
+            .iter()
+            .map(|l| l["response"]["body"].to_string())
+            .collect();
+        assert!(
+            !bodies.contains("4242") && !bodies.contains("2031-07-15"),
+            "{bodies}"
+        );
+        assert!(bodies.contains("Models are listed by type."));
+        let data = data_lines(&lines);
+        let result = &data.last().unwrap()["result"];
+        let fake_unlim = json!({"available": false, "remaining": 0, "expires_at": "<removed>"});
+        assert_eq!(result["structuredContent"]["unlim"], fake_unlim);
+        let text: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text["unlim"], fake_unlim);
+        assert_eq!(result["content"][1]["text"], ALLOWANCE_PROSE);
     }
 
     #[test]

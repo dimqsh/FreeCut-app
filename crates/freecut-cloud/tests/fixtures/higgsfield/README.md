@@ -46,7 +46,8 @@ Before writing, the tool keeps only an allow list of headers (`content-type`,
 `cache-control`, `date`, `mcp-session-id`, `mcp-protocol-version`,
 `www-authenticate`, `x-higgsfield-build`; no `Authorization`, cookies, trace
 ids or CDN headers), replaces secret fields (tokens, codes, client id) and the
-client id wherever else it appears,
+client id wherever else it appears, gives the account's allowance (`unlim`
+in every copy, and the allowance prose) fixed values,
 and replaces e-mail addresses, JWTs and UUIDs with stable fakes; session ids
 become `fake-session-N` and signed URLs lose their query. Review the file
 before committing it. Recorded once by the owner on 2026-10-14 and filtered
