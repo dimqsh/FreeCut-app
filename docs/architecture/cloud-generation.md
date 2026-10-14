@@ -1061,7 +1061,8 @@ README).
 5. **Unconfirmed protocol details:** the transport, session lifetime, token lifetimes, whether
    DCR accepts loopback redirects, the device-code host, and the exact JSON of submissions,
    `get_cost`, `jobs_wait`, `unlim_choice`, `adjustments` and `recovery_tool`. H1 and H2 record
-   them; the mapping is built against recordings, not guesses.
+   them; the mapping is built against recordings, not guesses. §15.1 lists what is settled and
+   what is still unknown.
 6. **Output formats** of background removal (alpha or matte), dubbing, voice change, upscale and
    the extension mode (whether the context section is included). Each action ships only after a
    recorded run.
@@ -1127,9 +1128,14 @@ Recordings: `crates/freecut-cloud/tests/fixtures/higgsfield/` (its README lists 
 | Tokens | `token_type: bearer`, `expires_in: 86399` (24 h), scope `openid email offline_access`; a refresh token and an ID token are issued. |
 | Full model listing | 45 image, 57 video and 8 audio models, each in one page; after the reviewed list (§6.2), 12 are shown. |
 
-**Still unknown:** refresh-token rotation and revocation behaviour; device sign-in; the shapes of
-`unlim_choice`, `adjustments` and `recovery_tool`. The first two need a longer signed-in session;
-the last need runs.
+**Still unknown:**
+
+- refresh-token rotation and revocation behaviour (needs a longer signed-in session);
+- device sign-in (needs a device-code sign-in);
+- the answer shapes of real runs (need paid runs):
+  - submissions with job ids (`generate_image` and `generate_video`);
+  - `jobs_wait`;
+  - `unlim_choice`, `adjustments` and `recovery_tool`.
 
 ### 15.2 Implementation notes (H1 core, `freecut-cloud`)
 
