@@ -32,6 +32,9 @@ enum Reply {
     Send(u16, Vec<(&'static str, String)>, Vec<u8>),
     /// SSE events written one at a time with pauses.
     Stream(Vec<String>),
+    /// SSE pieces sent as HTTP/1.1 chunks, then the socket closes without
+    /// the final chunk: a stream cut mid-body.
+    ChunkedCut(Vec<String>),
     /// Close without answering.
     Drop,
     /// Wait this long, then close.
@@ -105,6 +108,14 @@ fn serve(script: impl Fn(&Value) -> Reply + Send + 'static) -> Server {
                     let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n");
                     for e in events {
                         let _ = stream.write_all(e.as_bytes());
+                        let _ = stream.flush();
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                }
+                Reply::ChunkedCut(pieces) => {
+                    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n");
+                    for p in pieces {
+                        let _ = write!(stream, "{:x}\r\n{p}\r\n", p.len());
                         let _ = stream.flush();
                         thread::sleep(Duration::from_millis(20));
                     }
@@ -292,6 +303,63 @@ fn an_unreadable_event_hands_the_rest_of_the_stream_to_the_late_queue() {
     assert_eq!(late.len(), 1, "{late:?}");
     assert_eq!(late[0].job_ids, vec![JOB]);
     assert!(late[0].complete);
+}
+
+/// R16: a chunked stream cut inside the response event is an I/O error,
+/// not a clean end. With an event id to resume from, it resumes like a
+/// closed stream: one POST, one GET, and the answer arrives with its job.
+#[test]
+fn a_cut_chunked_stream_is_resumed_from_its_last_event() {
+    const JOB: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    let call_id = Arc::new(Mutex::new(Value::Null));
+    let server = serve(move |body: &Value| {
+        let response = |id: &Value| {
+            json!({"jsonrpc": "2.0", "id": id, "result": {"content": [
+                {"type": "text", "text": format!("{{\"jobs\":[{{\"job_id\":\"{JOB}\"}}]}}")}
+            ]}})
+            .to_string()
+        };
+        match body.get("method").and_then(Value::as_str) {
+            Some("initialize") => json_reply(
+                &body["id"],
+                json!({"protocolVersion": "2025-11-25", "capabilities": {"tools": {}}, "serverInfo": {"name": "loop", "version": "1"}}),
+                Vec::new(),
+            ),
+            Some("notifications/initialized") => Reply::Send(202, Vec::new(), Vec::new()),
+            Some("tools/call") => {
+                *call_id.lock().unwrap() = body["id"].clone();
+                let full = response(&body["id"]);
+                Reply::ChunkedCut(vec![
+                    "id: ev-1\nretry: 5\ndata:\n\n".into(),
+                    format!(
+                        "id: ev-2\nevent: message\ndata: {}",
+                        &full[..full.len() / 2]
+                    ),
+                ])
+            }
+            // The resuming GET (no body): replay the answer.
+            None => Reply::Stream(vec![format!(
+                "id: ev-2\nevent: message\ndata: {}\n\n",
+                response(&call_id.lock().unwrap())
+            )]),
+            _ => Reply::Send(400, Vec::new(), Vec::new()),
+        }
+    });
+    let c = client(&server.url);
+    let out = paid(&c, &CancelToken::new()).unwrap();
+    assert!(out.to_string().contains(JOB), "{out}");
+    let requests = server.requests.lock().unwrap();
+    let starts = |verb: &str| requests.iter().filter(|(h, _)| h.starts_with(verb)).count();
+    // initialize, initialized, the paid call; then exactly one GET.
+    assert_eq!((starts("POST"), starts("GET")), (3, 1));
+    let get = requests.iter().find(|(h, _)| h.starts_with("GET")).unwrap();
+    assert!(
+        get.0.to_ascii_lowercase().contains("last-event-id: ev-1"),
+        "{}",
+        get.0
+    );
+    drop(requests);
+    assert!(c.take_late_results().is_empty());
 }
 
 #[test]

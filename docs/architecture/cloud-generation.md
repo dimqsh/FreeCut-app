@@ -236,8 +236,9 @@ Rules:
   elicitation). Server requests are answered with JSON-RPC error `-32601`; `notifications/progress`
   and `notifications/message` are logged at `debug`; anything else is ignored.
 - FreeCut does not open the optional standalone `GET` stream; it polls with `jobs_wait`. It does
-  use `GET` with `Last-Event-ID` to **resume** an answer's stream that the server ended after an
-  event id but before the response (MCP 2025-11-25 polling): after the server's `retry` delay
+  use `GET` with `Last-Event-ID` to **resume** an answer's stream that the server ended, or that
+  broke (a cut chunked body, a reset; review R16), after an event id but before the response
+  (MCP 2025-11-25 polling and network failures): after the server's `retry` delay
   (1 s if none, at most 30 s), at most 5 times. A `GET` never resends the request; if resuming
   fails, the answer is lost, so a paid call is *Outcome unknown* and a free call fails (review
   F4). `Last-Event-ID` is the id of the last *dispatched* event: an `id:` line counts only at

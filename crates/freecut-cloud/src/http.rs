@@ -472,7 +472,12 @@ impl Read for ChannelReader {
                     self.pending = chunk;
                     self.pos = 0;
                 }
-                Ok(Err(e)) => return Err(e),
+                // The connection's last word: nothing more will arrive on it,
+                // so what the caller read is all there is (review R16).
+                Ok(Err(e)) => {
+                    self.shared.decide(Reading::Finished);
+                    return Err(e);
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
                     self.shared.decide(Reading::Finished);

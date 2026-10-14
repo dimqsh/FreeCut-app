@@ -1171,7 +1171,8 @@ impl McpClient {
     }
 
     /// Reads an event stream until the response to `id`. A stream that ends
-    /// after an event id but before the response is resumed with `GET` and
+    /// or breaks after an event id but before the response is resumed with
+    /// `GET` and
     /// `Last-Event-ID`, after the server's `retry` delay, at most
     /// [`MAX_RESUMES`] times (MCP 2025-11-25, review F4). A `GET` never
     /// resends the request; if resuming fails, the answer is lost, which
@@ -1202,6 +1203,13 @@ impl McpClient {
                     return Err(McpError::Cancelled {
                         send: SendState::MaybeSent,
                     });
+                }
+                // A stream that broke (a cut chunked body, a reset) with an
+                // event id to resume from resumes like one that ended: the
+                // GET never resends the request (MCP 2025-11-25; review R16).
+                Err(e) if parser.last_event_id().is_some() => {
+                    tracing::debug!(error = %e, "the event stream broke; resuming");
+                    0
                 }
                 Err(e) => return Err(McpError::protocol(format!("the event stream broke: {e}"))),
             };
