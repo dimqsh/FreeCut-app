@@ -552,14 +552,15 @@ fn recorded_header(name: &str) -> bool {
 }
 
 /// The headers worth recording, names lower-cased; everything else dropped.
+/// A repeated header keeps its first value, the one FreeCut acts on
+/// (`HttpResponse::header`; review R30).
 fn headers_json(headers: &[(String, String)]) -> Value {
-    Value::Object(
-        headers
-            .iter()
-            .filter(|(k, _)| recorded_header(k))
-            .map(|(k, v)| (k.to_ascii_lowercase(), Value::String(v.clone())))
-            .collect(),
-    )
+    let mut out = serde_json::Map::new();
+    for (k, v) in headers.iter().filter(|(k, _)| recorded_header(k)) {
+        out.entry(k.to_ascii_lowercase())
+            .or_insert_with(|| Value::String(v.clone()));
+    }
+    Value::Object(out)
 }
 
 /// JSON stays JSON, a form has its secret fields replaced, other text (an
@@ -1078,6 +1079,9 @@ mod tests {
                 ("Content-Type", "application/json"),
                 ("Date", "Tue, 14 Oct 2026 10:00:00 GMT"),
                 ("X-Higgsfield-Build", "b1"),
+                // Repeated: FreeCut acts on the first (review R30).
+                ("WWW-Authenticate", "Bearer resource_metadata=\"first\""),
+                ("www-authenticate", "Bearer error=\"second\""),
                 ("Set-Cookie", "__cf_bm=abc; path=/"),
                 ("x-country", "KZ"),
                 ("cf-ray", "8c1f-ALA"),
@@ -1126,11 +1130,27 @@ mod tests {
         assert_eq!(names("request"), vec!["mcp-protocol-version"]);
         assert_eq!(
             names("response"),
-            vec!["content-type", "date", "x-higgsfield-build"]
+            vec![
+                "content-type",
+                "date",
+                "www-authenticate",
+                "x-higgsfield-build"
+            ]
+        );
+        assert_eq!(
+            line["response"]["headers"]["www-authenticate"],
+            "Bearer resource_metadata=\"first\""
         );
         let text = line.to_string();
         for leak in [
-            "__cf_bm", "KZ", "8c1f", "t-123", "c-456", "cf-nel", "Bearer",
+            "__cf_bm",
+            "KZ",
+            "8c1f",
+            "t-123",
+            "c-456",
+            "cf-nel",
+            "Bearer t1",
+            "second",
         ] {
             assert!(!text.contains(leak), "{leak} was recorded");
         }
