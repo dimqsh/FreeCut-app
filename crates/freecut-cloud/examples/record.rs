@@ -9,9 +9,10 @@
 //! **Free calls only**: sign-in discovery, one client registration, the
 //! browser sign-in and its code exchange, then `initialize`, `tools/list`,
 //! `models_explore` listings and the session `DELETE`. No cost check and no
-//! paid tool: the recording transport refuses any `tools/call` whose tool is
-//! not free on the allow list, and any request that carries `get_cost`,
-//! before it leaves the computer.
+//! paid tool: before anything leaves the computer, the recording transport
+//! refuses any body to the service that is not a single JSON-RPC object
+//! (batches included), any `tools/call` whose tool is not free on the allow
+//! list, and any request that carries `get_cost`.
 //!
 //! What is written (`tests/fixtures/higgsfield/recorded/free-calls.jsonl`,
 //! one exchange per line) is scrubbed first: only the headers on
@@ -263,8 +264,9 @@ impl std::fmt::Debug for Recorder {
     }
 }
 
-/// Why `body`, sent to the MCP endpoint, may not leave: a tool call that is
-/// not free on the allow list, or anything carrying `get_cost`.
+/// Why `body`, sent to the MCP endpoint, may not leave: anything but one
+/// JSON-RPC object (a batch could carry any call, round 3), a tool call that
+/// is not free on the allow list, or anything carrying `get_cost`.
 fn refusal(url: &str, body: &[u8]) -> Option<String> {
     if !url.starts_with(ENDPOINT) || body.is_empty() {
         return None;
@@ -273,7 +275,11 @@ fn refusal(url: &str, body: &[u8]) -> Option<String> {
     if text.contains("get_cost") {
         return Some("a cost check".into());
     }
-    let message: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    let message = match serde_json::from_slice::<Value>(body) {
+        Ok(message @ Value::Object(_)) => message,
+        Ok(Value::Array(_)) => return Some("a JSON-RPC batch".into()),
+        _ => return Some("a body that is not one JSON-RPC object".into()),
+    };
     if message.get("method").and_then(Value::as_str) != Some("tools/call") {
         return None;
     }
@@ -676,6 +682,53 @@ mod tests {
         ] {
             assert!(!text.contains(leak), "{leak} was recorded");
         }
+    }
+
+    /// Round 3: only a single JSON-RPC object goes to the service. A batch is
+    /// refused even when every call in it is free; so is a body that is not
+    /// JSON.
+    #[test]
+    fn batches_and_other_bodies_never_leave() {
+        let fake = fake();
+        let recorder = Recorder::new(Arc::new(fake.clone()));
+        let call = |name: &str, id: i64| {
+            json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+                "params": {"name": name, "arguments": {"params": {"model": "m"}}}})
+        };
+        for body in [
+            json!([call("generate_image", 1)]).to_string().into_bytes(),
+            json!([call("models_explore", 1), call("models_explore", 2)])
+                .to_string()
+                .into_bytes(),
+            b"{not json".to_vec(),
+            b"\"tools/call\"".to_vec(),
+        ] {
+            let request = HttpRequest::post_json(
+                ENDPOINT,
+                body.clone(),
+                freecut_cloud::transport::CallLimits::READ,
+            )
+            .with_bearer(Secret::new("t1"));
+            let err = recorder.send(request, &CancelToken::new()).unwrap_err();
+            assert_eq!(
+                err.send,
+                freecut_cloud::transport::SendState::NotSent,
+                "{}",
+                String::from_utf8_lossy(&body)
+            );
+        }
+        assert!(fake.requests().is_empty());
+        // One object still goes.
+        let one = HttpRequest::post_json(
+            ENDPOINT,
+            json!({"jsonrpc": "2.0", "id": 1, "method": "ping"})
+                .to_string()
+                .into_bytes(),
+            freecut_cloud::transport::CallLimits::READ,
+        )
+        .with_bearer(Secret::new("t1"));
+        assert!(recorder.send(one, &CancelToken::new()).is_ok());
+        assert_eq!(fake.requests().len(), 1);
     }
 
     #[test]
