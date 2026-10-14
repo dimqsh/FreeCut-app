@@ -138,13 +138,15 @@ Feature flags:
 
 | Crate | Feature | Enables | Default |
 |---|---|---|---|
-| `freecut-cloud` | `http` | `ureq` (blocking, rustls; the same version as the assistant and C49's downloader), `sha2`, the real transport and OAuth endpoints | on in `freecut-app`'s dependency; **off** for `cargo test -p freecut-cloud` |
+| `freecut-cloud` | `http` | `ureq` (blocking, rustls with ring and the platform verifier; the same version as the assistant and C49's downloader), `rustls` (to hand `ureq` the ring provider), the real transport and OAuth endpoints. PKCE (`sha2`, `base64`, `getrandom`) and `url` are always built | on in `freecut-app`'s dependency; **off** for `cargo test -p freecut-cloud` |
 | `freecut-app` | `cloud` | the Preferences section, Generate tab, worker | on (runtime switch still **off** by default, CG-001); a distributor may build without it |
 
-New third-party crates, licences confirmed at adoption: `ureq`, `sha2`, `base64` and `rand`
-(PKCE verifier and state; or `getrandom` alone), `url`, `uuid` (local run ids),
-`keyring` (shared with AS-003), `open` or the platform's URL opener for the browser. All are
-MIT/Apache-2.0 today. No async runtime (README §2.1).
+New third-party crates, licences confirmed at adoption (README §4.2): `ureq`, `rustls`, `sha2`,
+`base64` and `getrandom` (PKCE verifier and state; no `rand`), `url`; in Phase B `uuid` (local
+run ids), `keyring` (shared with AS-003), `open` or the platform's URL opener for the browser.
+They are MIT/Apache-2.0, except that `rustls` is Apache-2.0 OR ISC OR MIT and its TLS stack
+brings ISC (`ring` is Apache-2.0 AND ISC; `rustls-webpki`, `untrusted`) and BSD-3-Clause
+(`subtle`); README §4.3 lists both as compatible. No async runtime (README §2.1).
 
 ### 2.4 Proposed CLAUDE.md lines (owner approval required)
 

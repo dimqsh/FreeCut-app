@@ -1011,8 +1011,10 @@ Only crates whose version and license a study checked are listed (plus the fixed
 | `rubberband` | 0.1.5 | GPL-2.0-or-later | only as an optional engine; see licence notes |
 | `bungee-rs` | 0.1.1 | MPL-2.0 | benchmark candidate for keep-pitch |
 | `whisper-rs` (+ `whisper-rs-sys`) | =0.16.0 (=0.15.0, bundles whisper.cpp 1.8.3) | Unlicense (whisper.cpp MIT) | captions slice CS2: `freecut-analysis` feature `ml-whisper` (C47); C++ build with CMake; features `metal` on macOS, `tracing_backend`; `vulkan` only in release builds that have the SDK |
-| `ureq` | 3.4.2 | MIT OR Apache-2.0 | model downloads in the app (C49, CS2) and the assistant's `http` feature (C45); rustls TLS; MSRV 1.85 |
-| `sha2` | 0.11.1 | MIT OR Apache-2.0 | model file verification in `freecut-analysis` (C49, CS2); MSRV 1.88 |
+| `ureq` (`rustls-no-provider`, `platform-verifier`) | =3.4.2 | MIT OR Apache-2.0 | model downloads in the app (C49, CS2), the assistant's `http` feature (C45) and `freecut-cloud`'s `http` feature (cloud-generation.md §2.3); rustls TLS with ring and the platform's certificate verifier, no bundled roots; MSRV 1.85 |
+| `rustls` (`ring`, no default features) | =0.23.45 | Apache-2.0 OR ISC OR MIT | `freecut-cloud`'s `http` feature: hands `ureq` the ring provider and names certificate errors; same version as `ureq`'s. Brings `ring` (Apache-2.0 AND ISC), `rustls-webpki` and `untrusted` (ISC); MSRV 1.71 |
+| `sha2` | 0.11.1 | MIT OR Apache-2.0 | model file verification in `freecut-analysis` (C49, CS2); PKCE S256 in `freecut-cloud`; MSRV 1.88 |
+| `getrandom` | 0.4.3 | MIT OR Apache-2.0 | `freecut-cloud`: PKCE verifier and OAuth state from the OS generator; MSRV 1.85 |
 
 The 2026-10-12 review added `rfd`, `pollster` (as a normal dependency), `tracing-subscriber`,
 `tracing-appender`, `sysinfo`, `fs4`, `fluent-bundle`, `fluent-langneg` and `unic-langid`; their
@@ -1023,8 +1025,9 @@ example `cargo-deny`) is still chosen and verified at M0.
 ### 4.3 License review for GPL-3.0-or-later
 
 - **Compatible without remarks:** MIT, Apache-2.0 (GPLv3 is compatible with Apache-2.0),
-  BSD-1/3-Clause, Zlib, BSL-1.0, CC0, Unicode-3.0, Unlicense, MIT-0. Keep their notices in the
-  generated third-party notice file.
+  BSD-1/3-Clause, ISC (`ring`, `rustls-webpki`, `untrusted`; one of `rustls`'s options), Zlib,
+  BSL-1.0, CC0, Unicode-3.0, Unlicense, MIT-0. Keep their notices in the generated third-party
+  notice file.
 - **WTFPL** (`ffmpeg-next`, `ffmpeg-sys-next`): permissive and compatible. The wrapper is
   community-maintained, so all use stays behind `freecut_media::av` (`rsmpeg` and
   `ffmpeg-the-third` are the fallback plans).
