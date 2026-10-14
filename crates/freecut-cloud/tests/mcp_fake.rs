@@ -1169,6 +1169,74 @@ fn unreadable_answers_keep_the_job_ids_they_name() {
     assert!(p.guard().is_blocked("generate_image"));
 }
 
+/// R5: a refusal that names a job is never "rejected": whether the id is in
+/// a plain-text or JSON tool error, in any content item, or in a JSON-RPC
+/// error's data, even with a code that otherwise proves nothing ran. A cost
+/// check that names one reports the run.
+#[test]
+fn refusals_that_name_a_job_are_never_rejected() {
+    let disposition = |fault: Fault| {
+        let fake = paid_fake();
+        let c = mcp_client(&fake, token("t1"));
+        c.initialize(&CancelToken::new()).unwrap();
+        fake.push_fault(fault);
+        submit_disposition(&submit(&c).unwrap_err())
+    };
+    for fault in [
+        Fault::ToolError(format!("Job {JOB} failed: model overloaded")),
+        Fault::ToolError(format!("{{\"error\":\"busy\",\"job_id\":\"{JOB}\"}}")),
+        Fault::RpcErrorData(-32602, "Invalid params".into(), json!({"job_id": JOB})),
+        Fault::RpcError(-32600, format!("request {JOB} was already queued")),
+    ] {
+        let d = disposition(fault.clone());
+        assert!(
+            matches!(&d, SubmitError::OutcomeUnknown { job_ids, .. } if job_ids == &[JOB]),
+            "{fault:?} gave {d:?}"
+        );
+    }
+    // Without an id they stay refusals.
+    assert!(matches!(
+        disposition(Fault::ToolError("NSFW content".into())),
+        SubmitError::Rejected(_)
+    ));
+    assert!(matches!(
+        disposition(Fault::RpcErrorData(
+            -32602,
+            "Invalid params".into(),
+            json!({"field": "x"})
+        )),
+        SubmitError::Rejected(_)
+    ));
+    // An id in a later text item of an error result.
+    let err = McpError::Tool {
+        message: "failed".into(),
+        structured: None,
+        texts: vec!["failed".into(), format!("see job {JOB}")],
+    };
+    assert_eq!(err.job_ids(), vec![JOB]);
+
+    // Cost checks: a refusal or an answer naming a job is a started run.
+    for reply in [
+        ToolReply::Error(format!("Job {JOB} failed")),
+        ToolReply::Json(json!({"cost": {"credits": 2}, "note": format!("queued {JOB}")})),
+    ] {
+        let fake = fake_higgsfield();
+        let reply = std::sync::Mutex::new(Some(reply));
+        fake.on_tool("generate_image", move |_| {
+            reply
+                .lock()
+                .unwrap()
+                .take()
+                .unwrap_or(ToolReply::Json(json!({})))
+        });
+        let (p, _) = provider(&fake, token("t1"));
+        match p.quote(&image_op(), &CancelToken::new()).unwrap() {
+            QuoteOutcome::StartedRun(run) => assert_eq!(run.job_ids, vec![JOB]),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),
@@ -1185,6 +1253,23 @@ fn fault_strategy() -> impl Strategy<Value = Fault> {
             "{{\"jobs\":[{{\"job_id\":\"{JOB}\""
         ))),
         Just(Fault::CutStreamWith(format!("queued {JOB}, then"))),
+        Just(Fault::ToolError("NSFW content".into())),
+        Just(Fault::ToolError(format!(
+            "Job {JOB} failed: model overloaded"
+        ))),
+        Just(Fault::ToolError(format!(
+            "{{\"error\":\"busy\",\"job_id\":\"{JOB}\"}}"
+        ))),
+        Just(Fault::RpcErrorData(
+            -32602,
+            "Invalid params".into(),
+            json!({"job_id": JOB})
+        )),
+        Just(Fault::RpcErrorData(
+            -32603,
+            "Internal error".into(),
+            json!({"field": "x"})
+        )),
         Just(Fault::RpcError(-32603, "Internal error".into())),
         Just(Fault::RpcError(-32000, "Server error".into())),
         Just(Fault::RpcError(-32602, "Invalid params".into())),
@@ -1201,7 +1286,11 @@ fn hides_the_outcome(fault: &Fault) -> bool {
         | Fault::GarbageWith(_)
         | Fault::CutStreamWith(_) => true,
         Fault::Status(status, _) => *status >= 500,
-        Fault::RpcError(code, _) => !freecut_cloud::error::REJECTING_RPC_CODES.contains(code),
+        Fault::RpcError(code, _) | Fault::RpcErrorData(code, _, _) => {
+            !freecut_cloud::error::REJECTING_RPC_CODES.contains(code)
+        }
+        // A readable refusal; one naming a job is checked by `names_job`.
+        Fault::ToolError(_) => false,
         Fault::Refuse => false,
     }
 }
@@ -1212,7 +1301,10 @@ const JOB: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 /// Faults whose answer names [`JOB`].
 fn names_job(fault: &Fault) -> bool {
     match fault {
-        Fault::GarbageWith(text) | Fault::CutStreamWith(text) => text.contains(JOB),
+        Fault::GarbageWith(text) | Fault::CutStreamWith(text) | Fault::ToolError(text) => {
+            text.contains(JOB)
+        }
+        Fault::RpcErrorData(_, _, data) => data.to_string().contains(JOB),
         _ => false,
     }
 }

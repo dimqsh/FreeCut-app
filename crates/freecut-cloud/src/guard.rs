@@ -13,9 +13,10 @@
 //!    `get_cost` as a boolean ([`schema_offers_get_cost`]);
 //! 3. checks are retried only while nothing was sent (the MCP client's
 //!    preflight class);
-//! 4. an answer that carries job ids is a run that started
-//!    ([`job_ids_in`]); its tool's checks stop until restart
-//!    ([`PreflightGuard`]).
+//! 4. an answer that carries job ids is a run that started; its tool's
+//!    checks stop until restart ([`PreflightGuard`]). Every path finds ids
+//!    with the same scan, [`uuids_in_text`], over all of the answer
+//!    (review R5).
 
 use std::collections::BTreeSet;
 use std::sync::{Mutex, PoisonError};
@@ -107,29 +108,15 @@ pub fn schema_offers_get_cost(input_schema: &Value) -> bool {
         .any(|t| t == "boolean")
 }
 
-/// Every UUID-shaped string anywhere in a cost-check answer. A cost answer
-/// (`{"cost": {...}}`) carries none; the service's job ids are UUIDs, so any
-/// UUID means a job may have been created and the answer is treated as a
-/// started run.
+/// Every job id in a JSON answer: the same text scan as for raw answers, so
+/// an id inside a longer string ("queued <id>") counts too (review R5).
 pub fn job_ids_in(answer: &Value) -> Vec<String> {
-    let mut out = Vec::new();
-    collect_uuids(answer, &mut out);
-    out.sort();
-    out.dedup();
-    out
+    uuids_in_text(&answer.to_string())
 }
 
-fn collect_uuids(value: &Value, out: &mut Vec<String>) {
-    match value {
-        Value::String(s) if is_uuid(s) => out.push(s.to_ascii_lowercase()),
-        Value::Array(items) => items.iter().for_each(|v| collect_uuids(v, out)),
-        Value::Object(map) => map.values().for_each(|v| collect_uuids(v, out)),
-        _ => {}
-    }
-}
-
-/// Every UUID-shaped token in raw text, lower-case and deduplicated: used on
-/// late answers that may not parse, so no job id in them is lost.
+/// Every UUID-shaped token in raw text, lower-case and deduplicated: the one
+/// scan for job ids, used on answers that parse and on those that do not,
+/// so no job id is lost.
 pub fn uuids_in_text(text: &str) -> Vec<String> {
     let mut out: Vec<String> = text
         .split(|c: char| !(c.is_ascii_hexdigit() || c == '-'))
@@ -258,6 +245,13 @@ mod tests {
         assert_eq!(
             job_ids_in(&answer),
             vec!["0b4f6d2a-1111-4222-8333-944455556666"]
+        );
+        // Inside a longer string too.
+        assert_eq!(
+            job_ids_in(
+                &json!({"message": "queued 7c9e6679-7425-40de-944b-e07fc1f90ae7, then failed"})
+            ),
+            vec!["7c9e6679-7425-40de-944b-e07fc1f90ae7"]
         );
     }
 

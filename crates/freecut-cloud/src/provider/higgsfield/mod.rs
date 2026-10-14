@@ -285,7 +285,7 @@ impl GenerationProvider for HiggsfieldProvider {
             Ok(output) => output,
             Err(e) => {
                 return match submit_disposition(&e) {
-                    // An unreadable answer that still named jobs (review R4).
+                    // An answer that named jobs, readable or not (R4, R5).
                     SubmitError::OutcomeUnknown { job_ids, .. } if !job_ids.is_empty() => {
                         Ok(started_run(job_ids))
                     }
@@ -294,15 +294,16 @@ impl GenerationProvider for HiggsfieldProvider {
                 };
             }
         };
+        // Every content item, not only the one read as the answer (R5).
+        let job_ids = output.job_ids();
+        if !job_ids.is_empty() {
+            return Ok(started_run(job_ids));
+        }
         let Some(answer) = output.value() else {
             return Ok(possibly_started(CloudError::Protocol {
                 detail: "empty cost answer".into(),
             }));
         };
-        let job_ids = guard::job_ids_in(&answer);
-        if !job_ids.is_empty() {
-            return Ok(started_run(job_ids));
-        }
         match parse_quote_answer(&answer, call.tool.name(), request.arguments()) {
             Ok(outcome) => Ok(outcome),
             Err(cause) => Ok(possibly_started(cause)),

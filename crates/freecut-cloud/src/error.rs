@@ -8,7 +8,6 @@
 
 use serde_json::Value;
 
-use crate::guard::job_ids_in;
 use crate::mcp::McpError;
 use crate::transport::{SendState, TransportErrorKind};
 
@@ -222,6 +221,7 @@ pub fn classify(err: &McpError) -> CloudError {
         McpError::Tool {
             message,
             structured,
+            ..
         } => classify_service_message(message, structured.as_ref()),
         McpError::Protocol { detail, .. } => CloudError::Protocol {
             detail: detail.clone(),
@@ -269,6 +269,15 @@ pub const REJECTING_RPC_CODES: &[i64] = &[-32700, -32600, -32601, -32602];
 /// nothing ran are `Rejected`; everything else is `OutcomeUnknown`, with the
 /// classified reason kept for the message.
 pub fn submit_disposition(err: &McpError) -> SubmitError {
+    // An answer that names job ids may have started them, whatever else it
+    // says: never "rejected" or "not sent" (review R5).
+    let job_ids = err.job_ids();
+    if !job_ids.is_empty() {
+        return SubmitError::OutcomeUnknown {
+            cause: classify(err),
+            job_ids,
+        };
+    }
     let unknown = |cause| SubmitError::OutcomeUnknown {
         cause,
         job_ids: Vec::new(),
@@ -299,19 +308,9 @@ pub fn submit_disposition(err: &McpError) -> SubmitError {
                 unknown(classify(err))
             }
         }
-        // The tool answered with an error result: the service explains a
-        // refusal. One that names job ids may have created them anyway.
-        McpError::Tool { structured, .. } => {
-            let job_ids = structured.as_ref().map(job_ids_in).unwrap_or_default();
-            if !job_ids.is_empty() {
-                SubmitError::OutcomeUnknown {
-                    cause: classify(err),
-                    job_ids,
-                }
-            } else {
-                SubmitError::Rejected(classify(err))
-            }
-        }
+        // The tool answered with an error result that names no job: the
+        // service explains a refusal.
+        McpError::Tool { .. } => SubmitError::Rejected(classify(err)),
         McpError::Http { status, .. } => {
             if *status >= 500 {
                 // A server or gateway error says nothing about whether the
@@ -322,12 +321,8 @@ pub fn submit_disposition(err: &McpError) -> SubmitError {
             }
         }
         // An answer that cannot be read after a paid request was sent is
-        // always an unknown outcome, never a failure; the part that arrived
-        // may name job ids (review R4).
-        McpError::Protocol { job_ids, .. } => SubmitError::OutcomeUnknown {
-            cause: classify(err),
-            job_ids: job_ids.clone(),
-        },
+        // always an unknown outcome, never a failure.
+        McpError::Protocol { .. } => unknown(classify(err)),
     }
 }
 
@@ -623,14 +618,16 @@ mod tests {
                 message: "failed after queueing".into(),
                 structured: Some(
                     serde_json::json!({"job_id": "0b4f6d2a-1111-4222-8333-944455556666"})
-                )
+                ),
+                texts: vec![]
             }),
             OutcomeUnknown { .. }
         ));
         assert!(matches!(
             d(&McpError::Tool {
                 message: "NSFW".into(),
-                structured: None
+                structured: None,
+                texts: vec!["NSFW".into()]
             }),
             Rejected(CloudError::ContentRefused { .. })
         ));

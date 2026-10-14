@@ -273,6 +273,8 @@ pub enum McpError {
         message: String,
         /// Structured content, or the text parsed as JSON.
         structured: Option<Value>,
+        /// Every text content item, for the job-id scan (review R5).
+        texts: Vec<String>,
     },
     /// An answer that cannot be read.
     #[error("unreadable answer: {detail}")]
@@ -318,6 +320,40 @@ impl McpError {
             detail: detail.into(),
             job_ids: Vec::new(),
         }
+    }
+
+    /// Every job id the failed exchange's answer names (review R5), found
+    /// with one scan ([`guard::uuids_in_text`]) wherever the service may put
+    /// them: every content item of a tool error (structured or text, JSON or
+    /// not), a JSON-RPC error's message and data, the excerpt of a server
+    /// error (5xx), and the part of an unreadable answer that arrived. A
+    /// failure that names a job may have started it, so it is never
+    /// reported as rejected or not sent.
+    pub fn job_ids(&self) -> Vec<String> {
+        let text = match self {
+            McpError::Tool {
+                message,
+                structured,
+                texts,
+            } => {
+                let mut all = texts.join("\n");
+                all.push('\n');
+                all.push_str(message);
+                if let Some(value) = structured {
+                    all.push('\n');
+                    all.push_str(&value.to_string());
+                }
+                all
+            }
+            McpError::Rpc(e) => match &e.data {
+                Some(data) => format!("{}\n{data}", e.message),
+                None => e.message.clone(),
+            },
+            McpError::Http { status, excerpt } if *status >= 500 => excerpt.clone(),
+            McpError::Protocol { job_ids, .. } => return job_ids.clone(),
+            _ => return Vec::new(),
+        };
+        guard::uuids_in_text(&text)
     }
 
     /// For an unreadable answer, the job ids in `read`, the part of it that
@@ -390,6 +426,17 @@ pub struct ToolOutput {
 }
 
 impl ToolOutput {
+    /// Every job id the result names, in its structured content or any text
+    /// item (review R5).
+    pub fn job_ids(&self) -> Vec<String> {
+        let mut all = self.texts.join("\n");
+        if let Some(value) = &self.structured {
+            all.push('\n');
+            all.push_str(&value.to_string());
+        }
+        guard::uuids_in_text(&all)
+    }
+
     /// The result as JSON (§4.3): `structuredContent`, else the first text
     /// parsed as JSON, else that text as a string.
     pub fn value(&self) -> Option<Value> {
@@ -1363,6 +1410,7 @@ fn parse_tool_result(result: Value) -> Result<ToolOutput, McpError> {
         return Err(McpError::Tool {
             message: output.texts.first().cloned().unwrap_or_default(),
             structured: output.value().filter(Value::is_object),
+            texts: output.texts,
         });
     }
     Ok(output)
@@ -1392,6 +1440,30 @@ mod tests {
         );
     }
 
+    /// R5: job ids count in every content item, not only the one read as
+    /// the result.
+    #[test]
+    fn job_ids_are_found_in_every_content_item() {
+        let job = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+        let output = ToolOutput {
+            structured: None,
+            texts: vec![r#"{"cost":{"credits":2}}"#.into(), format!("queued {job}")],
+        };
+        assert_eq!(output.value(), Some(json!({"cost": {"credits": 2}})));
+        assert_eq!(output.job_ids(), vec![job]);
+        let rpc = McpError::Rpc(RpcError {
+            code: -32602,
+            message: "Invalid params".into(),
+            data: Some(json!({"jobs": [{"id": job.to_uppercase()}]})),
+        });
+        assert_eq!(rpc.job_ids(), vec![job]);
+        let gateway = McpError::Http {
+            status: 502,
+            excerpt: format!("upstream failed for {job}"),
+        };
+        assert_eq!(gateway.job_ids(), vec![job]);
+    }
+
     #[test]
     fn tool_errors_carry_the_message() {
         let err = parse_tool_result(json!({
@@ -1400,7 +1472,7 @@ mod tests {
         }))
         .unwrap_err();
         assert!(
-            matches!(err, McpError::Tool { ref message, structured: None } if message.starts_with("Invalid request"))
+            matches!(err, McpError::Tool { ref message, structured: None, .. } if message.starts_with("Invalid request"))
         );
     }
 

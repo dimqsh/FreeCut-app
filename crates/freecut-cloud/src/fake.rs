@@ -75,6 +75,10 @@ pub enum Fault {
     CutStreamWith(String),
     /// A JSON-RPC error answer with this code and message.
     RpcError(i64, String),
+    /// A JSON-RPC error answer with this code, message and `data`.
+    RpcErrorData(i64, String, Value),
+    /// A tool result with `isError: true` and this text (JSON or not).
+    ToolError(String),
 }
 
 /// A scripted tool reply.
@@ -629,6 +633,22 @@ fn fault_response(fault: &Fault, rec: &Recorded) -> Result<HttpResponse, Transpo
         Fault::RpcError(code, message) => {
             let id = rec.body.get("id").cloned().unwrap_or(Value::Null);
             Ok(json_response(200, &rpc_error(&id, *code, message)))
+        }
+        Fault::RpcErrorData(code, message, data) => {
+            let id = rec.body.get("id").cloned().unwrap_or(Value::Null);
+            let mut answer = rpc_error(&id, *code, message);
+            answer["error"]["data"] = data.clone();
+            Ok(json_response(200, &answer))
+        }
+        Fault::ToolError(text) => {
+            let id = rec.body.get("id").cloned().unwrap_or(Value::Null);
+            Ok(json_response(
+                200,
+                &rpc_result(
+                    &id,
+                    json!({"content": [{"type": "text", "text": text}], "isError": true}),
+                ),
+            ))
         }
         Fault::Refuse => Err(TransportError::not_sent(TransportErrorKind::Connect, "connection refused (fake)")),
         Fault::DropAfterSend => Err(TransportError::maybe_sent(TransportErrorKind::Io, "connection reset after sending (fake)")),
