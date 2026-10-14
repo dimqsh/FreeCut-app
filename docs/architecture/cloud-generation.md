@@ -533,7 +533,9 @@ cancel)`, the only path that may set `get_cost: true` (§4.7); paid tools go thr
 `ScriptedProvider` (`freecut_cloud::provider::scripted`, feature `test-support`, enabled from
 dev-dependencies only) implements the trait from a script for app and assistant tests: each
 method returns its next scripted answer, a cancelled token wins, a missing step is an error,
-and every call is recorded. A second service (for example the REST key pair, or another vendor) is a second
+and every call is recorded. Any build of the cloud crate's tests or examples turns
+`test-support` on (its self dev-dependency), so CI also lints the crate without dev targets,
+with and without `http`, the configuration the app ships (review R41). A second service (for example the REST key pair, or another vendor) is a second
 implementation plus its own catalogue mapping; the UI, job model, ledger, recipe and disclosure
 do not change.
 

@@ -364,3 +364,43 @@ fn the_app_build_enables_no_test_support_feature() {
         "freecut-app's normal build enables test-support: {enabled:?}"
     );
 }
+
+/// CI lints `freecut-cloud` as the app will build it, without dev targets
+/// (review R41). Building tests or examples turns on `test-support` through
+/// the crate's self dev-dependency (resolver 3 unifies it), so only a run
+/// without them compiles the shipping configuration, where `fake` and
+/// `provider::scripted` do not exist.
+#[test]
+fn ci_lints_the_cloud_crate_without_dev_targets() {
+    let ci =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/ci.yml");
+    let ci = std::fs::read_to_string(ci).unwrap();
+    let shipping = |features: Option<&str>| {
+        ci.lines().any(|line| {
+            let line = line.trim().trim_start_matches("run:").trim();
+            line.starts_with("cargo clippy -p freecut-cloud ")
+                && line.ends_with("-- -D warnings")
+                && ![
+                    "--all-targets",
+                    "--tests",
+                    "--examples",
+                    "--benches",
+                    "test-support",
+                ]
+                .iter()
+                .any(|banned| line.contains(banned))
+                && match features {
+                    Some(f) => line.contains(f),
+                    None => !line.contains("--features"),
+                }
+        })
+    };
+    assert!(
+        shipping(None),
+        "no CI lint of freecut-cloud without features or dev targets"
+    );
+    assert!(
+        shipping(Some("--features http")),
+        "no CI lint of freecut-cloud with http and without dev targets"
+    );
+}
