@@ -291,7 +291,7 @@ pub fn submit_disposition(err: &McpError, sent: &Value) -> SubmitError {
             SendState::NotSent => SubmitError::NotSent(classify(err)),
             SendState::MaybeSent => unknown(CloudError::NoAnswer),
         },
-        McpError::Cancelled { send } => match send {
+        McpError::Cancelled { send, .. } => match send {
             SendState::NotSent => SubmitError::NotSent(CloudError::Cancelled),
             SendState::MaybeSent => unknown(CloudError::NoAnswer),
         },
@@ -554,13 +554,15 @@ mod tests {
         ));
         assert!(matches!(
             d(&McpError::Cancelled {
-                send: SendState::MaybeSent
+                send: SendState::MaybeSent,
+                job_ids: vec![]
             }),
             OutcomeUnknown { .. }
         ));
         assert!(matches!(
             d(&McpError::Cancelled {
-                send: SendState::NotSent
+                send: SendState::NotSent,
+                job_ids: vec![]
             }),
             NotSent(_)
         ));

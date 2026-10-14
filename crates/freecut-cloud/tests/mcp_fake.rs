@@ -1892,6 +1892,71 @@ fn auth_and_session_refusals_that_name_a_job_keep_it() {
     assert!(p.guard().is_blocked("generate_image"));
 }
 
+/// Answers the paid call with a stream that primes `id: ev-1`, sends a
+/// progress event naming [`JOB`], and ends before the response.
+#[derive(Debug)]
+struct EndsAfterProgress(freecut_cloud::fake::FakeService);
+
+impl HttpTransport for EndsAfterProgress {
+    fn send(
+        &self,
+        request: HttpRequest,
+        cancel: &CancelToken,
+    ) -> Result<HttpResponse, TransportError> {
+        if !String::from_utf8_lossy(&request.body).contains("generate_image") {
+            return self.0.send(request, cancel);
+        }
+        let progress = json!({"jsonrpc": "2.0", "method": "notifications/progress",
+            "params": {"progressToken": 1, "progress": 1, "message": format!("queued {JOB}")}});
+        Ok(HttpResponse::new(
+            200,
+            vec![("content-type".into(), "text/event-stream".into())],
+            format!("id: ev-1\nretry: 5\ndata:\n\nevent: message\ndata: {progress}\n\n")
+                .into_bytes(),
+        ))
+    }
+}
+
+/// Fires the cancel token when the client waits to resume.
+#[derive(Debug)]
+struct CancelsOnWait(CancelToken);
+
+impl freecut_cloud::transport::Waiter for CancelsOnWait {
+    fn wait(&self, _: std::time::Duration, _: &CancelToken) -> bool {
+        self.0.cancel();
+        false
+    }
+
+    fn jitter(&self) -> u32 {
+        0
+    }
+}
+
+/// R37: a stream ends after naming a job, and the user cancels during the
+/// resume wait: the call is Outcome unknown with that job, not without it.
+#[test]
+fn a_cancel_while_resuming_keeps_the_job_ids_already_read() {
+    let fake = paid_fake();
+    let cancel = CancelToken::new();
+    let c = McpClient::new(
+        freecut_cloud::provider::higgsfield::ENDPOINT,
+        Arc::new(EndsAfterProgress(fake.clone())),
+        token("t1"),
+        Arc::new(CancelsOnWait(cancel.clone())),
+        "0.1.0",
+    );
+    c.initialize(&CancelToken::new()).unwrap();
+    let err = c
+        .call_paid(&allow::GENERATE_IMAGE, image_args(), &run_tag(), &cancel)
+        .unwrap_err();
+    assert!(matches!(err, McpError::Cancelled { .. }), "{err:?}");
+    let d = submit_disposition(&err, &image_args());
+    assert!(
+        matches!(&d, SubmitError::OutcomeUnknown { job_ids, .. } if job_ids == &[JOB]),
+        "{d:?}"
+    );
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),

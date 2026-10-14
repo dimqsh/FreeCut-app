@@ -306,6 +306,9 @@ pub enum McpError {
     Cancelled {
         /// Whether the request may have been sent.
         send: SendState,
+        /// Job ids in the part of the answer read before the cancel (review
+        /// R37).
+        job_ids: Vec<String>,
     },
     /// The preflight guard refused to send.
     #[error("preflight guard: {0}")]
@@ -320,7 +323,7 @@ impl McpError {
     pub fn send_state(&self) -> SendState {
         match self {
             McpError::Transport(e) => e.send,
-            McpError::Cancelled { send } => *send,
+            McpError::Cancelled { send, .. } => *send,
             McpError::SignIn(_) | McpError::Guard(_) | McpError::BeforeSending(_) => {
                 SendState::NotSent
             }
@@ -368,7 +371,9 @@ impl McpError {
             McpError::Http {
                 excerpt, job_ids, ..
             } => (excerpt.clone(), job_ids),
-            McpError::Protocol { job_ids, .. } => (String::new(), job_ids),
+            McpError::Protocol { job_ids, .. } | McpError::Cancelled { job_ids, .. } => {
+                (String::new(), job_ids)
+            }
             _ => return Vec::new(),
         };
         let mut ids = guard::uuids_in_text(&text);
@@ -387,6 +392,7 @@ impl McpError {
 
     fn with_job_ids(mut self, ids: Vec<String>) -> McpError {
         if let McpError::Protocol { job_ids, .. }
+        | McpError::Cancelled { job_ids, .. }
         | McpError::Tool { job_ids, .. }
         | McpError::Rpc { job_ids, .. }
         | McpError::Http { job_ids, .. } = &mut self
@@ -949,6 +955,7 @@ impl McpClient {
             if cancel.is_cancelled() {
                 return Err(McpError::Cancelled {
                     send: SendState::NotSent,
+                    job_ids: Vec::new(),
                 });
             }
             let err = match self.send_once(out, class, limits, cancel) {
@@ -989,6 +996,7 @@ impl McpClient {
                     if !self.waiter.wait(delay, cancel) {
                         return Err(McpError::Cancelled {
                             send: SendState::NotSent,
+                            job_ids: Vec::new(),
                         });
                     }
                 }
@@ -1046,7 +1054,8 @@ impl McpClient {
             let after_sending = matches!(
                 err,
                 McpError::Cancelled {
-                    send: SendState::MaybeSent
+                    send: SendState::MaybeSent,
+                    ..
                 }
             ) || matches!(err, McpError::Transport(e) if e.kind == TransportErrorKind::Cancelled && e.send == SendState::MaybeSent);
             if after_sending && out.kind == Kind::Request && !is_initialize {
@@ -1227,6 +1236,7 @@ impl McpClient {
             if cancel.is_cancelled() {
                 return Err(McpError::Cancelled {
                     send: SendState::MaybeSent,
+                    job_ids: Vec::new(),
                 });
             }
             let n = match body.read(&mut chunk) {
@@ -1235,6 +1245,7 @@ impl McpClient {
                 Err(_) if cancel.is_cancelled() => {
                     return Err(McpError::Cancelled {
                         send: SendState::MaybeSent,
+                        job_ids: Vec::new(),
                     });
                 }
                 // A stream that broke (a cut chunked body, a reset) with an
@@ -1267,6 +1278,7 @@ impl McpClient {
                 if !self.waiter.wait(delay, cancel) {
                     return Err(McpError::Cancelled {
                         send: SendState::MaybeSent,
+                        job_ids: Vec::new(),
                     });
                 }
                 body = self.resume(&last, resume, cancel)?;
@@ -1382,6 +1394,7 @@ impl McpClient {
             Ok(response) => Err(lost(format!("HTTP {}", response.status))),
             Err(e) if e.kind == TransportErrorKind::Cancelled => Err(McpError::Cancelled {
                 send: SendState::MaybeSent,
+                job_ids: Vec::new(),
             }),
             Err(e) => Err(lost(e.to_string())),
         }
@@ -1555,6 +1568,7 @@ fn body_error(e: BodyError) -> McpError {
     match e {
         BodyError::Cancelled => McpError::Cancelled {
             send: SendState::MaybeSent,
+            job_ids: Vec::new(),
         },
         other => McpError::protocol(other.to_string()),
     }

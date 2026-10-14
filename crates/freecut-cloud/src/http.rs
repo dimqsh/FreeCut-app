@@ -473,9 +473,11 @@ impl Read for ChannelReader {
                     self.pos = 0;
                 }
                 // The connection's last word: nothing more will arrive on it,
-                // so what the caller read is all there is (review R16).
+                // so what the caller read is all there is (review R16). If the
+                // token has fired, the caller stops here as cancelled, so the
+                // copy goes to the late sink after all (review R37).
                 Ok(Err(e)) => {
-                    self.shared.decide(Reading::Finished);
+                    self.shared.decide(terminal_verdict(&self.cancel));
                     return Err(e);
                 }
                 Err(RecvTimeoutError::Timeout) => {}
@@ -485,6 +487,16 @@ impl Read for ChannelReader {
                 }
             }
         }
+    }
+}
+
+/// What a transport error that ends the body means for the late copy:
+/// read in full, unless the caller's token has fired.
+fn terminal_verdict(cancel: &CancelToken) -> Reading {
+    if cancel.is_cancelled() {
+        Reading::Abandoned
+    } else {
+        Reading::Finished
     }
 }
 
@@ -807,6 +819,17 @@ mod tests {
             Shared::new().verdict(Duration::from_millis(10)),
             Reading::Abandoned
         );
+    }
+
+    /// R37: a body that ends in an error after the token fired is
+    /// abandoned, so its copy reaches the late sink; without a cancel it was
+    /// read in full.
+    #[test]
+    fn a_broken_body_after_a_cancel_is_abandoned() {
+        let cancel = CancelToken::new();
+        assert_eq!(terminal_verdict(&cancel), Reading::Finished);
+        cancel.cancel();
+        assert_eq!(terminal_verdict(&cancel), Reading::Abandoned);
     }
 
     /// M3: the gate runs after the connection is up and stops the request

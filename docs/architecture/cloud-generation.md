@@ -1209,7 +1209,10 @@ Other notes:
   nor a refusal status that names no job. The bytes the caller did read are scanned too: an
   unreadable answer is *Outcome unknown* with the ids it named
   (`SubmitError::OutcomeUnknown { job_ids }`), and a cost check that named ids is a
-  `StartedRun`. The queue is in memory: until the ledger exists (H2), a late answer is kept
+  `StartedRun`. A cancel keeps them too (`McpError::Cancelled { job_ids }`), also one that
+  lands while a broken stream is being resumed; a transport error that ends a body after the
+  token fired counts as stopped, so the rest of that answer still goes to the late sink
+  (review R37). The queue is in memory: until the ledger exists (H2), a late answer is kept
   only while FreeCut runs; the worker drains it on every tick and before quitting (R9).
 - **Refreshed tokens the keychain refuses (§5.6, review SEC-3, R7)** are kept in memory and
   used: the stored refresh token may already be dead after rotation, and it is not sent again
