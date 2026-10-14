@@ -233,7 +233,17 @@ fn cloud_with_networking_has_no_ffmpeg_gpu_or_ui() {
         names.contains("ureq"),
         "the http feature brings the transport"
     );
-    for banned in ["ffmpeg-sys-next", "ffmpeg-next", "wgpu", "egui", "eframe"] {
+    // webpki-roots and webpki-root-certs bundle Mozilla's roots
+    // (CDLA-Permissive-2.0); FreeCut uses the platform verifier instead.
+    for banned in [
+        "ffmpeg-sys-next",
+        "ffmpeg-next",
+        "wgpu",
+        "egui",
+        "eframe",
+        "webpki-roots",
+        "webpki-root-certs",
+    ] {
         assert!(
             !names.contains(banned),
             "freecut-cloud --features http pulls in {banned}"
