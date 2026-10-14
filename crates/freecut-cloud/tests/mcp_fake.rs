@@ -1802,6 +1802,49 @@ fn an_unreviewed_model_is_refused_before_any_request() {
     assert!(fake.calls_to("generate_video").is_empty());
 }
 
+/// R31: on a stateless server a 404 is an ordinary error, not an expired
+/// session: no new handshake, nothing sent again; a paid call is Rejected.
+#[test]
+fn a_404_from_a_stateless_server_is_an_ordinary_error() {
+    let fake = paid_fake();
+    fake.set_sessions(false);
+    let c = mcp_client(&fake, token("t1"));
+    c.initialize(&CancelToken::new()).unwrap();
+    fake.push_fault(Fault::Status(404, "not found".into()));
+    let err = c
+        .call_tool(
+            &allow::MODELS_EXPLORE,
+            json!({"action": "list", "type": "image"}),
+            &CancelToken::new(),
+        )
+        .unwrap_err();
+    assert!(matches!(err, McpError::Http { status: 404, .. }), "{err:?}");
+    fake.push_fault(Fault::Status(404, "not found".into()));
+    let err = submit(&c).unwrap_err();
+    assert!(
+        matches!(
+            submit_disposition(&err, &image_args()),
+            SubmitError::Rejected(_)
+        ),
+        "{err:?}"
+    );
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+    let methods = methods(&fake);
+    assert_eq!(
+        methods.iter().filter(|m| *m == "initialize").count(),
+        1,
+        "{methods:?}"
+    );
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| *m == "call:models_explore")
+            .count(),
+        1,
+        "{methods:?}"
+    );
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),
@@ -1889,9 +1932,12 @@ proptest! {
         sse in any::<bool>(),
         expire in any::<bool>(),
         reject in any::<bool>(),
+        sessions in any::<bool>(),
     ) {
         use SubmitError::*;
         let fake = paid_fake();
+        // A stateless server, as Higgsfield's is (§15.1), or one with sessions.
+        fake.set_sessions(sessions);
         if sse {
             fake.set_stream(StreamMode::Sse { chunk: 5 });
         }
