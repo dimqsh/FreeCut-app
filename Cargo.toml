@@ -70,7 +70,8 @@ tracing = "0.1.44"
 # Grapheme and word segmentation (UAX #29) for text animation units.
 unicode-segmentation = "1.13.3"
 # Blocking HTTPS for freecut-cloud's `http` feature only: rustls with the
-# platform's certificate roots; HTTPS_PROXY is read from the environment.
+# platform's certificate roots. The transport sets the proxy itself (only
+# HTTPS_PROXY, never for loopback; `TransportConfig::proxy_from_env`).
 # `rustls-no-provider` keeps webpki-roots (bundled roots, unused) out; the
 # cloud transport passes ring as the crypto provider itself.
 # Pinned exactly: the cloud transport's send-state table matches its errors.

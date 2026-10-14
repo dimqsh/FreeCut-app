@@ -150,8 +150,10 @@ fn mcp_script(
 }
 
 fn client(url: &str) -> McpClient {
+    // No proxy: a runner's HTTPS_PROXY must not reroute loopback calls.
     let transport = UreqTransport::new(&TransportConfig {
         https_only: false,
+        proxy_from_env: false,
         ..TransportConfig::default()
     });
     McpClient::new(

@@ -331,9 +331,13 @@ Further transport rules for paid calls:
 - **Fresh connection.** Paid submissions use an agent with `max_idle_connections(0)`, so a stale
   pooled socket cannot turn an ordinary refusal into *Outcome unknown*. `ureq` does not retry
   `POST` on its own; a test with the loopback server asserts exactly one request per call.
-- **Proxy.** `HTTPS_PROXY` is honoured as in llm-editor.md §5.6; TLS uses rustls with the
-  platform's certificate roots (`RootCerts::PlatformVerifier`, ureq's `platform-verifier`
-  feature), as the assistant does.
+- **Proxy.** `HTTPS_PROXY` (or `https_proxy`) is honoured as in llm-editor.md §5.6, and only
+  that variable: every call is HTTPS, so `ALL_PROXY` and `HTTP_PROXY` are ignored. Loopback
+  hosts and `NO_PROXY` hosts connect directly; only `http://`/`https://` CONNECT proxies are
+  used (`ureq` is built without SOCKS). `TransportConfig::proxy_from_env` turns this off;
+  loopback tests do, so a CI runner's proxy variables cannot reroute them (review M12). TLS
+  uses rustls with the platform's certificate roots (`RootCerts::PlatformVerifier`, ureq's
+  `platform-verifier` feature), as the assistant does.
 
 ### 4.6 Schema drift
 

@@ -1,6 +1,7 @@
 //! The real HTTPS transport (feature `http`): `ureq` with rustls, the
-//! platform's certificate roots, and `HTTPS_PROXY` from the environment
-//! (architecture §4.5).
+//! platform's certificate roots, and, when the caller asks for it, the
+//! `HTTPS_PROXY` from the environment (architecture §4.5; see
+//! [`TransportConfig::proxy_from_env`]).
 //!
 //! `ureq` has phase timeouts but no way to wake a blocked read, so each call
 //! runs on a short-lived helper thread (§4.4). The caller waits on channels
@@ -29,11 +30,11 @@ use std::thread;
 use std::time::Duration;
 
 use freecut_media::cancel::CancelToken;
-use ureq::Agent;
 use ureq::config::Config;
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 use ureq::unversioned::resolver::DefaultResolver;
 use ureq::unversioned::transport::{ConnectionDetails, Connector, DefaultConnector, Transport};
+use ureq::{Agent, Proxy, ProxyProtocol};
 
 use crate::secret::Secret;
 use crate::transport::{
@@ -55,6 +56,15 @@ pub struct TransportConfig {
     pub https_only: bool,
     /// The `User-Agent` header.
     pub user_agent: String,
+    /// Use the proxy in `HTTPS_PROXY` (or `https_proxy`). On in the app;
+    /// off in tests, so a runner's proxy variables cannot reroute loopback
+    /// calls. Only that variable is read: every call is HTTPS, so
+    /// `ALL_PROXY` and `HTTP_PROXY` are ignored. Loopback hosts and the
+    /// hosts in `NO_PROXY` (or `no_proxy`) always connect directly. Only
+    /// `http://` and `https://` (CONNECT) proxies are used; `ureq` is built
+    /// without SOCKS, so another scheme, or a value that does not parse,
+    /// means a direct connection.
+    pub proxy_from_env: bool,
 }
 
 impl Default for TransportConfig {
@@ -62,8 +72,51 @@ impl Default for TransportConfig {
         TransportConfig {
             https_only: true,
             user_agent: format!("FreeCut/{}", env!("CARGO_PKG_VERSION")),
+            proxy_from_env: true,
         }
     }
+}
+
+/// Hosts that never go through a proxy, as `ureq` sees them (an IPv6
+/// literal keeps its brackets).
+const LOOPBACK: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
+
+/// The proxy for `config`, reading variables through `var` (review M12; the
+/// rules are on [`TransportConfig::proxy_from_env`]).
+fn proxy_for(config: &TransportConfig, var: impl Fn(&str) -> Option<String>) -> Option<Proxy> {
+    if !config.proxy_from_env {
+        return None;
+    }
+    let value = var("HTTPS_PROXY").or_else(|| var("https_proxy"))?;
+    let parsed = Proxy::new(value.trim()).ok()?;
+    if !matches!(
+        parsed.protocol(),
+        ProxyProtocol::Http | ProxyProtocol::Https
+    ) {
+        return None;
+    }
+    // Rebuilt, because `Proxy::new` takes no bypass list.
+    let mut builder = Proxy::builder(parsed.protocol())
+        .host(parsed.host())
+        .port(parsed.port())
+        .resolve_target(parsed.resolve_target());
+    if let Some(user) = parsed.username() {
+        builder = builder.username(user);
+        if let Some(password) = parsed.password() {
+            builder = builder.password(password);
+        }
+    }
+    let no_proxy = var("NO_PROXY")
+        .or_else(|| var("no_proxy"))
+        .unwrap_or_default();
+    let bypass = LOOPBACK
+        .into_iter()
+        .chain(no_proxy.split(',').map(str::trim))
+        .filter(|host| !host.is_empty());
+    for host in bypass {
+        builder = builder.no_proxy(host);
+    }
+    builder.build().ok()
 }
 
 /// Blocking HTTPS over `ureq`.
@@ -83,7 +136,7 @@ fn agent_config(config: &TransportConfig, idle: usize) -> Config {
         // A redirect comes back as its own 3xx answer, not an error.
         .max_redirects_will_error(false)
         .user_agent(config.user_agent.as_str())
-        .proxy(ureq::Proxy::try_from_env())
+        .proxy(proxy_for(config, |name| std::env::var(name).ok()))
         .tls_config(
             TlsConfig::builder()
                 .provider(TlsProvider::Rustls)
@@ -454,6 +507,106 @@ impl HttpTransport for UreqTransport {
 mod tests {
     use super::*;
 
+    /// HTTPS without the runner's proxy variables.
+    fn no_proxy() -> TransportConfig {
+        TransportConfig {
+            proxy_from_env: false,
+            ..TransportConfig::default()
+        }
+    }
+
+    /// Plain HTTP to a loopback server, without the runner's proxy variables.
+    fn loopback() -> TransportConfig {
+        TransportConfig {
+            https_only: false,
+            ..no_proxy()
+        }
+    }
+
+    fn vars(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
+        let pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |name| {
+            pairs
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+        }
+    }
+
+    /// M12: only `HTTPS_PROXY`, CONNECT proxies only, and loopback and
+    /// `NO_PROXY` hosts go direct.
+    #[test]
+    fn the_proxy_comes_from_https_proxy_only_and_skips_loopback() {
+        let on = TransportConfig::default();
+        assert!(on.proxy_from_env);
+        let other_vars = [
+            ("ALL_PROXY", "http://all.corp:1"),
+            ("all_proxy", "http://all.corp:1"),
+            ("HTTP_PROXY", "http://plain.corp:2"),
+            ("http_proxy", "http://plain.corp:2"),
+        ];
+        assert!(proxy_for(&on, vars(&other_vars)).is_none());
+
+        let mut with_https = other_vars.to_vec();
+        with_https.push(("HTTPS_PROXY", "http://proxy.corp:3128"));
+        let p = proxy_for(&on, vars(&with_https)).unwrap();
+        assert_eq!((p.host(), p.port()), ("proxy.corp", 3128));
+
+        let p = proxy_for(
+            &on,
+            vars(&[
+                ("https_proxy", "proxy.corp:8080"),
+                ("no_proxy", " corp.example , .internal"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!((p.protocol(), p.port()), (ProxyProtocol::Http, 8080));
+        let uri = |s: &str| s.parse::<ureq::http::Uri>().unwrap();
+        for direct in [
+            "https://127.0.0.1:9/mcp",
+            "https://localhost/",
+            "https://[::1]:9/",
+            "https://corp.example/",
+            "https://api.internal/",
+        ] {
+            assert!(p.is_no_proxy(&uri(direct)), "{direct}");
+        }
+        assert!(!p.is_no_proxy(&uri("https://mcp.higgsfield.ai/mcp")));
+
+        // No SOCKS (not built into ureq), nothing empty or unparseable.
+        for bad in ["socks5://proxy.corp:1080", "", "   ", "http://"] {
+            assert!(
+                proxy_for(&on, vars(&[("HTTPS_PROXY", bad)])).is_none(),
+                "{bad:?}"
+            );
+        }
+
+        // Off: the variables are not even read.
+        assert!(proxy_for(&no_proxy(), |name| panic!("read {name}")).is_none());
+        assert!(agent_config(&no_proxy(), 0).proxy().is_none());
+    }
+
+    #[test]
+    fn proxy_credentials_are_kept_but_not_printed() {
+        let p = proxy_for(
+            &TransportConfig::default(),
+            vars(&[("HTTPS_PROXY", "http://alice:s3cr3t-pw@proxy.corp:3128")]),
+        )
+        .unwrap();
+        assert_eq!(
+            (p.username(), p.password()),
+            (Some("alice"), Some("s3cr3t-pw"))
+        );
+        let shown = format!("{p:?}");
+        assert!(
+            !shown.contains("s3cr3t-pw") && !shown.contains("alice"),
+            "{shown}"
+        );
+    }
+
     /// The send-state table of §4.5, pinned against ureq 3.4.2's variants.
     #[test]
     fn send_state_table() {
@@ -519,7 +672,7 @@ mod tests {
                 let _ = s.write_all(b"HTTP/1.1 200 OK\r\n\r\nnot tls");
             }
         });
-        let t = UreqTransport::new(&TransportConfig::default());
+        let t = UreqTransport::new(&no_proxy());
         let err = t
             .send(
                 HttpRequest::get(
@@ -551,10 +704,7 @@ mod tests {
                 let _ = tx.send(buf.len());
             }
         });
-        let t = UreqTransport::new(&TransportConfig {
-            https_only: false,
-            ..TransportConfig::default()
-        });
+        let t = UreqTransport::new(&loopback());
         let cancel = CancelToken::new();
         cancel.cancel();
         let err = t
@@ -570,7 +720,7 @@ mod tests {
 
     #[test]
     fn cancelling_before_sending_sends_nothing() {
-        let t = UreqTransport::new(&TransportConfig::default());
+        let t = UreqTransport::new(&no_proxy());
         let cancel = CancelToken::new();
         cancel.cancel();
         let err = t
