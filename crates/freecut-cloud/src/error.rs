@@ -267,11 +267,13 @@ pub const REJECTING_RPC_CODES: &[i64] = &[-32700, -32600, -32601, -32602];
 /// Where a paid submission's failure leaves the run (CG-010). Only failures
 /// that provably happened before sending are `NotSent`; refusals that prove
 /// nothing ran are `Rejected`; everything else is `OutcomeUnknown`, with the
-/// classified reason kept for the message.
-pub fn submit_disposition(err: &McpError) -> SubmitError {
+/// classified reason kept for the message. `sent` is the arguments of the
+/// request: their own UUIDs never count as job ids.
+pub fn submit_disposition(err: &McpError, sent: &Value) -> SubmitError {
     // An answer that names job ids may have started them, whatever else it
-    // says: never "rejected" or "not sent" (review R5).
-    let job_ids = err.job_ids();
+    // says: never "rejected" or "not sent" (review R5). Ids the request
+    // itself carried (media ids it refers to) are echoes, not jobs (R14).
+    let job_ids = crate::guard::new_ids(err.job_ids(), sent);
     if !job_ids.is_empty() {
         return SubmitError::OutcomeUnknown {
             cause: classify(err),
@@ -531,7 +533,7 @@ mod tests {
     #[test]
     fn paid_dispositions_follow_cg_010() {
         use SubmitError::*;
-        let d = |e: &McpError| submit_disposition(e);
+        let d = |e: &McpError| submit_disposition(e, &serde_json::Value::Null);
         assert!(matches!(
             d(&transport(TransportErrorKind::Connect, SendState::NotSent)),
             NotSent(CloudError::Offline)

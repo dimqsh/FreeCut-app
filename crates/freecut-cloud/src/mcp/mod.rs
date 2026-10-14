@@ -1305,6 +1305,13 @@ impl McpClient {
             .and_then(Value::as_str)
             .unwrap_or(out.method)
             .to_owned();
+        // The request's own UUIDs (media it refers to) are not jobs (R14).
+        let sent = out
+            .params
+            .as_ref()
+            .and_then(|p| p.get("arguments"))
+            .cloned()
+            .unwrap_or(Value::Null);
         let queue = Arc::clone(&self.late);
         let answered = Arc::new(AtomicBool::new(false));
         let taken = Arc::clone(&answered);
@@ -1312,7 +1319,8 @@ impl McpClient {
             if taken.load(Ordering::Acquire) {
                 return;
             }
-            let result = late_result(&tool, id, response);
+            let mut result = late_result(&tool, id, response);
+            result.job_ids = guard::new_ids(result.job_ids, &sent);
             if result.job_ids.is_empty() && !(200..300).contains(&result.status) {
                 tracing::debug!(
                     status = result.status,

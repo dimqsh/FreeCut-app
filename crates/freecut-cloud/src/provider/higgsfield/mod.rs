@@ -282,7 +282,7 @@ impl GenerationProvider for HiggsfieldProvider {
         let output = match self.mcp.check_cost(call.tool, &request, cancel) {
             Ok(output) => output,
             Err(e) => {
-                return match submit_disposition(&e) {
+                return match submit_disposition(&e, request.arguments()) {
                     // An answer that named jobs, readable or not (R4, R5).
                     SubmitError::OutcomeUnknown { job_ids, .. } if !job_ids.is_empty() => {
                         Ok(check.started_run(job_ids))
@@ -295,8 +295,9 @@ impl GenerationProvider for HiggsfieldProvider {
                 };
             }
         };
-        // Every content item, not only the one read as the answer (R5).
-        let job_ids = output.job_ids();
+        // Every content item, not only the one read as the answer (R5);
+        // the request's own ids are echoes (R14).
+        let job_ids = crate::guard::new_ids(output.job_ids(), request.arguments());
         if !job_ids.is_empty() {
             return Ok(check.started_run(job_ids));
         }

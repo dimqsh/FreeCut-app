@@ -122,6 +122,7 @@ pub fn job_ids_in(answer: &Value) -> Vec<String> {
 pub fn uuids_in_text(text: &str) -> Vec<String> {
     let mut out: Vec<String> = uuid_spans(text)
         .map(|(start, end)| text[start..end].to_ascii_lowercase())
+        .filter(|id| !is_nil_or_max(id))
         .collect();
     out.sort();
     out.dedup();
@@ -161,6 +162,22 @@ fn uuid_at(bytes: &[u8], i: usize) -> bool {
             .iter()
             .enumerate()
             .all(|(k, b)| DASHES.contains(&k) || b.is_ascii_hexdigit())
+}
+
+/// The nil and max UUIDs: values (they appear in the service's schema
+/// patterns), never job ids (review R14).
+fn is_nil_or_max(uuid: &str) -> bool {
+    let digits = uuid.bytes().filter(|b| *b != b'-');
+    let all = |want: u8| digits.clone().all(|b| b.eq_ignore_ascii_case(&want));
+    all(b'0') || all(b'f')
+}
+
+/// The ids in `found` that are not in `sent`, the arguments of the request
+/// that was answered: a refusal that echoes the request's own media ids
+/// does not name a job (review R14).
+pub fn new_ids(found: Vec<String>, sent: &Value) -> Vec<String> {
+    let own = uuids_in_text(&sent.to_string());
+    found.into_iter().filter(|id| !own.contains(id)).collect()
 }
 
 /// `8-4-4-4-12` hexadecimal digits.
@@ -401,6 +418,23 @@ mod tests {
             assert_eq!(uuids_in_text(&text), vec![id], "{text}");
         }
         assert!(uuids_in_text("7c9e6679-7425-40de-944b-e07fc1f90ae").is_empty());
+        // R14: nil and max are values, not ids.
+        assert!(
+            uuids_in_text(
+                "00000000-0000-0000-0000-000000000000 FFFFFFFF-ffff-ffff-ffff-ffffffffffff"
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            new_ids(
+                vec![
+                    id.to_owned(),
+                    "0b4f6d2a-1111-4222-8333-944455556666".to_owned()
+                ],
+                &serde_json::json!({"medias": [{"value": id.to_uppercase()}]})
+            ),
+            vec!["0b4f6d2a-1111-4222-8333-944455556666"]
+        );
         assert!(
             is_uuid(id)
                 && !is_uuid(&format!("{id}0"))

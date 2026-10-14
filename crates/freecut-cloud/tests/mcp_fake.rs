@@ -639,7 +639,7 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
         fake.push_fault(fault);
         let err = submit(&c).unwrap_err();
         (
-            submit_disposition(&err),
+            submit_disposition(&err, &Value::Null),
             fake.calls_to("generate_image").len(),
         )
     };
@@ -693,7 +693,7 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     fake.accept_token("t2");
     let err = submit(&c).unwrap_err();
     assert!(matches!(
-        submit_disposition(&err),
+        submit_disposition(&err, &Value::Null),
         Rejected(CloudError::NotAccepted {
             reason: NotAcceptedReason::Unauthorized
         })
@@ -708,7 +708,7 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     fake.expire_sessions();
     let err = submit(&c).unwrap_err();
     assert!(matches!(
-        submit_disposition(&err),
+        submit_disposition(&err, &Value::Null),
         Rejected(CloudError::NotAccepted {
             reason: NotAcceptedReason::SessionExpired
         })
@@ -720,7 +720,10 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     fake.push_fault(Fault::DropAfterSend); // initialize's answer is lost
     let err = submit(&mcp_client(&fake, token("t1"))).unwrap_err();
     assert!(
-        matches!(submit_disposition(&err), NotSent(CloudError::NoAnswer)),
+        matches!(
+            submit_disposition(&err, &Value::Null),
+            NotSent(CloudError::NoAnswer)
+        ),
         "{err:?}"
     );
     assert!(fake.calls_to("generate_image").is_empty());
@@ -744,7 +747,7 @@ fn json_rpc_errors_on_paid_calls_are_unknown_unless_the_code_proves_nothing_ran(
         });
         let c = mcp_client(&fake, token("t1"));
         let err = submit(&c).unwrap_err();
-        let d = submit_disposition(&err);
+        let d = submit_disposition(&err, &Value::Null);
         if rejected {
             assert!(matches!(d, Rejected(_)), "{code}: {d:?}");
         } else {
@@ -759,7 +762,7 @@ fn json_rpc_errors_on_paid_calls_are_unknown_unless_the_code_proves_nothing_ran(
     });
     let err = submit(&mcp_client(&fake, token("t1"))).unwrap_err();
     assert_eq!(
-        submit_disposition(&err),
+        submit_disposition(&err, &Value::Null),
         OutcomeUnknown {
             cause: CloudError::InsufficientCredits,
             job_ids: vec![]
@@ -917,7 +920,10 @@ fn job_ids_that_arrive_after_a_cancel_are_kept() {
 
         let err = submit(&c).unwrap_err();
         assert!(
-            matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
+            matches!(
+                submit_disposition(&err, &Value::Null),
+                SubmitError::OutcomeUnknown { .. }
+            ),
             "{err:?}"
         );
         assert_eq!(fake.calls_to("generate_image").len(), 1);
@@ -1019,7 +1025,10 @@ fn a_stream_that_cannot_be_resumed_loses_the_answer() {
         fake.set_resume(mode);
         let err = submit(&c).unwrap_err();
         assert!(
-            matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
+            matches!(
+                submit_disposition(&err, &Value::Null),
+                SubmitError::OutcomeUnknown { .. }
+            ),
             "{mode:?}: {err:?}"
         );
         assert_eq!(fake.calls_to("generate_image").len(), 1, "{mode:?}");
@@ -1067,7 +1076,10 @@ fn a_cancel_after_sending_tells_the_server() {
         .call_tool(&allow::GENERATE_IMAGE, image_args(), &cancel)
         .unwrap_err();
     assert!(
-        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
+        matches!(
+            submit_disposition(&err, &Value::Null),
+            SubmitError::OutcomeUnknown { .. }
+        ),
         "{err:?}"
     );
     let requests = fake.requests();
@@ -1115,7 +1127,10 @@ fn a_session_404_during_the_handshake_fails_once_instead_of_recursing() {
     let c = mcp_client(&fake, token("t1"));
     let err = submit(&c).unwrap_err();
     assert!(
-        matches!(submit_disposition(&err), SubmitError::NotSent(_)),
+        matches!(
+            submit_disposition(&err, &Value::Null),
+            SubmitError::NotSent(_)
+        ),
         "{err:?}"
     );
     assert_eq!(
@@ -1233,7 +1248,7 @@ fn unreadable_answers_keep_the_job_ids_they_name() {
         let c = mcp_client(&fake, token("t1"));
         c.initialize(&CancelToken::new()).unwrap();
         fake.push_fault(fault.clone());
-        let d = submit_disposition(&submit(&c).unwrap_err());
+        let d = submit_disposition(&submit(&c).unwrap_err(), &Value::Null);
         assert!(
             matches!(&d, SubmitError::OutcomeUnknown { job_ids, .. } if job_ids == &[JOB]),
             "{fault:?} gave {d:?}"
@@ -1264,7 +1279,7 @@ fn refusals_that_name_a_job_are_never_rejected() {
         let c = mcp_client(&fake, token("t1"));
         c.initialize(&CancelToken::new()).unwrap();
         fake.push_fault(fault);
-        submit_disposition(&submit(&c).unwrap_err())
+        submit_disposition(&submit(&c).unwrap_err(), &Value::Null)
     };
     for fault in [
         Fault::ToolError(format!("Job {JOB} failed: model overloaded")),
@@ -1434,6 +1449,54 @@ fn a_stateless_server_needs_no_session() {
     assert_eq!(fake.calls_to("generate_image").len(), 1);
 }
 
+/// R14: a refusal that echoes the request's own media id is not a job. A
+/// paid call stays Rejected; a cost check is refused and releases its tool.
+#[test]
+fn a_refusal_that_echoes_a_media_id_is_not_a_job() {
+    const MEDIA: &str = "123e4567-e89b-12d3-a456-426614174000";
+    let args = json!({"params": {"model": "gpt_image_2_5", "prompt": "x",
+        "medias": [{"value": MEDIA, "role": "image_references"}]}});
+    for fault in [
+        Fault::ToolError(format!("media {MEDIA} not found")),
+        Fault::RpcErrorData(-32602, "Invalid params".into(), json!({"media": MEDIA})),
+        Fault::ToolError("00000000-0000-0000-0000-000000000000 is not a valid id".into()),
+    ] {
+        let fake = paid_fake();
+        let c = mcp_client(&fake, token("t1"));
+        c.initialize(&CancelToken::new()).unwrap();
+        fake.push_fault(fault.clone());
+        let err = c
+            .call_tool(&allow::GENERATE_IMAGE, args.clone(), &CancelToken::new())
+            .unwrap_err();
+        assert!(
+            matches!(submit_disposition(&err, &args), SubmitError::Rejected(_)),
+            "{fault:?}"
+        );
+        assert_eq!(fake.calls_to("generate_image").len(), 1);
+    }
+
+    let fake = fake_higgsfield();
+    fake.on_tool("generate_image", |_| {
+        ToolReply::Error(format!("media {MEDIA} not found"))
+    });
+    let (p, _) = provider(&fake, token("t1"));
+    let mut op = image_op();
+    if let Operation::Image(r) = &mut op {
+        r.refs.push(freecut_cloud::provider::RoleRef {
+            role: freecut_cloud::catalogue::Role::parse("image_references"),
+            media: freecut_cloud::provider::RemoteMediaId::parse(MEDIA).unwrap(),
+        });
+    }
+    assert!(p.quote(&op, &CancelToken::new()).is_err());
+    assert!(!p.guard().is_blocked("generate_image"));
+    assert!(p.quote(&op, &CancelToken::new()).is_err());
+    assert_eq!(
+        fake.calls_to("generate_image").len(),
+        2,
+        "the tool was released"
+    );
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),
@@ -1549,11 +1612,11 @@ proptest! {
         match (reached.first(), result) {
             (None, Ok(())) => prop_assert!(false, "succeeded without reaching the service"),
             (None, Err(e)) => {
-                prop_assert!(matches!(submit_disposition(&e), NotSent(_)), "{:?}", e);
+                prop_assert!(matches!(submit_disposition(&e, &Value::Null), NotSent(_)), "{:?}", e);
             }
             (Some(rec), Ok(())) => prop_assert!(rec.fault.is_none(), "{:?}", rec.fault),
             (Some(rec), Err(e)) => {
-                let d = submit_disposition(&e);
+                let d = submit_disposition(&e, &Value::Null);
                 prop_assert!(!matches!(d, NotSent(_)), "reached but {:?}", d);
                 match &rec.fault {
                     // An answer that named a job keeps it (review R4, R5).

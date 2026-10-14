@@ -276,7 +276,10 @@ fn an_unreadable_event_hands_the_rest_of_the_stream_to_the_late_queue() {
 
     let err = paid(&c, &CancelToken::new()).unwrap_err();
     assert!(
-        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
+        matches!(
+            submit_disposition(&err, &Value::Null),
+            SubmitError::OutcomeUnknown { .. }
+        ),
         "{err:?}"
     );
     let late = wait_for_late(&c);
@@ -296,7 +299,7 @@ fn a_refused_connection_is_not_sent() {
     assert_eq!(err.send_state(), SendState::NotSent, "{err:?}");
     assert!(
         matches!(
-            submit_disposition(&err),
+            submit_disposition(&err, &Value::Null),
             SubmitError::NotSent(CloudError::Offline)
         ),
         "{err:?}"
@@ -309,7 +312,10 @@ fn a_connection_dropped_after_the_request_is_an_unknown_outcome_sent_once() {
     let c = client(&server.url);
     let err = paid(&c, &CancelToken::new()).unwrap_err();
     assert!(
-        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
+        matches!(
+            submit_disposition(&err, &Value::Null),
+            SubmitError::OutcomeUnknown { .. }
+        ),
         "{err:?}"
     );
     // initialize, initialized, and exactly one paid request.
@@ -338,7 +344,10 @@ fn an_answer_after_a_cancel_reaches_the_late_queue() {
     });
     let err = paid(&c, &cancel).unwrap_err();
     assert!(
-        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
+        matches!(
+            submit_disposition(&err, &Value::Null),
+            SubmitError::OutcomeUnknown { .. }
+        ),
         "{err:?}"
     );
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -398,7 +407,10 @@ fn a_stalled_answer_is_abandoned_on_cancel() {
     );
     assert_eq!(err.send_state(), SendState::MaybeSent);
     assert!(
-        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
+        matches!(
+            submit_disposition(&err, &Value::Null),
+            SubmitError::OutcomeUnknown { .. }
+        ),
         "{err:?}"
     );
 }
