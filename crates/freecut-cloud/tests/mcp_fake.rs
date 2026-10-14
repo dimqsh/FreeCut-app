@@ -1319,6 +1319,35 @@ fn a_block_outlives_the_provider_that_set_it() {
     assert_eq!(fake.calls_to("generate_image").len(), 1);
 }
 
+/// The recorded service is stateless (§15.1): no `Mcp-Session-Id`. Calls
+/// carry no session header, a paid call still goes out once, and closing
+/// sends nothing.
+#[test]
+fn a_stateless_server_needs_no_session() {
+    let fake = paid_fake();
+    fake.set_sessions(false);
+    fake.set_stream(StreamMode::Sse { chunk: 64 });
+    let c = mcp_client(&fake, token("t1"));
+    c.initialize(&CancelToken::new()).unwrap();
+    assert_eq!(c.session_id(), None);
+    submit(&c).unwrap();
+    c.call_tool(
+        &allow::MODELS_EXPLORE,
+        json!({"action": "list", "type": "image"}),
+        &CancelToken::new(),
+    )
+    .unwrap();
+    c.close();
+    let requests = fake.requests();
+    assert!(requests.iter().all(|r| r.session.is_none()));
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.method != freecut_cloud::transport::Method::Delete)
+    );
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),
