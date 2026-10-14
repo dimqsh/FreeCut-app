@@ -1486,6 +1486,7 @@ name = "freecut-cloud"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "freecut-cloud",
  "freecut-media",
  "freecut-timeline",
  "getrandom 0.4.3",

@@ -309,9 +309,11 @@ fn cloud_opens_sockets_only_in_its_http_transport() {
 }
 
 /// The app's normal build never enables a workspace crate's `test-support`
-/// feature, such as freecut-cloud's scripted provider (review Q10, round 2).
-/// Features are read as resolved for freecut-app's normal dependencies, so a
-/// dev-dependency that enables one does not count. Until the app depends on
+/// feature, such as freecut-cloud's scripted provider and fake server
+/// (review Q10, R20). The tree is read with every app feature on, for every
+/// target, and with each package's enabled features listed, so a feature the
+/// app's own `[features]` table turns on (default or not) is seen too.
+/// Dev-dependencies are not part of it. Until the app depends on
 /// freecut-cloud (Phase B) the cloud crate is simply absent from this tree.
 #[test]
 fn the_app_build_enables_no_test_support_feature() {
@@ -322,9 +324,14 @@ fn the_app_build_enables_no_test_support_feature() {
             "-p",
             "freecut-app",
             "-e",
-            "normal,features",
+            "normal",
+            "--all-features",
+            "--target",
+            "all",
             "--prefix",
             "none",
+            "--format",
+            "{p} [{f}]",
             "--offline",
         ])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -342,10 +349,18 @@ fn the_app_build_enables_no_test_support_feature() {
     );
     let enabled: Vec<&str> = text
         .lines()
-        .filter(|l| l.starts_with("freecut-") && l.contains("feature \"test-support\""))
+        .filter(|l| {
+            l.starts_with("freecut-")
+                && l.rsplit_once('[').is_some_and(|(_, features)| {
+                    features
+                        .trim_end_matches(']')
+                        .split(',')
+                        .any(|f| f.trim() == "test-support")
+                })
+        })
         .collect();
     assert!(
         enabled.is_empty(),
-        "freecut-app's normal build enables {enabled:?}"
+        "freecut-app's normal build enables test-support: {enabled:?}"
     );
 }

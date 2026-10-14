@@ -20,7 +20,8 @@
 //! - [`guard`]: the preflight guard of §4.7;
 //! - [`error`]: [`CloudError`](error::CloudError) and the classifiers that turn
 //!   protocol failures into it;
-//! - [`fake`]: an in-memory fake of the service for tests (no sockets);
+//! - `fake` (feature `test-support`): an in-memory fake of the service for
+//!   tests (no sockets);
 //! - `provider::scripted` (feature `test-support`): a provider that answers
 //!   from a script, for app and assistant tests.
 //!
@@ -37,6 +38,7 @@
 pub mod catalogue;
 pub mod credits;
 pub mod error;
+#[cfg(any(test, feature = "test-support"))]
 pub mod fake;
 pub mod guard;
 #[cfg(feature = "http")]

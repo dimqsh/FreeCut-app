@@ -2,7 +2,7 @@
 //!
 //! [`HttpTransport`] sends one request and returns the status, headers and a
 //! streaming body. The real implementation is `http::UreqTransport` (feature
-//! `http`); tests use [`crate::fake::FakeService`]. A failed send reports a
+//! `http`); tests use the fake service (`fake::FakeService`, feature `test-support`). A failed send reports a
 //! [`SendState`], the only input to the unknown-outcome rule (§4.5).
 
 use std::fmt;

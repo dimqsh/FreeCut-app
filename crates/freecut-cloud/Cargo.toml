@@ -12,8 +12,8 @@ default = []
 # Without it the crate contains no networking code at all: the protocol,
 # OAuth, catalogue and guard logic run against the in-memory fake server.
 http = ["dep:ureq", "dep:rustls"]
-# `provider::scripted::ScriptedProvider` for app and assistant tests (§6.1);
-# enable it from dev-dependencies only.
+# `provider::scripted::ScriptedProvider` and the `fake` service for tests
+# (§6.1); enable it from dev-dependencies only (deps_guard checks the app).
 test-support = []
 
 [dependencies]
@@ -44,6 +44,8 @@ required-features = ["http"]
 test = true
 
 [dev-dependencies]
+# The crate's own integration tests and example tests use `fake`.
+freecut-cloud = { path = ".", features = ["test-support"] }
 pretty_assertions.workspace = true
 proptest.workspace = true
 
