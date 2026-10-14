@@ -67,8 +67,10 @@ tracing = "0.1.44"
 unicode-segmentation = "1.13.3"
 # Blocking HTTPS for freecut-cloud's `http` feature only: rustls with the
 # platform's certificate roots; HTTPS_PROXY is read from the environment.
+# `rustls-no-provider` keeps webpki-roots (bundled roots, unused) out; the
+# cloud transport passes ring as the crypto provider itself.
 # Pinned exactly: the cloud transport's send-state table matches its errors.
-ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "platform-verifier"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
 # OAuth endpoint and authorize-URL handling (freecut-cloud).
 url = "2.5.8"
 xxhash-rust = { version = "0.8.19", features = ["xxh3"] }

@@ -29,9 +29,9 @@ tracing.workspace = true
 url.workspace = true
 
 ureq = { workspace = true, optional = true }
-# Named only to classify certificate errors as "not sent" (architecture
-# §4.5); the version ureq itself resolves, no features of its own.
-rustls = { version = "0.23", default-features = false, optional = true }
+# The version ureq itself resolves: ring as the crypto provider the transport
+# hands to ureq, and certificate errors to classify as "not sent" (§4.5).
+rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
 
 [dev-dependencies]
 pretty_assertions.workspace = true

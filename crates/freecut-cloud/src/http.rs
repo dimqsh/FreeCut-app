@@ -15,8 +15,10 @@ use std::thread;
 use std::time::Duration;
 
 use freecut_media::cancel::CancelToken;
+use std::sync::Arc;
+
 use ureq::Agent;
-use ureq::tls::{RootCerts, TlsConfig};
+use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 
 use crate::transport::{
     HttpRequest, HttpResponse, HttpTransport, Method, SendState, TransportError, TransportErrorKind,
@@ -66,6 +68,12 @@ impl UreqTransport {
                 .proxy(ureq::Proxy::try_from_env())
                 .tls_config(
                     TlsConfig::builder()
+                        .provider(TlsProvider::Rustls)
+                        // Passed explicitly: ureq is built without a
+                        // provider of its own (no bundled roots).
+                        .unversioned_rustls_crypto_provider(Arc::new(
+                            rustls::crypto::ring::default_provider(),
+                        ))
                         .root_certs(RootCerts::PlatformVerifier)
                         .build(),
                 )
@@ -357,6 +365,35 @@ mod tests {
         for e in &maybe_sent {
             assert_eq!(send_state(e), SendState::MaybeSent, "{e:?}");
         }
+    }
+
+    /// Building the TLS configuration happens on the first HTTPS request;
+    /// without a provider ureq would panic there. A handshake against a
+    /// loopback port that speaks no TLS must fail as an error instead.
+    #[test]
+    fn https_uses_the_ring_provider_without_panicking() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                use std::io::Write;
+                let _ = s.write_all(b"HTTP/1.1 200 OK\r\n\r\nnot tls");
+            }
+        });
+        let t = UreqTransport::new(&TransportConfig::default());
+        let err = t
+            .send(
+                HttpRequest::get(
+                    format!("https://127.0.0.1:{port}/"),
+                    crate::transport::CallLimits::READ,
+                ),
+                &CancelToken::new(),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err.kind, TransportErrorKind::Tls | TransportErrorKind::Io),
+            "{err:?}"
+        );
     }
 
     #[test]
