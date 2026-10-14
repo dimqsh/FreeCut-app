@@ -121,11 +121,15 @@ pub fn job_ids_in(answer: &Value) -> Vec<String> {
 /// Every UUID-shaped run of 36 characters in raw text, lower-case and
 /// deduplicated: the one scan for job ids, used on answers that parse and
 /// on those that do not, so no job id is lost. A window is tried at every
-/// byte, with no token boundaries, so `job-<id>`, `id-<id>` and
-/// `<id>-0.png` count (review R13); finding too much fails closed.
+/// byte, also inside an earlier match, with no token boundaries, so
+/// `job-<id>`, `id-<id>`, `<id>-0.png` and an id glued to a UUID-like prefix
+/// count (review R13, R40); finding too much fails closed.
 pub fn uuids_in_text(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = uuid_spans(text)
-        .map(|(start, end)| text[start..end].to_ascii_lowercase())
+    let bytes = text.as_bytes();
+    let mut out: Vec<String> = (0..bytes.len().saturating_sub(UUID_LEN - 1))
+        .filter(|&i| uuid_at(bytes, i))
+        // Every byte of a window is ASCII, so it is a `str` slice.
+        .map(|i| text[i..i + UUID_LEN].to_ascii_lowercase())
         .filter(|id| !is_nil_or_max(id))
         .collect();
     out.sort();
@@ -135,7 +139,9 @@ pub fn uuids_in_text(text: &str) -> Vec<String> {
 
 /// The byte ranges of the UUID-shaped windows in `text`, left to right and
 /// not overlapping. Every byte in a window is ASCII, so each range starts
-/// and ends on a character boundary.
+/// and ends on a character boundary. Used by the record scrubber; a window
+/// that overlaps a match is skipped here, unlike in [`uuids_in_text`]
+/// (review R40: the scrubber's part waits for the owner's recording run).
 pub fn uuid_spans(text: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -422,6 +428,12 @@ mod tests {
             assert_eq!(uuids_in_text(&text), vec![id], "{text}");
         }
         assert!(uuids_in_text("7c9e6679-7425-40de-944b-e07fc1f90ae").is_empty());
+        // R40: a UUID-like prefix glued to an id makes a window that
+        // overlaps it; the id is still found.
+        assert_eq!(
+            uuids_in_text(&format!("ab12cd34-0000-1111-2222-3333{id}")),
+            vec![id, "ab12cd34-0000-1111-2222-33337c9e6679"]
+        );
         // R14: nil and max are values, not ids.
         assert!(
             uuids_in_text(
