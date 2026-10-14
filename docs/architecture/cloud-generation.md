@@ -244,7 +244,8 @@ Rules:
   the blank line that ends its event, so a stream cut inside the response event resumes before
   it and the server sends it again (WHATWG last-event-ID buffer, review R3).
 - **Sessions.** The `Mcp-Session-Id` from the `initialize` response is kept in memory for the
-  worker's lifetime. HTTP `404` on a request carrying a session id means the session expired:
+  worker's lifetime. (Higgsfield's server issues none, §15.1; then none of the session rules
+  below apply.) HTTP `404` on a request carrying a session id means the session expired:
   FreeCut re-initializes once. A **free** call (§4.5's table) is then sent again. A **paid**
   submission is never sent again on its own, even though the MCP specification implies the
   request was not processed: a `404` can also come from a proxy or a server fault, and Q2 allows
@@ -1099,12 +1100,15 @@ Recordings: `crates/freecut-cloud/tests/fixtures/higgsfield/` (its README lists 
 | `models_explore` | `{items, has_more, unlim: {available, remaining, expires_at}}`. Items: `id, name, provider_name, description, output_type, parameters[], medias[{name, type, max?, required?, roles[]}], aspect_ratios, tags, supports_unlim?` and durations as a top-level `durations` set, a top-level `duration_range`, or a `duration` parameter (`options` or `min`/`max`, one model with `min: -1`, one without `max`). Parameters: `required: "optional" | "required"`, types `string`, `number`, `bool`, `string_array`. One media group has no `roles`. Counts: 45 image, 57 video, 8 audio, each `has_more: false`; pages use `after` with `next_page_token`. New actions `search` and `recommend`, output type `3d`. |
 | `get_cost` answers | `{"cost": {"credits": 0.25, "credits_exact": 0.25}}` (image) and `{"cost": {"credits": 35, "credits_exact": 35}}` (video): JSON numbers, **no job ids** (item 14). The image check with `count: 2` answered the same figure as `count: 1`, so an estimate is taken to cover one variant and CG-005's rule limits Variants to 1. `get_cost` sits inside `params`, and `params` is `anyOf` object or JSON string. New optional fields `use_free_gens` and `preset_session_id` exist; FreeCut never sends them. |
 | Errors | An unknown model answers the tool error `Invalid request: unknown model "…". Use models_explore…` (classified as model unavailable). |
+| Signed-in session (owner, `--example record`, 2026-10-14) | Ten free exchanges through FreeCut's own transport: discovery (2), one more client registration (two FreeCut registrations now exist at Clerk; neither id is in any file), the code exchange, `initialize`, `notifications/initialized`, `tools/list` and three `models_explore` listings. The browser sign-in passed the RFC 9207 check, so Clerk sends `iss` on the redirect, and the MCP server accepted Clerk's access token (the `resource` audience works). Server `Higgsfield AI 1.0.0`; protocol **2025-11-25** negotiated (FreeCut offers it first). |
+| MCP sessions | **The server is stateless: it issued no `Mcp-Session-Id`.** FreeCut then sends no session header, a `404` is an ordinary HTTP error rather than an expired session (§4.1), and closing sends no `DELETE` (there is nothing to end); a resumed stream would carry no session id. Nothing in FreeCut depends on a session existing. |
+| Transport framing | Every answer to a request is `text/event-stream` with exactly one `event: message` and no `id:` or `retry:` lines (so no priming event and nothing to resume); `notifications/initialized` answers `202` with no body. `tools/list` returns all 157 tools in one page (no cursor); all 9 tools of FreeCut's allow list are offered, none missing. |
+| Tokens | `token_type: bearer`, `expires_in: 86399` (24 h), scope `openid email offline_access`; a refresh token and an ID token are issued. |
+| Full model listing | 45 image, 57 video and 8 audio models, each in one page; after the reviewed list (§6.2), 12 are shown. |
 
-**Still unknown:** the authenticated transport framing; session and token lifetimes
-(`expires_in`), refresh-token rotation and revocation behaviour; whether Clerk's tokens carry the
-`resource` audience the MCP server expects; whether Clerk sends `iss` on the redirect as it
-advertises; device sign-in; the shapes of `unlim_choice`, `adjustments` and `recovery_tool`. The
-first need one signed-in FreeCut session (free calls, the owner signs in); the last need runs.
+**Still unknown:** refresh-token rotation and revocation behaviour; device sign-in; the shapes of
+`unlim_choice`, `adjustments` and `recovery_tool`. The first two need a longer signed-in session;
+the last need runs.
 
 ### 15.2 Implementation notes (H1 core, `freecut-cloud`)
 
