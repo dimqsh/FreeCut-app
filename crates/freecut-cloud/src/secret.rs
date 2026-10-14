@@ -444,7 +444,8 @@ impl<E: EntryStore> ChunkedSecretStore<E> {
         if count == 0 || count > MAX_PARTS {
             return Err(SecretError::Corrupt(format!("{which}: {count} parts")));
         }
-        let mut out = String::new();
+        // Reserved up front: growing would leave uncleared copies (SEC-8).
+        let mut out = String::with_capacity(count * MAX_ENTRY_CHARS * 4);
         for index in 0..count {
             let part = self
                 .entries
@@ -471,7 +472,7 @@ impl<E: EntryStore> ChunkedSecretStore<E> {
         for (index, part) in parts.iter().enumerate() {
             self.entries.write(
                 &Self::part_account(provider, which, generation, index),
-                part,
+                part.expose(),
             )?;
         }
         // Parts beyond the count may be left over from an interrupted write
@@ -513,17 +514,25 @@ impl<E: EntryStore> ChunkedSecretStore<E> {
 }
 
 /// Splits `text` into pieces of at most `max` characters, on char boundaries.
-fn split_chars(text: &str, max: usize) -> Vec<String> {
+/// The pieces are [`Secret`]s with their full capacity reserved up front, so
+/// no reallocation leaves an uncleared copy behind (review SEC-8).
+fn split_chars(text: &str, max: usize) -> Vec<Secret> {
     let mut parts = Vec::new();
-    let mut current = String::new();
+    let mut current = String::with_capacity(max * 4);
+    let mut count = 0;
     for ch in text.chars() {
-        if current.chars().count() == max {
-            parts.push(std::mem::take(&mut current));
+        if count == max {
+            parts.push(Secret::new(std::mem::replace(
+                &mut current,
+                String::with_capacity(max * 4),
+            )));
+            count = 0;
         }
         current.push(ch);
+        count += 1;
     }
-    if !current.is_empty() {
-        parts.push(current);
+    if count > 0 {
+        parts.push(Secret::new(current));
     }
     parts
 }
@@ -1000,8 +1009,15 @@ mod tests {
 
     #[test]
     fn split_chars_respects_the_limit() {
-        assert_eq!(split_chars("abcde", 2), vec!["ab", "cd", "e"]);
-        assert_eq!(split_chars("ab", 2), vec!["ab"]);
-        assert!(split_chars("", 2).is_empty());
+        let texts = |s: &str, max| {
+            split_chars(s, max)
+                .iter()
+                .map(|p| p.expose().to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(texts("abcde", 2), vec!["ab", "cd", "e"]);
+        assert_eq!(texts("ab", 2), vec!["ab"]);
+        assert_eq!(texts("ééé", 2), vec!["éé", "é"]);
+        assert!(texts("", 2).is_empty());
     }
 }

@@ -435,7 +435,11 @@ pub trait SecretStore: Send + Sync {
   `higgsfield/meta`), and an entry over 1,200 characters is split into numbered parts with a
   count in `meta`; all parts are written before `meta` is replaced, so a crash leaves the old or
   the new set, never a mix. The same `SecretStore` implementation serves AS-003.
-  `Secret` zeroizes on drop and has a redacting `Debug`.
+  `Secret` zeroizes on drop and has a redacting `Debug`. Clearing memory is **best effort**
+  (review SEC-8): FreeCut clears its own copies (secrets, keychain parts and their assembly
+  buffer, request bodies after sending, token and device answers after parsing, the
+  `Authorization` value it builds), but not copies made inside `ureq`, `http` or rustls, nor
+  buffers a growing `Vec` left behind while reading an answer.
 - Refresh when fewer than 60 s remain, and before any paid submission when fewer than 5 minutes
   remain. A `401` on a free call triggers one refresh and one resend; a `401` on a paid
   submission triggers the refresh but **not** a resend (the run becomes *Not accepted*, CG-010).

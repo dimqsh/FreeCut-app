@@ -502,12 +502,15 @@ impl OAuthClient {
         pairs: &[(&str, &str)],
         cancel: &CancelToken,
     ) -> Result<Result<TokenSet, TokenError>, CloudError> {
-        let (status, body) = self.fetch(
+        let (status, mut body) = self.fetch(
             HttpRequest::post_form(&server.token_endpoint, pairs, CallLimits::OAUTH)
                 .header("accept", "application/json"),
             cancel,
         )?;
-        Ok(parse_token_response(status, &body))
+        let tokens = parse_token_response(status, &body);
+        // The raw answer holds the tokens too (review SEC-8).
+        body.fill(0);
+        Ok(tokens)
     }
 
     /// Exchanges an authorization code (§5.3 step 4).
@@ -600,7 +603,10 @@ impl OAuthClient {
             ),
             cancel,
         )?;
+        let mut body = body;
         let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        // The raw answer holds the device code (review SEC-8).
+        body.fill(0);
         if status != 200 {
             let message = value
                 .get("error_description")
