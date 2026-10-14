@@ -16,6 +16,7 @@ use crate::catalogue::{Catalogue, ModelId, OutputKind, Role};
 use crate::credits::Credits;
 use crate::error::CloudError;
 use crate::guard::is_uuid;
+use crate::mcp::RunTag;
 use crate::secret::ProviderId;
 
 /// A duration in whole seconds: the only place a FreeCut duration stops
@@ -323,7 +324,14 @@ pub trait GenerationProvider: Send + Sync + fmt::Debug {
     ///
     /// # Errors
     /// [`CloudError`] as classified (§10).
-    fn quote(&self, op: &Operation, cancel: &CancelToken) -> Result<QuoteOutcome, CloudError>;
+    /// `run` is the worker's id for the run sheet; a late answer to the
+    /// check carries it (review R15).
+    fn quote(
+        &self,
+        op: &Operation,
+        run: &RunTag,
+        cancel: &CancelToken,
+    ) -> Result<QuoteOutcome, CloudError>;
 }
 
 #[cfg(test)]

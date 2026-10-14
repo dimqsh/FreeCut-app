@@ -406,6 +406,10 @@ impl McpError {
 /// recorded idempotently.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LateToolResult {
+    /// The run the call belongs to.
+    pub run: Option<RunTag>,
+    /// A paid call or a cost check.
+    pub class: CallClass,
     /// The tool called.
     pub tool: String,
     /// The JSON-RPC request id.
@@ -418,6 +422,24 @@ pub struct LateToolResult {
     pub value: Option<Value>,
     /// Every UUID-shaped string in the answer, read or not.
     pub job_ids: Vec<String>,
+}
+
+/// The run a paid call or cost check belongs to, chosen by the caller (the
+/// worker's ledger id for the run). It never leaves the computer; a late
+/// answer carries it so its job ids land on the right run (review R15).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RunTag(String);
+
+impl RunTag {
+    /// A tag for the run `id`.
+    pub fn new(id: impl Into<String>) -> RunTag {
+        RunTag(id.into())
+    }
+
+    /// The run id.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// Late answers to paid calls and cost checks (review M3, R4, R10). The app
@@ -536,6 +558,8 @@ struct Outgoing<'a> {
     /// Part of the handshake: a session `404` here means the handshake
     /// failed, and must never start another one (which would recurse).
     in_handshake: bool,
+    /// The run a paid call or cost check belongs to.
+    run: Option<&'a RunTag>,
 }
 
 /// What resuming an answer's event stream needs (review F4).
@@ -667,6 +691,7 @@ impl McpClient {
                 params: Some(params),
                 kind: Kind::Request,
                 in_handshake: true,
+                run: None,
             },
             CallClass::Free,
             CallLimits::READ,
@@ -692,6 +717,7 @@ impl McpClient {
                 params: None,
                 kind: Kind::Notification,
                 in_handshake: true,
+                run: None,
             },
             CallClass::Free,
             CallLimits::READ,
@@ -734,6 +760,7 @@ impl McpClient {
                         params,
                         kind: Kind::Request,
                         in_handshake: false,
+                        run: None,
                     },
                     CallClass::Free,
                     CallLimits::READ,
@@ -770,18 +797,46 @@ impl McpClient {
         Err(McpError::protocol("tools/list did not end"))
     }
 
-    /// Calls an allow-listed tool (§4.3). Its class and timeouts come from
-    /// the allow list: a paid tool is never retried or resent.
+    /// Calls a free allow-listed tool (§4.3), with the timeouts the allow
+    /// list gives it.
     ///
     /// # Errors
-    /// [`McpError`]; a result with `isError: true` is [`McpError::Tool`].
+    /// [`McpError::Guard`] for a tool that is not free (use
+    /// [`McpClient::call_paid`]); otherwise [`McpError`], and a result with
+    /// `isError: true` is [`McpError::Tool`].
     pub fn call_tool(
         &self,
         tool: &'static AllowedTool,
         arguments: Value,
         cancel: &CancelToken,
     ) -> Result<ToolOutput, McpError> {
-        self.call(tool.name, arguments, tool.class, tool.limits, cancel)
+        if tool.class != CallClass::Free {
+            return Err(McpError::Guard(GuardViolation::NeedsRun));
+        }
+        self.call(tool.name, arguments, tool.class, tool.limits, None, cancel)
+    }
+
+    /// Calls a paid allow-listed tool for `run` (§4.3): never retried or
+    /// resent, with the allow list's timeouts. A late answer to it carries
+    /// `run` (review R15).
+    ///
+    /// # Errors
+    /// As [`McpClient::call_tool`].
+    pub fn call_paid(
+        &self,
+        tool: &'static AllowedTool,
+        arguments: Value,
+        run: &RunTag,
+        cancel: &CancelToken,
+    ) -> Result<ToolOutput, McpError> {
+        self.call(
+            tool.name,
+            arguments,
+            tool.class,
+            tool.limits,
+            Some(run),
+            cancel,
+        )
     }
 
     /// Sends a cost check (§4.7) for a paid tool that offers one. The
@@ -795,6 +850,7 @@ impl McpClient {
         &self,
         tool: &'static AllowedTool,
         quote: &QuoteRequest,
+        run: &RunTag,
         cancel: &CancelToken,
     ) -> Result<ToolOutput, McpError> {
         if !tool.cost_preflight {
@@ -808,6 +864,7 @@ impl McpClient {
             quote.arguments().clone(),
             CallClass::Preflight,
             CallLimits::PREFLIGHT,
+            Some(run),
             cancel,
         )
     }
@@ -818,6 +875,7 @@ impl McpClient {
         arguments: Value,
         class: CallClass,
         limits: CallLimits,
+        run: Option<&RunTag>,
         cancel: &CancelToken,
     ) -> Result<ToolOutput, McpError> {
         // A failed handshake means this call never left, whatever the
@@ -831,6 +889,7 @@ impl McpClient {
                 params: Some(json!({ "name": name, "arguments": arguments })),
                 kind: Kind::Request,
                 in_handshake: false,
+                run,
             },
             class,
             limits,
@@ -967,7 +1026,7 @@ impl McpClient {
             .header("accept", "application/json, text/event-stream")
             .with_bearer(token);
         let late = (out.kind == Kind::Request && class != CallClass::Free)
-            .then(|| self.late_route(out, id));
+            .then(|| self.late_route(out, id, class));
         if let Some(route) = &late {
             request = request.with_late(Arc::clone(&route.sink));
         }
@@ -1362,7 +1421,7 @@ impl McpClient {
     /// Where a late answer to request `id` goes: parsed as far as possible
     /// and queued with every job id it names. Nothing is queued once the
     /// caller has the response, nor for a refusal status that names no job.
-    fn late_route(&self, out: &Outgoing<'_>, id: i64) -> LateRoute {
+    fn late_route(&self, out: &Outgoing<'_>, id: i64, class: CallClass) -> LateRoute {
         let tool = out
             .params
             .as_ref()
@@ -1377,6 +1436,7 @@ impl McpClient {
             .and_then(|p| p.get("arguments"))
             .cloned()
             .unwrap_or(Value::Null);
+        let run = out.run.cloned();
         let queue = Arc::clone(&self.late);
         let answered = Arc::new(AtomicBool::new(false));
         let taken = Arc::clone(&answered);
@@ -1385,6 +1445,8 @@ impl McpClient {
                 return;
             }
             let mut result = late_result(&tool, id, response);
+            result.run.clone_from(&run);
+            result.class = class;
             result.job_ids = guard::new_ids(result.job_ids, &sent);
             if result.job_ids.is_empty() && !(200..300).contains(&result.status) {
                 tracing::debug!(
@@ -1437,6 +1499,8 @@ fn late_result(tool: &str, id: i64, response: LateResponse) -> LateToolResult {
         _ => None,
     });
     LateToolResult {
+        run: None,
+        class: CallClass::Paid,
         tool: tool.to_owned(),
         request_id: id,
         status: response.status,

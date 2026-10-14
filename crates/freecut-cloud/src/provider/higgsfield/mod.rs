@@ -15,7 +15,7 @@ use crate::catalogue::{Catalogue, parse_listing};
 use crate::credits::Credits;
 use crate::error::{CloudError, SubmitError, classify, quoted, submit_disposition};
 use crate::guard::{CheckReservation, PreflightGuard, QuoteRequest, schema_offers_get_cost};
-use crate::mcp::{LateQueue, McpClient, ServerInfo, TokenSource, ToolInfo, schema};
+use crate::mcp::{LateQueue, McpClient, RunTag, ServerInfo, TokenSource, ToolInfo, schema};
 use crate::oauth::discovery::AuthPolicy;
 use crate::provider::{
     Adjustment, GenerationProvider, Operation, PossiblyStarted, Quote, QuoteOutcome, ServiceInfo,
@@ -225,7 +225,12 @@ impl GenerationProvider for HiggsfieldProvider {
         Ok(catalogue)
     }
 
-    fn quote(&self, op: &Operation, cancel: &CancelToken) -> Result<QuoteOutcome, CloudError> {
+    fn quote(
+        &self,
+        op: &Operation,
+        run: &RunTag,
+        cancel: &CancelToken,
+    ) -> Result<QuoteOutcome, CloudError> {
         if op.variants() > VARIANTS_COVERED_BY_QUOTE {
             return Ok(QuoteOutcome::NotAvailable(
                 Unavailable::VariantsNotCovered {
@@ -279,7 +284,7 @@ impl GenerationProvider for HiggsfieldProvider {
             arguments: request.arguments(),
             reservation,
         };
-        let output = match self.mcp.check_cost(call.tool, &request, cancel) {
+        let output = match self.mcp.check_cost(call.tool, &request, run, cancel) {
             Ok(output) => output,
             Err(e) => {
                 return match submit_disposition(&e, request.arguments()) {

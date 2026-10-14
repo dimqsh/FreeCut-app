@@ -17,6 +17,7 @@ use freecut_media::cancel::CancelToken;
 use super::{GenerationProvider, Operation, QuoteOutcome, ServiceInfo};
 use crate::catalogue::Catalogue;
 use crate::error::CloudError;
+use crate::mcp::RunTag;
 use crate::secret::ProviderId;
 
 /// A call a [`ScriptedProvider`] received.
@@ -26,8 +27,8 @@ pub enum ScriptedCall {
     Connect,
     /// [`GenerationProvider::catalogue`].
     Catalogue,
-    /// [`GenerationProvider::quote`], with its operation.
-    Quote(Operation),
+    /// [`GenerationProvider::quote`], with its operation and run.
+    Quote(Operation, RunTag),
 }
 
 #[derive(Debug, Default)]
@@ -124,10 +125,17 @@ impl GenerationProvider for ScriptedProvider {
         next(&mut script.catalogue, "catalogue", cancel)
     }
 
-    fn quote(&self, op: &Operation, cancel: &CancelToken) -> Result<QuoteOutcome, CloudError> {
+    fn quote(
+        &self,
+        op: &Operation,
+        run: &RunTag,
+        cancel: &CancelToken,
+    ) -> Result<QuoteOutcome, CloudError> {
         let mut guard = self.script();
         let script = &mut *guard;
-        script.calls.push(ScriptedCall::Quote(op.clone()));
+        script
+            .calls
+            .push(ScriptedCall::Quote(op.clone(), run.clone()));
         next(&mut script.quote, "quote", cancel)
     }
 }
@@ -142,6 +150,10 @@ mod tests {
     use crate::catalogue::ModelId;
     use crate::credits::Credits;
     use crate::provider::{ImageRequest, ParamValues, Quote, ServiceQuestion};
+
+    fn run() -> RunTag {
+        RunTag::new("run-1")
+    }
 
     fn op(prompt: &str) -> Operation {
         Operation::Image(ImageRequest {
@@ -186,16 +198,17 @@ mod tests {
         // Used the way the app uses a provider: shared, behind the trait.
         let provider: Arc<dyn GenerationProvider> = Arc::new(scripted);
         let none = CancelToken::new();
+        let run = run();
         assert_eq!(provider.id(), ProviderId::HIGGSFIELD);
         assert_eq!(provider.connect(&none).unwrap(), info());
         assert_eq!(provider.catalogue(&none).unwrap(), Catalogue::default());
-        assert_eq!(provider.quote(&op("a"), &none).unwrap(), quote);
+        assert_eq!(provider.quote(&op("a"), &run, &none).unwrap(), quote);
         assert!(matches!(
-            provider.quote(&op("b"), &none).unwrap(),
+            provider.quote(&op("b"), &run, &none).unwrap(),
             QuoteOutcome::Question(_)
         ));
         assert_eq!(
-            provider.quote(&op("c"), &none).unwrap_err(),
+            provider.quote(&op("c"), &run, &none).unwrap_err(),
             CloudError::InsufficientCredits
         );
     }
@@ -204,17 +217,18 @@ mod tests {
     fn cancel_wins_and_keeps_the_script_and_a_missing_step_is_an_error() {
         let scripted = ScriptedProvider::new(ProviderId::HIGGSFIELD);
         scripted.push_quote(Err(CloudError::Busy));
+        let run = run();
         let cancelled = CancelToken::new();
         cancelled.cancel();
         assert_eq!(
-            scripted.quote(&op("a"), &cancelled).unwrap_err(),
+            scripted.quote(&op("a"), &run, &cancelled).unwrap_err(),
             CloudError::Cancelled
         );
         assert!(!scripted.is_finished());
 
         let none = CancelToken::new();
         assert_eq!(
-            scripted.quote(&op("b"), &none).unwrap_err(),
+            scripted.quote(&op("b"), &run, &none).unwrap_err(),
             CloudError::Busy
         );
         assert!(scripted.is_finished());
@@ -225,8 +239,8 @@ mod tests {
         assert_eq!(
             scripted.calls(),
             vec![
-                ScriptedCall::Quote(op("a")),
-                ScriptedCall::Quote(op("b")),
+                ScriptedCall::Quote(op("a"), run.clone()),
+                ScriptedCall::Quote(op("b"), run.clone()),
                 ScriptedCall::Connect,
             ]
         );

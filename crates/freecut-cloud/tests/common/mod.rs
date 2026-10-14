@@ -10,7 +10,7 @@ use freecut_cloud::catalogue::ModelId;
 use freecut_cloud::error::CloudError;
 use freecut_cloud::fake::{FakeService, ToolReply};
 use freecut_cloud::guard::PreflightGuard;
-use freecut_cloud::mcp::{LateQueue, McpClient, TokenPurpose, TokenSource};
+use freecut_cloud::mcp::{LateQueue, McpClient, RunTag, TokenPurpose, TokenSource};
 use freecut_cloud::provider::higgsfield::{ENDPOINT, HiggsfieldProvider};
 use freecut_cloud::provider::{
     Aspect, ImageRequest, Operation, ParamValues, VideoMode, VideoRequest, WholeSeconds,
@@ -174,6 +174,11 @@ pub fn provider_with_guard(
         Arc::new(LateQueue::new()),
     );
     (provider, waiter)
+}
+
+/// The run tag tests pass for paid calls and cost checks.
+pub fn run_tag() -> RunTag {
+    RunTag::new("run-1")
 }
 
 /// A bare MCP client on the fake, for calls below the provider.

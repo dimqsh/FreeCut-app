@@ -47,6 +47,10 @@ pub enum GuardViolation {
     /// The cost check was built for another tool.
     #[error("the cost check was built for another tool")]
     OtherTool,
+    /// A paid tool through `call_tool`: paid calls go through `call_paid`,
+    /// which names the run (review R15).
+    #[error("a paid tool needs call_paid and a run tag")]
+    NeedsRun,
 }
 
 /// A cost check's arguments. The only constructor sets `get_cost: true`.

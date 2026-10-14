@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use common::{
     SwapToken, fake_higgsfield, fixture, fixture_json, golden, image_op, mcp_client, provider,
-    provider_on, provider_with_guard, video_op,
+    provider_on, provider_with_guard, run_tag, video_op,
 };
 use freecut_cloud::CancelToken;
 use freecut_cloud::credits::Credits;
@@ -103,7 +103,8 @@ fn missing_tools_are_reported() {
     let info = p.connect(&CancelToken::new()).unwrap();
     assert_eq!(info.missing, vec!["generate_image", "generate_video"]);
     assert_eq!(
-        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        p.quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap(),
         QuoteOutcome::NotAvailable(Unavailable::ToolMissing {
             tool: "generate_image".into()
         })
@@ -175,7 +176,7 @@ fn quotes_send_the_golden_arguments_and_read_the_recorded_answers() {
     let fake = fake_higgsfield();
     let (p, _) = provider(&fake, token("t1"));
     let cancel = CancelToken::new();
-    let QuoteOutcome::Quote(q) = p.quote(&image_op(), &cancel).unwrap() else {
+    let QuoteOutcome::Quote(q) = p.quote(&image_op(), &run_tag(), &cancel).unwrap() else {
         panic!("expected a quote");
     };
     assert_eq!(q.credits, Credits::from_millis(250));
@@ -185,7 +186,7 @@ fn quotes_send_the_golden_arguments_and_read_the_recorded_answers() {
         vec![golden("get_cost-image-gpt_image_2_5.json")]
     );
 
-    let QuoteOutcome::Quote(q) = p.quote(&video_op(), &cancel).unwrap() else {
+    let QuoteOutcome::Quote(q) = p.quote(&video_op(), &run_tag(), &cancel).unwrap() else {
         panic!("expected a quote");
     };
     assert_eq!(q.credits, Credits::from_millis(35_000));
@@ -206,7 +207,10 @@ fn quotes_work_over_sse_split_into_any_chunk_size() {
             json!({"jsonrpc": "2.0", "id": "srv-2", "method": "sampling/createMessage", "params": {}}),
         ]);
         let (p, _) = provider(&fake, token("t1"));
-        let QuoteOutcome::Quote(q) = p.quote(&image_op(), &CancelToken::new()).unwrap() else {
+        let QuoteOutcome::Quote(q) = p
+            .quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap()
+        else {
             panic!("expected a quote (chunk {chunk})");
         };
         assert_eq!(q.credits, Credits::from_millis(250));
@@ -236,7 +240,10 @@ fn quotes_also_read_structured_content() {
         ToolReply::Structured(json!({"cost": {"credits": 1.5}}))
     });
     let (p, _) = provider(&fake, token("t1"));
-    let QuoteOutcome::Quote(q) = p.quote(&image_op(), &CancelToken::new()).unwrap() else {
+    let QuoteOutcome::Quote(q) = p
+        .quote(&image_op(), &run_tag(), &CancelToken::new())
+        .unwrap()
+    else {
         panic!("expected a quote");
     };
     assert_eq!(q.credits, Credits::from_millis(1_500));
@@ -251,7 +258,8 @@ fn more_variants_than_an_estimate_covers_are_not_quoted() {
     };
     r.variants = 2;
     assert_eq!(
-        p.quote(&Operation::Image(r), &CancelToken::new()).unwrap(),
+        p.quote(&Operation::Image(r), &run_tag(), &CancelToken::new())
+            .unwrap(),
         QuoteOutcome::NotAvailable(Unavailable::VariantsNotCovered { max: 1 })
     );
     assert!(fake.requests().is_empty());
@@ -291,7 +299,7 @@ fn a_session_404_on_a_cost_check_reopens_the_session_but_does_not_resend() {
     p.connect(&cancel).unwrap();
     fake.expire_sessions();
     assert_eq!(
-        p.quote(&image_op(), &cancel),
+        p.quote(&image_op(), &run_tag(), &cancel),
         Err(CloudError::NotAccepted {
             reason: NotAcceptedReason::SessionExpired
         })
@@ -299,7 +307,7 @@ fn a_session_404_on_a_cost_check_reopens_the_session_but_does_not_resend() {
     assert_eq!(fake.calls_to("generate_image").len(), 1);
     // The user's next Check cost works on the new session.
     assert!(matches!(
-        p.quote(&image_op(), &cancel),
+        p.quote(&image_op(), &run_tag(), &cancel),
         Ok(QuoteOutcome::Quote(_))
     ));
     assert_eq!(fake.calls_to("generate_image").len(), 2);
@@ -357,7 +365,7 @@ fn a_401_on_a_cost_check_renews_but_never_resends() {
     fake.reject_token("t1");
     fake.accept_token("t2");
     assert_eq!(
-        p.quote(&image_op(), &cancel),
+        p.quote(&image_op(), &run_tag(), &cancel),
         Err(CloudError::NotAccepted {
             reason: NotAcceptedReason::Unauthorized
         })
@@ -436,7 +444,7 @@ fn cost_checks_retry_only_while_nothing_was_sent() {
         p.catalogue(&cancel).unwrap();
         p.connect(&cancel).unwrap();
         fake.push_fault(fault.clone());
-        let got = match p.quote(&image_op(), &cancel) {
+        let got = match p.quote(&image_op(), &run_tag(), &cancel) {
             Ok(QuoteOutcome::Quote(_)) => End::Quoted,
             Ok(QuoteOutcome::PossiblyStarted(_)) => End::PossiblyStarted,
             Err(_) => End::Refused,
@@ -467,7 +475,9 @@ fn an_unreadable_cost_answer_is_possibly_started_and_stops_further_checks() {
         fake.on_tool("generate_image", move |_| ToolReply::Json(reply.clone()));
         let (p, _) = provider(&fake, token("t1"));
         let cancel = CancelToken::new();
-        let QuoteOutcome::PossiblyStarted(started) = p.quote(&image_op(), &cancel).unwrap() else {
+        let QuoteOutcome::PossiblyStarted(started) =
+            p.quote(&image_op(), &run_tag(), &cancel).unwrap()
+        else {
             panic!("expected possibly started for {answer}");
         };
         assert_eq!(started.tool, "generate_image");
@@ -476,12 +486,12 @@ fn an_unreadable_cost_answer_is_possibly_started_and_stops_further_checks() {
             golden("get_cost-image-gpt_image_2_5.json")
         );
         assert_eq!(
-            p.quote(&image_op(), &cancel).unwrap(),
+            p.quote(&image_op(), &run_tag(), &cancel).unwrap(),
             QuoteOutcome::NotAvailable(Unavailable::PreflightStopped)
         );
         assert_eq!(fake.calls_to("generate_image").len(), 1, "{answer}");
         assert!(matches!(
-            p.quote(&video_op(), &cancel).unwrap(),
+            p.quote(&video_op(), &run_tag(), &cancel).unwrap(),
             QuoteOutcome::Quote(_)
         ));
     }
@@ -498,7 +508,7 @@ fn a_cost_check_answered_with_job_ids_is_a_started_run_and_stops_further_checks(
     });
     let (p, _) = provider(&fake, token("t1"));
     let cancel = CancelToken::new();
-    let QuoteOutcome::StartedRun(run) = p.quote(&image_op(), &cancel).unwrap() else {
+    let QuoteOutcome::StartedRun(run) = p.quote(&image_op(), &run_tag(), &cancel).unwrap() else {
         panic!("expected a started run");
     };
     assert_eq!(run.job_ids, vec!["5c6f0d1e-2b3a-4c4d-8e5f-6a7b8c9d0e1f"]);
@@ -507,14 +517,14 @@ fn a_cost_check_answered_with_job_ids_is_a_started_run_and_stops_further_checks(
     // Exactly one submission per Check cost, and none after that.
     for _ in 0..3 {
         assert_eq!(
-            p.quote(&image_op(), &cancel).unwrap(),
+            p.quote(&image_op(), &run_tag(), &cancel).unwrap(),
             QuoteOutcome::NotAvailable(Unavailable::PreflightStopped)
         );
     }
     assert_eq!(fake.calls_to("generate_image").len(), 1);
     // Other tools keep their checks.
     assert!(matches!(
-        p.quote(&video_op(), &cancel).unwrap(),
+        p.quote(&video_op(), &run_tag(), &cancel).unwrap(),
         QuoteOutcome::Quote(_)
     ));
 }
@@ -534,7 +544,8 @@ fn no_check_is_sent_when_the_live_schema_drops_get_cost() {
     fake.set_tools(tools, 10);
     let (p, _) = provider(&fake, token("t1"));
     assert_eq!(
-        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        p.quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap(),
         QuoteOutcome::NotAvailable(Unavailable::NoEstimate)
     );
     assert!(fake.calls_to("generate_image").is_empty());
@@ -553,7 +564,7 @@ fn schema_drift_disables_the_check_instead_of_guessing() {
     fake.set_tools(tools, 10);
     let (p, _) = provider(&fake, token("t1"));
     assert!(matches!(
-        p.quote(&image_op(), &CancelToken::new()),
+        p.quote(&image_op(), &run_tag(), &CancelToken::new()),
         Err(CloudError::SchemaDrift { ref tool, .. }) if tool == "generate_image"
     ));
     assert!(fake.calls_to("generate_image").is_empty());
@@ -566,7 +577,7 @@ fn service_errors_from_a_cost_check_are_classified() {
     fake.on_tool("generate_image", move |_| ToolReply::Error(message.clone()));
     let (p, _) = provider(&fake, token("t1"));
     assert!(matches!(
-        p.quote(&image_op(), &CancelToken::new()),
+        p.quote(&image_op(), &run_tag(), &CancelToken::new()),
         Err(CloudError::ModelUnavailable { .. })
     ));
     let fake = fake_higgsfield();
@@ -575,7 +586,7 @@ fn service_errors_from_a_cost_check_are_classified() {
     });
     let (p, _) = provider(&fake, token("t1"));
     assert_eq!(
-        p.quote(&video_op(), &CancelToken::new()),
+        p.quote(&video_op(), &run_tag(), &CancelToken::new()),
         Err(CloudError::InsufficientCredits)
     );
     // A refusal the service explains cannot have started a run.
@@ -624,8 +635,13 @@ fn image_args() -> Value {
 }
 
 fn submit(c: &McpClient) -> Result<(), McpError> {
-    c.call_tool(&allow::GENERATE_IMAGE, image_args(), &CancelToken::new())
-        .map(|_| ())
+    c.call_paid(
+        &allow::GENERATE_IMAGE,
+        image_args(),
+        &run_tag(),
+        &CancelToken::new(),
+    )
+    .map(|_| ())
 }
 
 #[test]
@@ -776,7 +792,8 @@ fn json_rpc_errors_on_paid_calls_are_unknown_unless_the_code_proves_nothing_ran(
     });
     let (p, _) = provider(&fake, token("t1"));
     assert!(matches!(
-        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        p.quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap(),
         QuoteOutcome::PossiblyStarted(_)
     ));
 }
@@ -883,7 +900,8 @@ fn late_job_ids_reach_the_app_after_the_provider_is_gone() {
         Arc::clone(&late),
     );
     assert!(matches!(
-        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        p.quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap(),
         QuoteOutcome::PossiblyStarted(_)
     ));
     drop(p);
@@ -893,6 +911,86 @@ fn late_job_ids_reach_the_app_after_the_provider_is_gone() {
     assert_eq!(results.len(), 1, "{results:?}");
     assert_eq!(results[0].job_ids, vec![JOB]);
     assert_eq!(results[0].tool, "generate_image");
+}
+
+/// R15: two runs of one tool are in flight and both are cancelled; their
+/// late answers arrive in the other order. Each job id lands on the run
+/// that caused it, marked as a paid call; a late cost check is marked as a
+/// check. A paid tool cannot go out without a run.
+#[test]
+fn a_late_job_id_lands_on_the_run_that_caused_it() {
+    use freecut_cloud::mcp::{CallClass, RunTag};
+    const JOB_A: &str = "aaaaaaaa-1111-4222-8333-944455556666";
+    const JOB_B: &str = "bbbbbbbb-1111-4222-8333-944455556666";
+    let fake = fake_higgsfield();
+    fake.on_tool("generate_image", |args| {
+        let job = if args["params"]["prompt"] == "a" {
+            JOB_A
+        } else {
+            JOB_B
+        };
+        ToolReply::Json(json!({"jobs": [{"job_id": job}]}))
+    });
+    let transport = Arc::new(DeliversLater {
+        fake: Some(fake.clone()),
+        ..DeliversLater::default()
+    });
+    let c = McpClient::new(
+        freecut_cloud::provider::higgsfield::ENDPOINT,
+        transport.clone(),
+        token("t1"),
+        Arc::new(common::NoWait::default()),
+        "0.1.0",
+    );
+    let (run_a, run_b) = (RunTag::new("run-a"), RunTag::new("run-b"));
+    for (run, prompt) in [(&run_a, "a"), (&run_b, "b")] {
+        let args = json!({"params": {"model": "gpt_image_2_5", "prompt": prompt}});
+        assert!(
+            c.call_paid(&allow::GENERATE_IMAGE, args, run, &CancelToken::new())
+                .is_err()
+        );
+    }
+    transport.held.lock().unwrap().reverse();
+    transport.deliver();
+    let mut late = c.take_late_results();
+    late.sort_by(|x, y| x.job_ids.cmp(&y.job_ids));
+    assert_eq!(late.len(), 2);
+    assert_eq!(
+        (late[0].run.as_ref(), late[0].job_ids.as_slice()),
+        (Some(&run_a), &[JOB_A.to_owned()][..])
+    );
+    assert_eq!(
+        (late[1].run.as_ref(), late[1].job_ids.as_slice()),
+        (Some(&run_b), &[JOB_B.to_owned()][..])
+    );
+    assert!(late.iter().all(|r| r.class == CallClass::Paid));
+
+    // A late cost check is marked as one, with its run.
+    let check = QuoteRequest::new(
+        "generate_image",
+        json!({"params": {"model": "m", "prompt": "a"}}),
+    )
+    .unwrap();
+    let run_c = RunTag::new("run-c");
+    assert!(
+        c.check_cost(&allow::GENERATE_IMAGE, &check, &run_c, &CancelToken::new())
+            .is_err()
+    );
+    transport.deliver();
+    let late = c.take_late_results();
+    assert_eq!(late.len(), 1);
+    assert_eq!(
+        (late[0].run.as_ref(), late[0].class),
+        (Some(&run_c), CallClass::Preflight)
+    );
+
+    // call_tool takes free tools only.
+    let before = fake.calls_to("generate_image").len();
+    assert!(matches!(
+        c.call_tool(&allow::GENERATE_IMAGE, json!({}), &CancelToken::new()),
+        Err(McpError::Guard(_))
+    ));
+    assert_eq!(fake.calls_to("generate_image").len(), before);
 }
 
 /// M3: job ids in an answer that arrives after a cancel reach the late queue,
@@ -971,7 +1069,8 @@ fn a_stream_closed_after_its_first_event_is_resumed_without_resending() {
     fake.set_stream(StreamMode::SseResumable { chunk: 64 });
     let (p, waits) = provider(&fake, token("t1"));
     assert!(matches!(
-        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        p.quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap(),
         QuoteOutcome::Quote(_)
     ));
     assert_eq!(fake.calls_to("generate_image").len(), 1);
@@ -993,7 +1092,12 @@ fn a_stream_cut_inside_the_answer_resumes_from_the_last_whole_event() {
     fake.set_stream(StreamMode::SseCutInsideAnswer { chunk: 7 });
     let c = mcp_client(&fake, token("t1"));
     let output = c
-        .call_tool(&allow::GENERATE_IMAGE, image_args(), &CancelToken::new())
+        .call_paid(
+            &allow::GENERATE_IMAGE,
+            image_args(),
+            &run_tag(),
+            &CancelToken::new(),
+        )
         .unwrap();
     assert!(
         output
@@ -1073,7 +1177,7 @@ fn a_cancel_after_sending_tells_the_server() {
     let c = mcp_client(&fake, token("t1"));
     c.initialize(&CancelToken::new()).unwrap();
     let err = c
-        .call_tool(&allow::GENERATE_IMAGE, image_args(), &cancel)
+        .call_paid(&allow::GENERATE_IMAGE, image_args(), &run_tag(), &cancel)
         .unwrap_err();
     assert!(
         matches!(
@@ -1104,7 +1208,7 @@ fn a_cancel_after_sending_tells_the_server() {
     let cancel = CancelToken::new();
     cancel.cancel();
     assert!(
-        c.call_tool(&allow::GENERATE_IMAGE, image_args(), &cancel)
+        c.call_paid(&allow::GENERATE_IMAGE, image_args(), &run_tag(), &cancel)
             .is_err()
     );
     assert!(
@@ -1196,7 +1300,12 @@ fn no_api_path_retries_or_resends_a_paid_tool() {
         for (i, inject) in faults.iter().enumerate() {
             let (fake, c) = ready();
             inject(&fake);
-            let _ = c.call_tool(tool, json!({"params": {"model": "m"}}), &CancelToken::new());
+            let _ = c.call_paid(
+                tool,
+                json!({"params": {"model": "m"}}),
+                &run_tag(),
+                &CancelToken::new(),
+            );
             assert_eq!(
                 fake.calls_to(tool.name()).len(),
                 1,
@@ -1209,7 +1318,7 @@ fn no_api_path_retries_or_resends_a_paid_tool() {
                 inject(&fake);
                 let quote =
                     QuoteRequest::new(tool.name(), json!({"params": {"model": "m"}})).unwrap();
-                let _ = c.check_cost(tool, &quote, &CancelToken::new());
+                let _ = c.check_cost(tool, &quote, &run_tag(), &CancelToken::new());
                 let sent = fake.calls_to(tool.name());
                 assert_eq!(sent.len(), 1, "check of {} fault {i}", tool.name());
                 assert_eq!(sent[0]["params"]["get_cost"], json!(true));
@@ -1224,12 +1333,22 @@ fn cost_checks_are_refused_for_tools_without_one_or_for_another_tool() {
     let c = mcp_client(&fake, token("t1"));
     let quote = QuoteRequest::new("media_confirm", json!({"params": {}})).unwrap();
     assert!(matches!(
-        c.check_cost(&allow::MEDIA_CONFIRM, &quote, &CancelToken::new()),
+        c.check_cost(
+            &allow::MEDIA_CONFIRM,
+            &quote,
+            &run_tag(),
+            &CancelToken::new()
+        ),
         Err(McpError::Guard(_))
     ));
     let quote = QuoteRequest::new("generate_video", json!({"params": {}})).unwrap();
     assert!(matches!(
-        c.check_cost(&allow::GENERATE_IMAGE, &quote, &CancelToken::new()),
+        c.check_cost(
+            &allow::GENERATE_IMAGE,
+            &quote,
+            &run_tag(),
+            &CancelToken::new()
+        ),
         Err(McpError::Guard(_))
     ));
     assert!(fake.requests().is_empty());
@@ -1261,7 +1380,10 @@ fn unreadable_answers_keep_the_job_ids_they_name() {
     p.connect(&CancelToken::new()).unwrap();
     p.catalogue(&CancelToken::new()).unwrap();
     fake.push_fault(Fault::CutStreamWith(format!("queued {JOB}, then")));
-    match p.quote(&image_op(), &CancelToken::new()).unwrap() {
+    match p
+        .quote(&image_op(), &run_tag(), &CancelToken::new())
+        .unwrap()
+    {
         QuoteOutcome::StartedRun(run) => assert_eq!(run.job_ids, vec![JOB]),
         other => panic!("{other:?}"),
     }
@@ -1332,7 +1454,10 @@ fn refusals_that_name_a_job_are_never_rejected() {
                 .unwrap_or(ToolReply::Json(json!({})))
         });
         let (p, _) = provider(&fake, token("t1"));
-        match p.quote(&image_op(), &CancelToken::new()).unwrap() {
+        match p
+            .quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap()
+        {
             QuoteOutcome::StartedRun(run) => assert_eq!(run.job_ids, vec![JOB]),
             other => panic!("{other:?}"),
         }
@@ -1363,14 +1488,14 @@ fn two_checks_of_one_tool_never_go_out_together() {
 
     let first = {
         let p = Arc::clone(&p);
-        std::thread::spawn(move || p.quote(&image_op(), &CancelToken::new()))
+        std::thread::spawn(move || p.quote(&image_op(), &run_tag(), &CancelToken::new()))
     };
     started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     let (done_tx, done_rx) = channel();
     {
         let p = Arc::clone(&p);
         std::thread::spawn(move || {
-            let _ = done_tx.send(p.quote(&image_op(), &CancelToken::new()));
+            let _ = done_tx.send(p.quote(&image_op(), &run_tag(), &CancelToken::new()));
         });
     }
     let second = done_rx
@@ -1390,7 +1515,8 @@ fn two_checks_of_one_tool_never_go_out_together() {
     // A readable answer released the tool.
     go_tx.send(()).unwrap();
     assert!(matches!(
-        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        p.quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap(),
         QuoteOutcome::Quote(_)
     ));
     assert_eq!(fake.calls_to("generate_image").len(), 2);
@@ -1408,14 +1534,17 @@ fn a_block_outlives_the_provider_that_set_it() {
     p.catalogue(&CancelToken::new()).unwrap();
     fake.push_fault(Fault::Garbage);
     assert!(matches!(
-        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        p.quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap(),
         QuoteOutcome::PossiblyStarted(_)
     ));
     drop(p);
 
     let (again, _) = provider_with_guard(&fake, token("t1"), Arc::clone(&guard));
     assert_eq!(
-        again.quote(&image_op(), &CancelToken::new()).unwrap(),
+        again
+            .quote(&image_op(), &run_tag(), &CancelToken::new())
+            .unwrap(),
         QuoteOutcome::NotAvailable(Unavailable::PreflightStopped)
     );
     assert_eq!(fake.calls_to("generate_image").len(), 1);
@@ -1467,7 +1596,12 @@ fn a_refusal_that_echoes_a_media_id_is_not_a_job() {
         c.initialize(&CancelToken::new()).unwrap();
         fake.push_fault(fault.clone());
         let err = c
-            .call_tool(&allow::GENERATE_IMAGE, args.clone(), &CancelToken::new())
+            .call_paid(
+                &allow::GENERATE_IMAGE,
+                args.clone(),
+                &run_tag(),
+                &CancelToken::new(),
+            )
             .unwrap_err();
         assert!(
             matches!(submit_disposition(&err, &args), SubmitError::Rejected(_)),
@@ -1488,9 +1622,9 @@ fn a_refusal_that_echoes_a_media_id_is_not_a_job() {
             media: freecut_cloud::provider::RemoteMediaId::parse(MEDIA).unwrap(),
         });
     }
-    assert!(p.quote(&op, &CancelToken::new()).is_err());
+    assert!(p.quote(&op, &run_tag(), &CancelToken::new()).is_err());
     assert!(!p.guard().is_blocked("generate_image"));
-    assert!(p.quote(&op, &CancelToken::new()).is_err());
+    assert!(p.quote(&op, &run_tag(), &CancelToken::new()).is_err());
     assert_eq!(
         fake.calls_to("generate_image").len(),
         2,
@@ -1620,7 +1754,10 @@ fn every_byte_of_an_answer_is_scanned_for_job_ids() {
         "params": {"progressToken": 1, "progress": 1, "message": format!("queued {JOB}")}}),
     ]);
     let (p, _) = provider(&fake, token("t1"));
-    match p.quote(&image_op(), &CancelToken::new()).unwrap() {
+    match p
+        .quote(&image_op(), &run_tag(), &CancelToken::new())
+        .unwrap()
+    {
         QuoteOutcome::StartedRun(run) => assert_eq!(run.job_ids, vec![JOB]),
         other => panic!("{other:?}"),
     }

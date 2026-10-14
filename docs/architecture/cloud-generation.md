@@ -486,7 +486,8 @@ pub trait GenerationProvider: Send + Sync + std::fmt::Debug {
     // so connect takes no Credential.
     fn connect(&self, cancel: &CancelToken) -> Result<ServiceInfo, CloudError>;
     fn catalogue(&self, cancel: &CancelToken) -> Result<Catalogue, CloudError>;
-    fn quote(&self, op: &Operation, cancel: &CancelToken)   // inputs: RoleRefs inside `op`
+    fn quote(&self, op: &Operation, run: &RunTag,         // inputs: RoleRefs inside `op`;
+             cancel: &CancelToken)                       // `run`: the worker's run id (R15)
         -> Result<QuoteOutcome, CloudError>;
     // H2, planned; the shapes below may change with the upload work.
     fn prepare_upload(&self, files: &[UploadSpec], cancel: &CancelToken)
@@ -1151,10 +1152,14 @@ Other notes:
   (review R1; before the fix it recursed until the stack overflowed).
 - **The call class comes from the allow list (review R2).** `McpClient::call_tool` takes an
   `&'static AllowedTool`, which only `freecut-cloud`'s allow list can create, and reads the
-  class and timeouts from it; an unlisted tool cannot be named. Cost checks go only through
-  `McpClient::check_cost(tool, &QuoteRequest)`, for tools that offer one. The provider does not
-  expose its MCP client (only `server_info()` for the debug view). §14's H1 contract
-  `McpClient::{initialize, list_tools, call_tool}` gains `check_cost`.
+  class and timeouts from it; an unlisted tool cannot be named. Since review R15 `call_tool`
+  takes free tools only; a paid tool goes through `McpClient::call_paid(tool, arguments, run)`,
+  and cost checks only through `McpClient::check_cost(tool, &QuoteRequest, run)`, for tools that
+  offer one. `run` is the caller's `RunTag` (the worker's ledger id); a late answer carries it
+  and the call class (`LateToolResult::{run, class}`), so its job ids land on the right run even
+  with two runs of one tool in flight. The provider does not expose its MCP client (only
+  `server_info()` for the debug view). §14's H1 contract `McpClient::{initialize, list_tools,
+  call_tool}` gains `call_paid` and `check_cost`.
 - **Cost checks fail closed (§4.7, review M1).** A check whose answer is lost, unreadable or of
   an unknown shape (anything but `cost`, `unlim_choice` or `recovery_tool`) is
   `QuoteOutcome::PossiblyStarted`: that tool's checks stop until restart, and the caller records

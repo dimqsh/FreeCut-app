@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use common::NoWait;
+use common::{NoWait, run_tag};
 use freecut_cloud::CancelToken;
 use freecut_cloud::error::{CloudError, SubmitError, submit_disposition};
 use freecut_cloud::guard::QuoteRequest;
@@ -167,9 +167,10 @@ fn client(url: &str) -> McpClient {
 
 fn paid(client: &McpClient, cancel: &CancelToken) -> Result<Value, freecut_cloud::mcp::McpError> {
     client
-        .call_tool(
+        .call_paid(
             &allow::GENERATE_IMAGE,
             json!({"params": {"model": "m", "prompt": "x"}}),
+            &run_tag(),
             cancel,
         )
         .map(|o| o.value().unwrap_or(Value::Null))
@@ -187,7 +188,12 @@ fn json_answers_over_real_http() {
     let c = client(&server.url);
     let quote = QuoteRequest::new("generate_image", json!({"params": {"model": "m"}})).unwrap();
     let out = c
-        .check_cost(&allow::GENERATE_IMAGE, &quote, &CancelToken::new())
+        .check_cost(
+            &allow::GENERATE_IMAGE,
+            &quote,
+            &run_tag(),
+            &CancelToken::new(),
+        )
         .unwrap();
     assert_eq!(out.value(), Some(json!({"cost": {"credits": 2}})));
     let requests = server.requests.lock().unwrap();

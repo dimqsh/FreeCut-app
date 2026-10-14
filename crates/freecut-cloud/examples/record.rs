@@ -598,7 +598,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)] // test code
     use super::*;
     use freecut_cloud::fake::{FakeService, ToolReply};
-    use freecut_cloud::mcp::{McpClient, McpError};
+    use freecut_cloud::mcp::{McpClient, McpError, RunTag};
     use freecut_cloud::secret::Secret;
 
     /// Retries without sleeping.
@@ -680,9 +680,10 @@ mod tests {
         );
         client.initialize(&CancelToken::new()).unwrap();
         let err = client
-            .call_tool(
+            .call_paid(
                 &allow::GENERATE_IMAGE,
                 json!({"params": {"model": "m"}}),
+                &RunTag::new("record-test"),
                 &CancelToken::new(),
             )
             .unwrap_err();
@@ -696,7 +697,12 @@ mod tests {
         .unwrap();
         assert!(
             client
-                .check_cost(&allow::GENERATE_IMAGE, &quote, &CancelToken::new())
+                .check_cost(
+                    &allow::GENERATE_IMAGE,
+                    &quote,
+                    &RunTag::new("record-test"),
+                    &CancelToken::new()
+                )
                 .is_err()
         );
         assert!(fake.calls_to("generate_image").is_empty());
