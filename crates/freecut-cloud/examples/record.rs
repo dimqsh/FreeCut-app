@@ -896,17 +896,21 @@ impl Scrubber {
     /// inside escaped JSON could drop an escaping backslash (review R21).
     fn string(&mut self, s: &str) -> String {
         if s.lines().any(|l| l.starts_with("data:")) {
-            return s
-                .lines()
-                .map(|line| match line.strip_prefix("data:") {
-                    Some(data) => match serde_json::from_str::<Value>(data.trim()) {
-                        Ok(v) => format!("data: {}", self.value(&v)),
-                        Err(_) => self.text(line),
+            // Line by line, each with its own terminator put back: the blank
+            // line that ends an event, and CRLF, are framing (review R36).
+            let mut out = String::with_capacity(s.len());
+            for piece in s.split_inclusive('\n') {
+                let (line, end) = match piece.strip_suffix("\r\n") {
+                    Some(line) => (line, "\r\n"),
+                    None => match piece.strip_suffix('\n') {
+                        Some(line) => (line, "\n"),
+                        None => (piece, ""),
                     },
-                    None => self.text(line),
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+                };
+                out.push_str(&self.event_line(line));
+                out.push_str(end);
+            }
+            return out;
         }
         let trimmed = s.trim_start();
         if (trimmed.starts_with('{') || trimmed.starts_with('['))
@@ -915,6 +919,23 @@ impl Scrubber {
             return self.value(&v).to_string();
         }
         self.text(s)
+    }
+
+    /// One line of an event stream: a `data:` line holding JSON is scrubbed as
+    /// JSON and kept byte for byte when that changes nothing; any other line
+    /// is scrubbed as text.
+    fn event_line(&mut self, line: &str) -> String {
+        if let Some(data) = line.strip_prefix("data:")
+            && let Ok(parsed) = serde_json::from_str::<Value>(data.trim())
+        {
+            let scrubbed = self.value(&parsed);
+            return if scrubbed == parsed {
+                line.to_owned()
+            } else {
+                format!("data: {scrubbed}")
+            };
+        }
+        self.text(line)
     }
 
     /// UUIDs, e-mail addresses and JWTs wherever they sit (review R21), then
@@ -1007,7 +1028,8 @@ impl Scrubber {
                 .rsplit('.')
                 .next()
                 .is_some_and(|t| t.len() >= 2 && t.bytes().all(|c| c.is_ascii_alphabetic()));
-            if l < i && host.contains('.') && tld_ok {
+            // A fake address of ours stays, so a second pass is stable.
+            if l < i && host.contains('.') && tld_ok && !host.eq_ignore_ascii_case("example.test") {
                 out.push_str(&text[last..l]);
                 // One fake per address, however it was written (R29).
                 let address = format!("{}@{host}", &text[l..i]).to_ascii_lowercase();
@@ -1969,6 +1991,28 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    /// R36: an event stream keeps its framing. With nothing to scrub it
+    /// comes back byte for byte, after one pass and after two; scrubbed, it
+    /// still gives exactly one event per event through FreeCut's parser.
+    #[test]
+    fn event_streams_keep_their_line_endings() {
+        let clean = "event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[]}}\r\n\r\n: keep-alive\n\nevent: message\ndata: {\"z\":1,\"a\":2}\n\n";
+        let mut s = Scrubber::default();
+        let once = s.string(clean);
+        assert_eq!(once, clean);
+        assert_eq!(Scrubber::default().string(&once), clean);
+
+        let dirty = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"contact\":\"owner@example.com\"}}\n\n";
+        let scrubbed = Scrubber::default().string(dirty);
+        assert!(scrubbed.ends_with("\n\n"), "{scrubbed:?}");
+        let twice = Scrubber::default().string(&scrubbed);
+        let mut parser = freecut_cloud::mcp::sse::SseParser::new(1 << 20);
+        let events = parser.feed(twice.as_bytes()).unwrap();
+        assert_eq!(events.len(), 1, "{twice:?}");
+        let data: Value = serde_json::from_str(&events[0].data).unwrap();
+        assert!(!data.to_string().contains("owner@example.com"));
     }
 
     #[test]
