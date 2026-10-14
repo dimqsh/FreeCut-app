@@ -164,8 +164,9 @@ impl Credential {
     }
 }
 
-/// Tokens and metadata from an OAuth sign-in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Tokens and metadata from an OAuth sign-in. `Debug` shows neither the
+/// tokens, the client id nor the account e-mail (review SEC-6).
+#[derive(Clone, PartialEq, Eq)]
 pub struct OAuthCredential {
     /// The access token.
     pub access: Secret,
@@ -184,6 +185,22 @@ pub struct OAuthCredential {
     pub subject_hash: Option<SubjectHash>,
     /// The account e-mail for the status line, when the sign-in returned one.
     pub account_label: Option<String>,
+}
+
+impl fmt::Debug for OAuthCredential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted = |present: bool| if present { "<redacted>" } else { "<none>" };
+        f.debug_struct("OAuthCredential")
+            .field("access", &self.access)
+            .field("refresh", &self.refresh)
+            .field("expires_at", &self.expires_at)
+            .field("scope", &self.scope)
+            .field("client_id", &redacted(!self.client_id.is_empty()))
+            .field("issuer", &self.issuer)
+            .field("subject_hash", &self.subject_hash)
+            .field("account_label", &redacted(self.account_label.is_some()))
+            .finish()
+    }
 }
 
 /// Why a credential store failed.
@@ -332,7 +349,6 @@ const MAX_PARTS: usize = 8;
 /// any point leaves either the old or the new credential readable, never a
 /// mix; with only two slots, a delete can clear everything, including
 /// parts a crash left before `meta` was written (review SEC-2).
-#[derive(Debug)]
 pub struct ChunkedSecretStore<E> {
     entries: E,
     /// Readers share; `set` and `delete` are exclusive, so concurrent writes
@@ -373,6 +389,13 @@ enum MetaKind {
 const META_VERSION: u32 = 1;
 /// Longest account label kept in `meta`, in characters.
 const MAX_LABEL_CHARS: usize = 256;
+
+/// Shows nothing of the entries: they are token parts (review SEC-4).
+impl<E> fmt::Debug for ChunkedSecretStore<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChunkedSecretStore").finish_non_exhaustive()
+    }
+}
 
 impl<E: EntryStore> ChunkedSecretStore<E> {
     /// A store over `entries`.
@@ -607,17 +630,26 @@ impl<E: EntryStore> SecretStore for ChunkedSecretStore<E> {
 
 /// An in-memory [`EntryStore`], optionally with Windows' entry size limit
 /// and a write budget that simulates a crash.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct MemoryEntryStore {
     inner: Mutex<MemoryEntries>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct MemoryEntries {
     map: BTreeMap<String, String>,
     max_utf16_bytes: Option<usize>,
     writes_left: Option<usize>,
     locked: bool,
+}
+
+/// Shows entry names only, never their values (review SEC-4).
+impl fmt::Debug for MemoryEntryStore {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MemoryEntryStore")
+            .field("accounts", &self.accounts())
+            .finish_non_exhaustive()
+    }
 }
 
 impl MemoryEntryStore {
@@ -729,6 +761,20 @@ mod tests {
         let shown = format!("{s:?} {:?}", Credential::Bearer { token: s.clone() });
         assert!(!shown.contains("very-secret"), "{shown}");
         assert!(shown.contains("17 bytes"));
+    }
+
+    /// SEC-4, SEC-6: debug output of stores and credentials shows no token
+    /// part, client id or e-mail.
+    #[test]
+    fn debug_output_of_stores_and_credentials_is_redacted() {
+        let store = ChunkedSecretStore::new(MemoryEntryStore::new());
+        let cred = oauth(1_500, 1_300, 'z');
+        store.set(ProviderId::HIGGSFIELD, &cred).unwrap();
+        let shown = format!("{store:?} {:?} {cred:?}", store.entries());
+        for hidden in ["zzzz", "rrrr", "client-1", "someone@example.test"] {
+            assert!(!shown.contains(hidden), "{hidden} in {shown}");
+        }
+        assert!(shown.contains("higgsfield/meta"), "{shown}");
     }
 
     #[test]

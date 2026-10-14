@@ -65,8 +65,9 @@ pub struct ServiceAuth {
     pub server: AuthServer,
 }
 
-/// FreeCut's registration with an authorization server.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// FreeCut's registration with an authorization server. `Debug` hides the
+/// client id, which is kept out of logs.
+#[derive(Clone, PartialEq, Eq)]
 pub struct ClientRegistration {
     /// The client id (not secret; kept in the preferences).
     pub client_id: String,
@@ -77,9 +78,20 @@ pub struct ClientRegistration {
     pub device_grant: bool,
 }
 
+impl fmt::Debug for ClientRegistration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientRegistration")
+            .field("client_id", &"<redacted>")
+            .field("issuer", &self.issuer)
+            .field("device_grant", &self.device_grant)
+            .finish()
+    }
+}
+
 /// A browser sign-in in progress: the URL to open and what the callback
-/// and code exchange need.
-#[derive(Debug, Clone)]
+/// and code exchange need. `Debug` hides the URL's query, which carries the
+/// `state` and the client id (review SEC-5).
+#[derive(Clone)]
 pub struct AuthorizeRequest {
     /// The URL to open in the system browser.
     pub url: String,
@@ -89,6 +101,18 @@ pub struct AuthorizeRequest {
     pub state: Secret,
     /// The PKCE pair.
     pub pkce: Pkce,
+}
+
+impl fmt::Debug for AuthorizeRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let base = self.url.split('?').next().unwrap_or_default();
+        f.debug_struct("AuthorizeRequest")
+            .field("url", &format_args!("{base}?<redacted>"))
+            .field("redirect_uri", &self.redirect_uri)
+            .field("state", &self.state)
+            .field("pkce", &self.pkce)
+            .finish()
+    }
 }
 
 /// Why a loopback request was not a valid sign-in callback.
@@ -1024,6 +1048,34 @@ mod tests {
              &state=st4te&resource=https%3A%2F%2Fmcp.higgsfield.ai%2Fmcp"
         );
         assert_eq!(req.redirect_uri, "http://127.0.0.1:51234/callback");
+    }
+
+    /// SEC-5: debug output of a sign-in in progress hides the state and the
+    /// client id.
+    #[test]
+    fn debug_output_of_a_sign_in_is_redacted() {
+        let pkce = Pkce::from_entropy(&[3u8; 64]);
+        let req = authorize_request(
+            &server(true),
+            "client-xyz",
+            50000,
+            &policy(),
+            pkce,
+            Secret::new("st4te-xyz"),
+        )
+        .unwrap();
+        let reg = ClientRegistration {
+            client_id: "client-xyz".into(),
+            issuer: "https://clerk.higgsfield.ai".into(),
+            device_grant: false,
+        };
+        let shown = format!("{req:?} {reg:?}");
+        assert!(!shown.contains("st4te-xyz"), "{shown}");
+        assert!(!shown.contains("client-xyz"), "{shown}");
+        assert!(
+            shown.contains("https://clerk.higgsfield.ai/oauth/authorize?<redacted>"),
+            "{shown}"
+        );
     }
 
     #[test]

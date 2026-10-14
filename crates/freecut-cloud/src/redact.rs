@@ -15,6 +15,9 @@ pub const SECRET_FIELDS: &[&str] = &[
     "registration_access_token",
     "token",
     "authorization",
+    // Not a secret, but the owner keeps the registered client id out of
+    // every log (2026-10-14).
+    "client_id",
 ];
 
 /// What replaces a secret value.
@@ -92,7 +95,7 @@ mod tests {
         let r = form("grant_type=authorization_code&code=abc&code_verifier=xyz&client_id=c1");
         assert_eq!(
             r,
-            "grant_type=authorization_code&code=%3Credacted%3E&code_verifier=%3Credacted%3E&client_id=c1"
+            "grant_type=authorization_code&code=%3Credacted%3E&code_verifier=%3Credacted%3E&client_id=%3Credacted%3E"
         );
     }
 
