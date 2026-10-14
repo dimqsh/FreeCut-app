@@ -18,7 +18,8 @@ use freecut_cloud::fake::FakeService;
 use freecut_cloud::mcp::{TokenPurpose, TokenSource};
 use freecut_cloud::oauth::pkce::Pkce;
 use freecut_cloud::oauth::{
-    ClientRegistration, DevicePoll, OAuthClient, TokenManager, authorize_request, parse_callback,
+    ClientRegistration, DevicePoll, OAuthClient, PersistError, TokenManager, authorize_request,
+    parse_callback,
 };
 use freecut_cloud::provider::GenerationProvider;
 use freecut_cloud::provider::higgsfield::auth_policy;
@@ -638,7 +639,7 @@ fn refused_tokens_are_saved_without_waiting_for_the_next_refresh() {
         .unwrap();
     assert!(matches!(
         manager.persist_unsaved(),
-        Err(CloudError::SignInUnavailable { .. })
+        Err(PersistError::Store(CloudError::SignInUnavailable { .. }))
     ));
     match manager.credential().unwrap() {
         Credential::OAuth(c) => assert_eq!(c.access.expose(), "at-2"),
@@ -784,6 +785,27 @@ fn a_new_sign_in_during_a_refresh_wins() {
             token: Secret::new("pasted-1")
         }
     );
+}
+
+/// R42: while a refresh is in flight, persist_unsaved() does not report the
+/// sign-in as saved: the refresh's new tokens may not be stored yet. Once
+/// the refresh is done, there is nothing left to save.
+#[test]
+fn persist_unsaved_fails_while_a_refresh_is_in_flight() {
+    let fake = signed_out_service();
+    let (started, go) = blocking_refresh(&fake);
+    let (manager, clock) = signed_in(&fake, 0, 100);
+    *clock.0.lock().unwrap() = 90;
+    let m = manager.clone();
+    let refresh = std::thread::spawn(move || m.bearer(TokenPurpose::Ordinary, &CancelToken::new()));
+    started
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    let during = manager.persist_unsaved();
+    go.send(()).unwrap();
+    assert_eq!(refresh.join().unwrap().unwrap().expose(), "at-2");
+    assert_eq!(during, Err(PersistError::RefreshInFlight));
+    assert_eq!(manager.persist_unsaved(), Ok(()));
 }
 
 #[test]

@@ -20,7 +20,7 @@ pub mod pkce;
 pub mod token;
 
 use std::fmt;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 use freecut_media::cancel::CancelToken;
 use serde_json::{Value, json};
@@ -720,6 +720,21 @@ fn store_failed(e: SecretError) -> CloudError {
     }
 }
 
+/// Why [`TokenManager::persist_unsaved`] could not confirm that the sign-in
+/// is saved.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PersistError {
+    /// A refresh is in flight: its new tokens may not be stored yet (review
+    /// R42). Wait for it, for a bounded time, and call again, or warn the
+    /// user that the sign-in may need repeating.
+    #[error("a token refresh is in flight")]
+    RefreshInFlight,
+    /// The store still refuses the refreshed tokens
+    /// ([`CloudError::SignInUnavailable`]); they stay in memory.
+    #[error(transparent)]
+    Store(CloudError),
+}
+
 /// Supplies tokens from a [`SecretStore`], refreshing OAuth tokens when they
 /// near expiry or after a `401` (§5.6). It reads the store before each
 /// request, and keeps in memory the server metadata and any refreshed tokens
@@ -831,19 +846,27 @@ impl TokenManager {
     /// Saves refreshed tokens the store refused earlier, if any (review
     /// R18). The worker calls it before quitting: tokens still only in
     /// memory then are lost, and the next start sends the superseded
-    /// refresh token.
+    /// refresh token. While it runs, no refresh can start.
     ///
     /// # Errors
-    /// The store still refuses them ([`CloudError::SignInUnavailable`]);
-    /// they stay in memory.
-    pub fn persist_unsaved(&self) -> Result<(), CloudError> {
+    /// [`PersistError::RefreshInFlight`] while a refresh is in flight, whose
+    /// new tokens may not be stored yet (review R42);
+    /// [`PersistError::Store`] when the store still refuses them, and they
+    /// stay in memory.
+    pub fn persist_unsaved(&self) -> Result<(), PersistError> {
+        // Same order as `refresh`: `refreshing`, then `writing`.
+        let _no_refresh = match self.refreshing.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return Err(PersistError::RefreshInFlight),
+        };
         let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(newer) = self.unsaved() else {
             return Ok(());
         };
         self.store
             .set(self.provider, &Credential::OAuth(newer))
-            .map_err(store_failed)?;
+            .map_err(|e| PersistError::Store(store_failed(e)))?;
         self.set_unsaved(None);
         Ok(())
     }

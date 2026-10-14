@@ -1003,7 +1003,11 @@ README).
     or `provider::higgsfield::catalogue_from_cache` for the disk cache. Both apply the reviewed
     list; `Catalogue::from_listings` alone does not (N1).
   - **Save refused tokens before quitting**: call `TokenManager::persist_unsaved()` and, if it
-    fails, tell the user the sign-in may need repeating (R18).
+    fails, tell the user the sign-in may need repeating (R18). It fails with
+    `PersistError::RefreshInFlight` while a refresh is in flight (`close()` and
+    `notify_cancelled` can start one during quit): wait for it, at most its 30 s limit
+    (`CallLimits::OAUTH`), and call again before warning (R42). Test: a quit during a blocked
+    refresh saves the refreshed tokens, or warns.
   - **One `TokenManager` per provider id per app run**, the same `Arc<dyn TokenSource>` for every
     provider and for the sign-in and disconnect UI (R17). Acceptance test:
     `a_new_provider_on_the_same_token_manager_never_sends_the_old_token`.
@@ -1224,7 +1228,8 @@ Other notes:
   used: the stored refresh token may already be dead after rotation, and it is not sent again
   while FreeCut runs. The write is retried on every `bearer()` call (without waiting on a write
   in progress) and before each refresh, and `TokenManager::persist_unsaved()` retries it on
-  demand: the worker calls it before quitting (review R18). A new sign-in drops them,
+  demand: the worker calls it before quitting (review R18). It does not report success while a
+  refresh is in flight, whose new tokens may not be stored yet (R42). A new sign-in drops them,
   and so does a disconnect, but only once its delete has succeeded. Whether the sign-in changed
   during a refresh is told by an in-memory count of sign-in changes, never by reading the store
   again after the network call: a keychain that locks meanwhile (sleep, screen lock) cannot make
