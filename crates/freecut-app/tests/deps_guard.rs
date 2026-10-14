@@ -1,6 +1,8 @@
-//! Enforces the crate dependency rules (docs/architecture/README.md §1.2):
-//! which workspace crates may depend on which, what the pure timeline crate
-//! may use, and that only `freecut-media` links FFmpeg.
+//! Enforces the crate dependency rules (docs/architecture/README.md §1.2,
+//! cloud-generation.md §2.3): which workspace crates may depend on which,
+//! what the pure timeline crate may use, that only `freecut-media` links
+//! FFmpeg, and that `freecut-cloud` stays free of FFmpeg, GPU and UI crates
+//! and has no networking code without its `http` feature.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test code
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,10 +16,13 @@ const ALLOWED_EDGES: &[(&str, &[&str])] = &[
     ("freecut-project", &["freecut-timeline"]),
     ("freecut-render", &["freecut-media", "freecut-timeline"]),
     ("freecut-audio", &["freecut-media", "freecut-timeline"]),
+    // Nothing but the app may depend on cloud.
+    ("freecut-cloud", &["freecut-media", "freecut-timeline"]),
     (
         "freecut-app",
         &[
             "freecut-audio",
+            "freecut-cloud",
             "freecut-media",
             "freecut-project",
             "freecut-render",
@@ -48,6 +53,7 @@ const FFMPEG_CRATES: &[&str] = &["ffmpeg-next", "ffmpeg-sys-next"];
 struct Dep {
     name: String,
     optional: bool,
+    default_features: bool,
 }
 
 /// Normal (non-dev, non-build) dependencies of every workspace member.
@@ -80,6 +86,7 @@ fn workspace_deps() -> BTreeMap<String, Vec<Dep>> {
             .map(|d| Dep {
                 name: d["name"].as_str().unwrap().to_string(),
                 optional: d["optional"].as_bool().unwrap_or(false),
+                default_features: d["uses_default_features"].as_bool().unwrap_or(true),
             })
             .collect();
         map.insert(pkg["name"].as_str().unwrap().to_string(), deps);
@@ -166,6 +173,91 @@ fn the_project_crate_never_reaches_media() {
             !["freecut-media", "freecut-render", "freecut-audio"].contains(&dep.name.as_str()),
             "freecut-project must not depend on {}",
             dep.name
+        );
+    }
+}
+
+/// Package names in `cargo tree -p <krate>` (normal dependencies only).
+fn tree(krate: &str, features: &[&str]) -> BTreeSet<String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let mut args = vec![
+        "tree",
+        "-p",
+        krate,
+        "-e",
+        "normal",
+        "--prefix",
+        "none",
+        "--format",
+        "{p}",
+        "--offline",
+    ];
+    if !features.is_empty() {
+        args.push("--features");
+        args.extend(features);
+    }
+    let out = Command::new(cargo)
+        .args(&args)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run cargo tree");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn cloud_reaches_media_without_ffmpeg() {
+    let deps = workspace_deps();
+    let media = deps["freecut-cloud"]
+        .iter()
+        .find(|d| d.name == "freecut-media")
+        .expect("cloud uses media for the cancel token");
+    assert!(
+        !media.default_features,
+        "freecut-cloud must use freecut-media with default-features = false"
+    );
+}
+
+#[test]
+fn cloud_with_networking_has_no_ffmpeg_gpu_or_ui() {
+    let names = tree("freecut-cloud", &["http"]);
+    assert!(
+        names.contains("ureq"),
+        "the http feature brings the transport"
+    );
+    for banned in ["ffmpeg-sys-next", "ffmpeg-next", "wgpu", "egui", "eframe"] {
+        assert!(
+            !names.contains(banned),
+            "freecut-cloud --features http pulls in {banned}"
+        );
+    }
+}
+
+#[test]
+fn cloud_without_http_has_no_networking_crates() {
+    let names = tree("freecut-cloud", &[]);
+    for banned in [
+        "ureq",
+        "ureq-proto",
+        "rustls",
+        "ring",
+        "rustls-platform-verifier",
+        "socket2",
+        "ffmpeg-sys-next",
+        "wgpu",
+        "egui",
+    ] {
+        assert!(
+            !names.contains(banned),
+            "freecut-cloud without http pulls in {banned}"
         );
     }
 }

@@ -1,0 +1,762 @@
+//! The MCP client, provider and guard against the in-memory fake service:
+//! handshake, SSE, session expiry, `401` and renewal, retries, the preflight
+//! guard and the unknown-outcome rule. No sockets.
+#![allow(clippy::unwrap_used, clippy::expect_used)] // test code
+
+mod common;
+
+use std::sync::Arc;
+
+use common::{
+    SwapToken, fake_higgsfield, fixture, fixture_json, golden, image_op, provider, video_op,
+};
+use freecut_cloud::CancelToken;
+use freecut_cloud::credits::Credits;
+use freecut_cloud::error::{CloudError, NotAcceptedReason, SubmitError, submit_disposition};
+use freecut_cloud::fake::{Fault, StreamMode, ToolReply};
+use freecut_cloud::mcp::{CallClass, McpError, StaticToken};
+use freecut_cloud::provider::{GenerationProvider, Operation, QuoteOutcome, Unavailable};
+use freecut_cloud::secret::Secret;
+use freecut_cloud::transport::CallLimits;
+use pretty_assertions::assert_eq;
+use proptest::prelude::*;
+use serde_json::{Value, json};
+
+fn token(t: &str) -> Arc<StaticToken> {
+    Arc::new(StaticToken(Secret::new(t)))
+}
+
+fn methods(fake: &freecut_cloud::fake::FakeService) -> Vec<String> {
+    fake.requests()
+        .iter()
+        .map(|r| {
+            r.tool().map_or_else(
+                || r.rpc_method().unwrap_or("-").to_owned(),
+                |t| format!("call:{t}"),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn constructing_a_provider_sends_nothing() {
+    let fake = fake_higgsfield();
+    let (_provider, _) = provider(&fake, token("t1"));
+    assert!(fake.requests().is_empty());
+}
+
+#[test]
+fn connect_runs_the_handshake_and_keeps_only_allowed_tools() {
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    let info = p.connect(&CancelToken::new()).unwrap();
+    assert_eq!(info.protocol_version, "2025-11-25");
+    assert_eq!(
+        info.offered,
+        vec![
+            "generate_image",
+            "generate_video",
+            "jobs_wait",
+            "models_explore"
+        ]
+    );
+    assert!(info.missing.is_empty());
+    // Pages of two: three tools/list calls for five tools.
+    assert_eq!(
+        methods(&fake),
+        vec![
+            "initialize",
+            "notifications/initialized",
+            "tools/list",
+            "tools/list",
+            "tools/list"
+        ]
+    );
+    let reqs = fake.requests();
+    assert_eq!(reqs[0].session, None);
+    assert_eq!(reqs[0].protocol, None);
+    assert_eq!(reqs[0].body["params"]["clientInfo"]["name"], "FreeCut");
+    assert_eq!(reqs[0].body["params"]["capabilities"], json!({}));
+    for r in &reqs[1..] {
+        assert_eq!(r.session.as_deref(), Some("fake-session-1"));
+        assert_eq!(r.protocol.as_deref(), Some("2025-11-25"));
+        assert_eq!(r.bearer.as_deref(), Some("t1"));
+    }
+    // The server's instructions are kept for the debug view only.
+    assert!(p.mcp().server().unwrap().instructions.is_some());
+}
+
+#[test]
+fn missing_tools_are_reported() {
+    let fake = fake_higgsfield();
+    fake.set_tools(
+        vec![json!({"name": "models_explore", "inputSchema": {}})],
+        10,
+    );
+    let (p, _) = provider(&fake, token("t1"));
+    let info = p.connect(&CancelToken::new()).unwrap();
+    assert_eq!(info.missing, vec!["generate_image", "generate_video"]);
+    assert_eq!(
+        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        QuoteOutcome::NotAvailable(Unavailable::ToolMissing {
+            tool: "generate_image".into()
+        })
+    );
+    assert!(fake.calls_to("generate_image").is_empty());
+}
+
+#[test]
+fn an_older_supported_revision_is_accepted_and_an_unknown_one_refused() {
+    let fake = fake_higgsfield();
+    fake.set_protocol("2025-06-18");
+    let (p, _) = provider(&fake, token("t1"));
+    assert_eq!(
+        p.connect(&CancelToken::new()).unwrap().protocol_version,
+        "2025-06-18"
+    );
+    fake.set_protocol("2024-11-05");
+    let (p, _) = provider(&fake, token("t1"));
+    assert_eq!(
+        p.connect(&CancelToken::new()),
+        Err(CloudError::UnsupportedServiceVersion {
+            version: "2024-11-05".into()
+        })
+    );
+}
+
+#[test]
+fn the_catalogue_loads_every_output_type() {
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    let c = p.catalogue(&CancelToken::new()).unwrap();
+    assert_eq!(c.models().len(), 36);
+    let kinds: Vec<Value> = fake
+        .calls_to("models_explore")
+        .iter()
+        .map(|a| a["type"].clone())
+        .collect();
+    assert_eq!(kinds, vec![json!("image"), json!("video"), json!("audio")]);
+    for args in fake.calls_to("models_explore") {
+        assert_eq!(args["action"], "list");
+        assert!(args.get("context").is_none());
+    }
+}
+
+#[test]
+fn catalogue_pages_are_followed() {
+    let fake = fake_higgsfield();
+    fake.on_tool("models_explore", |args| {
+        let kind = args["type"].as_str().unwrap_or_default();
+        if kind != "image" {
+            return ToolReply::Json(json!({"items": [], "has_more": false}));
+        }
+        match args.get("after").and_then(Value::as_str) {
+            None => ToolReply::Json(json!({"items": [{"id": "a", "output_type": "image"}], "has_more": true, "next_page_token": "p2"})),
+            Some("p2") => ToolReply::Json(json!({"items": [{"id": "b", "output_type": "image"}], "has_more": false})),
+            Some(other) => panic!("unexpected cursor {other}"),
+        }
+    });
+    let (p, _) = provider(&fake, token("t1"));
+    let c = p.catalogue(&CancelToken::new()).unwrap();
+    assert_eq!(
+        c.models().iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        vec!["a", "b"]
+    );
+}
+
+#[test]
+fn quotes_send_the_golden_arguments_and_read_the_recorded_answers() {
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    let cancel = CancelToken::new();
+    let QuoteOutcome::Quote(q) = p.quote(&image_op(), &cancel).unwrap() else {
+        panic!("expected a quote");
+    };
+    assert_eq!(q.credits, Credits::from_millis(250));
+    assert_eq!(q.arguments, golden("get_cost-image-gpt_image_2_5.json"));
+    assert_eq!(
+        fake.calls_to("generate_image"),
+        vec![golden("get_cost-image-gpt_image_2_5.json")]
+    );
+
+    let QuoteOutcome::Quote(q) = p.quote(&video_op(), &cancel).unwrap() else {
+        panic!("expected a quote");
+    };
+    assert_eq!(q.credits, Credits::from_millis(35_000));
+    assert_eq!(
+        fake.calls_to("generate_video"),
+        vec![golden("get_cost-video-seedance_2_5-t2v.json")]
+    );
+}
+
+#[test]
+fn quotes_work_over_sse_split_into_any_chunk_size() {
+    for chunk in [1, 7, 64, 4096] {
+        let fake = fake_higgsfield();
+        fake.set_stream(StreamMode::Sse { chunk });
+        fake.send_before_response(vec![
+            json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progress": 1}}),
+            json!({"jsonrpc": "2.0", "id": "srv-1", "method": "ping"}),
+            json!({"jsonrpc": "2.0", "id": "srv-2", "method": "sampling/createMessage", "params": {}}),
+        ]);
+        let (p, _) = provider(&fake, token("t1"));
+        let QuoteOutcome::Quote(q) = p.quote(&image_op(), &CancelToken::new()).unwrap() else {
+            panic!("expected a quote (chunk {chunk})");
+        };
+        assert_eq!(q.credits, Credits::from_millis(250));
+        let replies: Vec<Value> = fake
+            .requests()
+            .into_iter()
+            .filter(|r| r.body.get("method").is_none() && r.body.get("id").is_some())
+            .map(|r| r.body)
+            .collect();
+        assert!(
+            replies.contains(&json!({"jsonrpc": "2.0", "id": "srv-1", "result": {}})),
+            "{replies:?}"
+        );
+        assert!(
+            replies
+                .iter()
+                .any(|r| r["id"] == "srv-2" && r["error"]["code"] == -32601),
+            "{replies:?}"
+        );
+    }
+}
+
+#[test]
+fn quotes_also_read_structured_content() {
+    let fake = fake_higgsfield();
+    fake.on_tool("generate_image", |_| {
+        ToolReply::Structured(json!({"cost": {"credits": 1.5}}))
+    });
+    let (p, _) = provider(&fake, token("t1"));
+    let QuoteOutcome::Quote(q) = p.quote(&image_op(), &CancelToken::new()).unwrap() else {
+        panic!("expected a quote");
+    };
+    assert_eq!(q.credits, Credits::from_millis(1_500));
+}
+
+#[test]
+fn more_variants_than_an_estimate_covers_are_not_quoted() {
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    let Operation::Image(mut r) = image_op() else {
+        unreachable!()
+    };
+    r.variants = 2;
+    assert_eq!(
+        p.quote(&Operation::Image(r), &CancelToken::new()).unwrap(),
+        QuoteOutcome::NotAvailable(Unavailable::VariantsNotCovered { max: 1 })
+    );
+    assert!(fake.requests().is_empty());
+}
+
+#[test]
+fn a_session_404_on_a_free_call_reopens_the_session_and_resends_once() {
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    let cancel = CancelToken::new();
+    p.connect(&cancel).unwrap();
+    fake.expire_sessions();
+    fake.clear_requests();
+    p.catalogue(&cancel).unwrap();
+    let m = methods(&fake);
+    assert_eq!(
+        &m[..4],
+        [
+            "call:models_explore",
+            "initialize",
+            "notifications/initialized",
+            "call:models_explore"
+        ]
+    );
+    assert_eq!(
+        fake.requests()[3].session.as_deref(),
+        Some("fake-session-2")
+    );
+}
+
+#[test]
+fn a_session_404_on_a_cost_check_reopens_the_session_but_does_not_resend() {
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    let cancel = CancelToken::new();
+    p.catalogue(&cancel).unwrap();
+    p.connect(&cancel).unwrap();
+    fake.expire_sessions();
+    assert_eq!(
+        p.quote(&image_op(), &cancel),
+        Err(CloudError::NotAccepted {
+            reason: NotAcceptedReason::SessionExpired
+        })
+    );
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+    assert_eq!(p.mcp().session_id().as_deref(), Some("fake-session-3"));
+    // The user's next Check cost works on the new session.
+    assert!(matches!(
+        p.quote(&image_op(), &cancel),
+        Ok(QuoteOutcome::Quote(_))
+    ));
+    assert_eq!(fake.calls_to("generate_image").len(), 2);
+}
+
+#[test]
+fn a_401_on_a_free_call_renews_the_sign_in_and_resends_once() {
+    let fake = fake_higgsfield();
+    let tokens = SwapToken::new("t1", Some("t2"));
+    let (p, _) = provider(&fake, tokens.clone());
+    let cancel = CancelToken::new();
+    p.connect(&cancel).unwrap();
+    fake.reject_token("t1");
+    fake.accept_token("t2");
+    fake.clear_requests();
+    p.catalogue(&cancel).unwrap();
+    assert_eq!(tokens.renewals(), 1);
+    let first_two: Vec<_> = fake
+        .requests()
+        .into_iter()
+        .take(2)
+        .map(|r| r.bearer)
+        .collect();
+    assert_eq!(first_two, vec![Some("t1".into()), Some("t2".into())]);
+}
+
+#[test]
+fn a_401_after_renewal_is_sign_in_expired() {
+    let fake = fake_higgsfield();
+    let tokens = SwapToken::new("t1", None);
+    let (p, _) = provider(&fake, tokens.clone());
+    fake.reject_token("t1");
+    assert_eq!(
+        p.connect(&CancelToken::new()),
+        Err(CloudError::SignInExpired)
+    );
+    assert_eq!(tokens.renewals(), 1);
+    assert_eq!(fake.requests().len(), 1);
+}
+
+#[test]
+fn a_401_on_a_cost_check_renews_but_never_resends() {
+    let fake = fake_higgsfield();
+    let tokens = SwapToken::new("t1", Some("t2"));
+    let (p, _) = provider(&fake, tokens.clone());
+    let cancel = CancelToken::new();
+    p.catalogue(&cancel).unwrap();
+    p.connect(&cancel).unwrap();
+    fake.reject_token("t1");
+    fake.accept_token("t2");
+    assert_eq!(
+        p.quote(&image_op(), &cancel),
+        Err(CloudError::NotAccepted {
+            reason: NotAcceptedReason::Unauthorized
+        })
+    );
+    assert_eq!(tokens.renewals(), 1);
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+}
+
+#[test]
+fn free_calls_retry_connect_failures_and_5xx_but_not_lost_answers() {
+    let cancel = CancelToken::new();
+    // Two refused connections, then success: nothing reached the server twice.
+    let fake = fake_higgsfield();
+    let (p, waits) = provider(&fake, token("t1"));
+    p.connect(&cancel).unwrap();
+    fake.clear_requests();
+    fake.push_fault(Fault::Refuse);
+    fake.push_fault(Fault::Refuse);
+    p.catalogue(&cancel).unwrap();
+    assert_eq!(waits.waits.lock().unwrap().len(), 2);
+    assert_eq!(fake.calls_to("models_explore").len(), 3);
+
+    // A 503 is retried.
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    p.connect(&cancel).unwrap();
+    fake.clear_requests();
+    fake.push_fault(Fault::Status(503, "busy".into()));
+    p.catalogue(&cancel).unwrap();
+    assert_eq!(fake.calls_to("models_explore").len(), 4);
+
+    // An answer lost after sending is not retried.
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    p.connect(&cancel).unwrap();
+    fake.clear_requests();
+    fake.push_fault(Fault::DropAfterSend);
+    assert_eq!(p.catalogue(&cancel), Err(CloudError::NoAnswer));
+    assert_eq!(fake.calls_to("models_explore").len(), 1);
+
+    // Retries stop after three.
+    let fake = fake_higgsfield();
+    let (p, waits) = provider(&fake, token("t1"));
+    p.connect(&cancel).unwrap();
+    for _ in 0..4 {
+        fake.push_fault(Fault::Refuse);
+    }
+    assert_eq!(p.catalogue(&cancel), Err(CloudError::Offline));
+    assert_eq!(waits.waits.lock().unwrap().len(), 3);
+}
+
+#[test]
+fn cost_checks_retry_only_while_nothing_was_sent() {
+    let cancel = CancelToken::new();
+    for (fault, expected_calls, ok) in [
+        (Fault::Refuse, 1, true),
+        (Fault::DropAfterSend, 1, false),
+        (Fault::Status(503, "unavailable".into()), 1, false),
+        (Fault::Status(429, "slow down".into()), 1, false),
+        (Fault::Garbage, 1, false),
+        (Fault::CutStream, 1, false),
+    ] {
+        let fake = fake_higgsfield();
+        let (p, _) = provider(&fake, token("t1"));
+        p.catalogue(&cancel).unwrap();
+        p.connect(&cancel).unwrap();
+        fake.push_fault(fault.clone());
+        let result = p.quote(&image_op(), &cancel);
+        assert_eq!(result.is_ok(), ok, "{fault:?}: {result:?}");
+        assert_eq!(
+            fake.calls_to("generate_image").len(),
+            expected_calls,
+            "{fault:?}"
+        );
+    }
+}
+
+#[test]
+fn a_cost_check_answered_with_job_ids_is_a_started_run_and_stops_further_checks() {
+    let fake = fake_higgsfield();
+    // A service that ignores get_cost and starts a run.
+    fake.on_tool("generate_image", |_| {
+        ToolReply::Json(
+            json!({"jobs": [{"index": 0, "job_id": "5c6f0d1e-2b3a-4c4d-8e5f-6a7b8c9d0e1f"}]}),
+        )
+    });
+    let (p, _) = provider(&fake, token("t1"));
+    let cancel = CancelToken::new();
+    let QuoteOutcome::StartedRun(run) = p.quote(&image_op(), &cancel).unwrap() else {
+        panic!("expected a started run");
+    };
+    assert_eq!(run.job_ids, vec!["5c6f0d1e-2b3a-4c4d-8e5f-6a7b8c9d0e1f"]);
+    assert_eq!(run.tool, "generate_image");
+    assert!(p.guard().is_blocked("generate_image"));
+    // Exactly one submission per Check cost, and none after that.
+    for _ in 0..3 {
+        assert_eq!(
+            p.quote(&image_op(), &cancel).unwrap(),
+            QuoteOutcome::NotAvailable(Unavailable::PreflightStopped)
+        );
+    }
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+    // Other tools keep their checks.
+    assert!(matches!(
+        p.quote(&video_op(), &cancel).unwrap(),
+        QuoteOutcome::Quote(_)
+    ));
+}
+
+#[test]
+fn no_check_is_sent_when_the_live_schema_drops_get_cost() {
+    let fake = fake_higgsfield();
+    let mut tools = common::tools();
+    for t in &mut tools {
+        if t["name"] == "generate_image" {
+            t["inputSchema"]["properties"]["params"]["anyOf"][0]["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("get_cost");
+        }
+    }
+    fake.set_tools(tools, 10);
+    let (p, _) = provider(&fake, token("t1"));
+    assert_eq!(
+        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        QuoteOutcome::NotAvailable(Unavailable::NoEstimate)
+    );
+    assert!(fake.calls_to("generate_image").is_empty());
+}
+
+#[test]
+fn schema_drift_disables_the_check_instead_of_guessing() {
+    let fake = fake_higgsfield();
+    let mut tools = common::tools();
+    for t in &mut tools {
+        if t["name"] == "generate_image" {
+            t["inputSchema"]["properties"]["params"]["anyOf"][0]["properties"]["count"]["maximum"] =
+                json!(0);
+        }
+    }
+    fake.set_tools(tools, 10);
+    let (p, _) = provider(&fake, token("t1"));
+    assert!(matches!(
+        p.quote(&image_op(), &CancelToken::new()),
+        Err(CloudError::SchemaDrift { ref tool, .. }) if tool == "generate_image"
+    ));
+    assert!(fake.calls_to("generate_image").is_empty());
+}
+
+#[test]
+fn service_errors_from_a_cost_check_are_classified() {
+    let message = fixture("tool-error-unknown-model.txt");
+    let fake = fake_higgsfield();
+    fake.on_tool("generate_image", move |_| ToolReply::Error(message.clone()));
+    let (p, _) = provider(&fake, token("t1"));
+    assert!(matches!(
+        p.quote(&image_op(), &CancelToken::new()),
+        Err(CloudError::ModelUnavailable { .. })
+    ));
+    let fake = fake_higgsfield();
+    fake.on_tool("generate_video", |_| {
+        ToolReply::Error("Insufficient credits".into())
+    });
+    let (p, _) = provider(&fake, token("t1"));
+    assert_eq!(
+        p.quote(&video_op(), &CancelToken::new()),
+        Err(CloudError::InsufficientCredits)
+    );
+}
+
+#[test]
+fn a_cancelled_call_sends_nothing() {
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    assert_eq!(p.connect(&cancel), Err(CloudError::Cancelled));
+    assert!(fake.requests().is_empty());
+}
+
+#[test]
+fn closing_deletes_the_session() {
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    p.connect(&CancelToken::new()).unwrap();
+    p.close();
+    let last = fake.requests().pop().unwrap();
+    assert_eq!(last.method, freecut_cloud::transport::Method::Delete);
+    assert_eq!(last.session.as_deref(), Some("fake-session-1"));
+    assert_eq!(p.mcp().session_id(), None);
+}
+
+// ---- Paid calls: never more than one submission (CG-010) ----
+
+/// A fake whose generate tools "start runs".
+fn paid_fake() -> freecut_cloud::fake::FakeService {
+    let fake = fake_higgsfield();
+    fake.on_tool("generate_image", |_| {
+        ToolReply::Json(
+            json!({"jobs": [{"index": 0, "job_id": "0b4f6d2a-1111-4222-8333-944455556666"}]}),
+        )
+    });
+    fake
+}
+
+fn paid_call(
+    fake: &freecut_cloud::fake::FakeService,
+    tokens: Arc<dyn freecut_cloud::mcp::TokenSource>,
+) -> Result<(), McpError> {
+    let (p, _) = provider(fake, tokens);
+    let args = json!({"params": {"model": "gpt_image_2_5", "prompt": "x", "count": 1}});
+    p.mcp()
+        .call_tool(
+            "generate_image",
+            args,
+            CallClass::Paid,
+            CallLimits::PAID,
+            &CancelToken::new(),
+        )
+        .map(|_| ())
+}
+
+#[test]
+fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
+    use SubmitError::*;
+    // The table of §13: each scripted failure at the paid request itself.
+    let at_call = |fault: Fault| {
+        let fake = paid_fake();
+        let (p, _) = provider(&fake, token("t1"));
+        p.connect(&CancelToken::new()).unwrap();
+        fake.push_fault(fault);
+        let args = json!({"params": {"model": "gpt_image_2_5", "prompt": "x", "count": 1}});
+        let err = p
+            .mcp()
+            .call_tool(
+                "generate_image",
+                args,
+                CallClass::Paid,
+                CallLimits::PAID,
+                &CancelToken::new(),
+            )
+            .unwrap_err();
+        (
+            submit_disposition(&err),
+            fake.calls_to("generate_image").len(),
+        )
+    };
+    let (d, n) = at_call(Fault::Refuse);
+    assert!(
+        matches!(d, NotSent(CloudError::Offline)) && n == 0,
+        "{d:?} {n}"
+    );
+    let (d, n) = at_call(Fault::DropAfterSend);
+    assert!(
+        matches!(d, OutcomeUnknown(CloudError::NoAnswer)) && n == 1,
+        "{d:?} {n}"
+    );
+    let (d, n) = at_call(Fault::Status(502, "bad gateway".into()));
+    assert!(matches!(d, OutcomeUnknown(_)) && n == 1, "{d:?} {n}");
+    let (d, n) = at_call(Fault::Status(429, "too many concurrent jobs".into()));
+    assert!(
+        matches!(d, Rejected(CloudError::Busy)) && n == 1,
+        "{d:?} {n}"
+    );
+    let (d, n) = at_call(Fault::Garbage);
+    assert!(
+        matches!(d, OutcomeUnknown(CloudError::Protocol { .. })) && n == 1,
+        "{d:?} {n}"
+    );
+    let (d, n) = at_call(Fault::CutStream);
+    assert!(matches!(d, OutcomeUnknown(_)) && n == 1, "{d:?} {n}");
+
+    // 401: renewed, not resent.
+    let fake = paid_fake();
+    let tokens = SwapToken::new("t1", Some("t2"));
+    let (p, _) = provider(&fake, tokens.clone());
+    p.connect(&CancelToken::new()).unwrap();
+    fake.reject_token("t1");
+    fake.accept_token("t2");
+    let err = p
+        .mcp()
+        .call_tool(
+            "generate_image",
+            json!({"params": {"model": "m"}}),
+            CallClass::Paid,
+            CallLimits::PAID,
+            &CancelToken::new(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        submit_disposition(&err),
+        Rejected(CloudError::NotAccepted {
+            reason: NotAcceptedReason::Unauthorized
+        })
+    ));
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+    assert_eq!(tokens.renewals(), 1);
+
+    // Session 404: a new session, not resent.
+    let fake = paid_fake();
+    let (p, _) = provider(&fake, token("t1"));
+    p.connect(&CancelToken::new()).unwrap();
+    fake.expire_sessions();
+    let err = p
+        .mcp()
+        .call_tool(
+            "generate_image",
+            json!({"params": {"model": "m"}}),
+            CallClass::Paid,
+            CallLimits::PAID,
+            &CancelToken::new(),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        submit_disposition(&err),
+        Rejected(CloudError::NotAccepted {
+            reason: NotAcceptedReason::SessionExpired
+        })
+    ));
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+
+    // A failed handshake before the call: the call was never sent.
+    let fake = paid_fake();
+    fake.push_fault(Fault::DropAfterSend); // initialize's answer is lost
+    let err = paid_call(&fake, token("t1")).unwrap_err();
+    assert!(
+        matches!(submit_disposition(&err), NotSent(CloudError::NoAnswer)),
+        "{err:?}"
+    );
+    assert!(fake.calls_to("generate_image").is_empty());
+}
+
+fn fault_strategy() -> impl Strategy<Value = Fault> {
+    prop_oneof![
+        Just(Fault::Refuse),
+        Just(Fault::DropAfterSend),
+        Just(Fault::Status(500, "x".into())),
+        Just(Fault::Status(503, "x".into())),
+        Just(Fault::Status(429, "x".into())),
+        Just(Fault::Status(400, "x".into())),
+        Just(Fault::Garbage),
+        Just(Fault::CutStream),
+    ]
+}
+
+proptest! {
+    /// For any sequence of failures spread over the handshake and the paid
+    /// request, with or without SSE, expired sessions or a rejected token,
+    /// at most one submission reaches the service; and when none did, the
+    /// run is "not sent".
+    #[test]
+    fn a_paid_call_is_submitted_at_most_once(
+        faults in proptest::collection::vec(fault_strategy(), 0..8),
+        sse in any::<bool>(),
+        expire in any::<bool>(),
+        reject in any::<bool>(),
+    ) {
+        let fake = paid_fake();
+        if sse {
+            fake.set_stream(StreamMode::Sse { chunk: 5 });
+        }
+        let tokens = SwapToken::new("t1", Some("t2"));
+        let (p, _) = provider(&fake, tokens);
+        let _ = p.connect(&CancelToken::new());
+        if expire {
+            fake.expire_sessions();
+        }
+        if reject {
+            fake.reject_token("t1");
+            fake.accept_token("t2");
+        }
+        for f in faults {
+            fake.push_fault(f);
+        }
+        let result = p.mcp().call_tool(
+            "generate_image",
+            json!({"params": {"model": "gpt_image_2_5", "prompt": "x", "count": 1}}),
+            CallClass::Paid,
+            CallLimits::PAID,
+            &CancelToken::new(),
+        );
+        let submissions = fake.calls_to("generate_image").len();
+        prop_assert!(submissions <= 1, "{} submissions", submissions);
+        match result {
+            Ok(_) => prop_assert_eq!(submissions, 1),
+            Err(e) => {
+                if submissions == 0 {
+                    prop_assert!(matches!(submit_disposition(&e), SubmitError::NotSent(_)), "{:?}", e);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_recorded_challenge_fixture_is_what_the_fake_sends() {
+    let fake = fake_higgsfield();
+    let r = freecut_cloud::transport::HttpTransport::send(
+        &fake,
+        freecut_cloud::transport::HttpRequest::post_json(
+            freecut_cloud::provider::higgsfield::ENDPOINT,
+            b"{}".to_vec(),
+            CallLimits::READ,
+        ),
+        &CancelToken::new(),
+    )
+    .unwrap();
+    assert_eq!(
+        r.header("www-authenticate"),
+        Some(fixture("www-authenticate.txt").trim())
+    );
+    let _ = fixture_json("oauth-protected-resource-mcp.json");
+}

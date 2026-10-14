@@ -1,0 +1,19 @@
+{
+  "client_id": "FAKE_CLIENT_ID",
+  "client_id_issued_at": 1791962787388,
+  "client_secret_expires_at": 0,
+  "client_name": "FreeCut",
+  "redirect_uris": [
+    "http://127.0.0.1/callback"
+  ],
+  "grant_types": [
+    "authorization_code",
+    "refresh_token"
+  ],
+  "response_types": [
+    "code"
+  ],
+  "scope": "email offline_access openid",
+  "token_endpoint_auth_method": "none",
+  "application_type": "native"
+}

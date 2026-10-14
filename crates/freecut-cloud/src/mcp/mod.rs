@@ -1,0 +1,973 @@
+//! The MCP client: JSON-RPC 2.0 over Streamable HTTP (architecture §4).
+//!
+//! Every message is a `POST` to the endpoint; the answer is one JSON body or
+//! an SSE stream, checked for cancellation between chunks. The client keeps
+//! the session id and negotiated revision for its lifetime.
+//!
+//! Retries follow §4.5 by [`CallClass`]:
+//! - **free** calls are retried on connect errors, `429` and `5xx` (three
+//!   retries, 1 s / 2 s / 4 s ± 25 %), and resent once after a `401` (with a
+//!   renewed sign-in) or a session `404` (with a new session);
+//! - **preflights** are retried only while nothing was sent, and never resent
+//!   after the service answered;
+//! - **paid** calls are never retried or resent: after a `401` or session
+//!   `404` the sign-in or session is renewed and the call fails as
+//!   *not accepted*.
+
+pub mod jsonrpc;
+pub mod schema;
+pub mod sse;
+
+use std::fmt;
+use std::io::Read;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Instant;
+
+use freecut_media::cancel::CancelToken;
+use serde_json::{Value, json};
+
+use crate::error::{CloudError, NotAcceptedReason};
+use crate::guard::{self, GuardViolation};
+use crate::oauth::discovery::{BearerChallenge, parse_bearer_challenge};
+use crate::redact;
+use crate::secret::Secret;
+use crate::transport::{
+    BodyError, CallLimits, HttpRequest, HttpResponse, HttpTransport, Method, SendState,
+    TransportError, Waiter, backoff_delay, read_body,
+};
+
+use self::jsonrpc::{Incoming, RpcError};
+use self::sse::SseParser;
+
+/// The MCP revision FreeCut offers.
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+
+/// Revisions FreeCut accepts when the server picks one (2025-06-18 added
+/// `structuredContent` and the protocol-version header).
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18"];
+
+/// The tracing target for request and response bodies (redacted, `trace`
+/// level only); the app routes it to its separate cloud trace log (§11).
+pub const WIRE_TARGET: &str = "freecut_cloud::wire";
+
+const MAX_ANSWER_BYTES: usize = 16 * 1024 * 1024;
+const MAX_EXCERPT_BYTES: usize = 2 * 1024;
+const MAX_RETRIES: u32 = 3;
+const MAX_TOOL_PAGES: usize = 50;
+
+/// How a call may be retried or resent (§4.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallClass {
+    /// Read-only and free.
+    Free,
+    /// A cost preflight: free, but it shares its tool with the paid run.
+    Preflight,
+    /// Spends money (or must otherwise happen at most once).
+    Paid,
+}
+
+impl CallClass {
+    fn resends_after_refusal(self) -> bool {
+        self == CallClass::Free
+    }
+
+    fn may_retry(self, err: &McpError) -> bool {
+        match self {
+            CallClass::Free => match err {
+                McpError::Transport(e) => e.send == SendState::NotSent,
+                McpError::Http { status, .. } => *status == 429 || (500..=599).contains(status),
+                _ => false,
+            },
+            CallClass::Preflight => {
+                matches!(err, McpError::Transport(e) if e.send == SendState::NotSent)
+            }
+            CallClass::Paid => false,
+        }
+    }
+
+    fn token_purpose(self) -> TokenPurpose {
+        match self {
+            CallClass::Paid => TokenPurpose::BeforePaid,
+            CallClass::Free | CallClass::Preflight => TokenPurpose::Ordinary,
+        }
+    }
+}
+
+/// How much validity an access token must have left before it is used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenPurpose {
+    /// Ordinary calls: renew when under 60 s remain.
+    Ordinary,
+    /// Before a paid submission: renew when under 5 minutes remain.
+    BeforePaid,
+}
+
+impl TokenPurpose {
+    /// The minimum remaining validity, in seconds.
+    pub const fn margin_secs(self) -> i64 {
+        match self {
+            TokenPurpose::Ordinary => 60,
+            TokenPurpose::BeforePaid => 300,
+        }
+    }
+}
+
+/// Supplies access tokens, read right before each request (CG-002).
+pub trait TokenSource: Send + Sync + fmt::Debug {
+    /// A token with at least `purpose`'s validity left, renewed if needed.
+    ///
+    /// # Errors
+    /// [`CloudError`] when no usable token exists.
+    fn bearer(&self, purpose: TokenPurpose, cancel: &CancelToken) -> Result<Secret, CloudError>;
+
+    /// Renews the token after the service answered `401`.
+    ///
+    /// # Errors
+    /// [`CloudError::SignInExpired`] when it cannot be renewed.
+    fn renew(&self, cancel: &CancelToken) -> Result<(), CloudError>;
+}
+
+/// A fixed token that cannot be renewed (a pasted token, or tests).
+#[derive(Debug, Clone)]
+pub struct StaticToken(pub Secret);
+
+impl TokenSource for StaticToken {
+    fn bearer(&self, _purpose: TokenPurpose, _cancel: &CancelToken) -> Result<Secret, CloudError> {
+        Ok(self.0.clone())
+    }
+
+    fn renew(&self, _cancel: &CancelToken) -> Result<(), CloudError> {
+        Err(CloudError::SignInExpired)
+    }
+}
+
+/// A failed MCP exchange, before classification ([`crate::error::classify`]).
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum McpError {
+    /// No HTTP answer.
+    #[error(transparent)]
+    Transport(TransportError),
+    /// No token could be supplied; nothing was sent.
+    #[error("sign-in: {0}")]
+    SignIn(CloudError),
+    /// `401`.
+    #[error("unauthorized")]
+    Unauthorized {
+        /// The `WWW-Authenticate` challenge, if readable.
+        challenge: Option<BearerChallenge>,
+    },
+    /// `403`.
+    #[error("forbidden")]
+    Forbidden {
+        /// The `WWW-Authenticate` challenge, if readable.
+        challenge: Option<BearerChallenge>,
+    },
+    /// `404` on a request that carried a session id.
+    #[error("the session expired")]
+    SessionExpired,
+    /// Refused, renewed, and deliberately not resent.
+    #[error("not accepted: {0:?}")]
+    NotAccepted(NotAcceptedReason),
+    /// Any other non-success status.
+    #[error("HTTP {status}: {excerpt}")]
+    Http {
+        /// The status.
+        status: u16,
+        /// The start of the body, as quoted text.
+        excerpt: String,
+    },
+    /// A JSON-RPC error answer.
+    #[error(transparent)]
+    Rpc(RpcError),
+    /// A tool result with `isError: true`.
+    #[error("tool error: {message}")]
+    Tool {
+        /// The first text content.
+        message: String,
+        /// Structured content, or the text parsed as JSON.
+        structured: Option<Value>,
+    },
+    /// An answer that cannot be read.
+    #[error("unreadable answer: {detail}")]
+    Protocol {
+        /// Details for the log.
+        detail: String,
+    },
+    /// The server chose a revision FreeCut does not implement.
+    #[error("unsupported protocol version {0}")]
+    UnsupportedVersion(String),
+    /// The caller cancelled.
+    #[error("cancelled")]
+    Cancelled {
+        /// Whether the request may have been sent.
+        send: SendState,
+    },
+    /// The preflight guard refused to send.
+    #[error("preflight guard: {0}")]
+    Guard(GuardViolation),
+    /// The call was not sent because the handshake before it failed.
+    #[error("not sent, the handshake failed: {0}")]
+    BeforeSending(Box<McpError>),
+}
+
+impl McpError {
+    /// Whether the failed request may have reached the server.
+    pub fn send_state(&self) -> SendState {
+        match self {
+            McpError::Transport(e) => e.send,
+            McpError::Cancelled { send } => *send,
+            McpError::SignIn(_) | McpError::Guard(_) | McpError::BeforeSending(_) => {
+                SendState::NotSent
+            }
+            _ => SendState::MaybeSent,
+        }
+    }
+
+    fn protocol(detail: impl Into<String>) -> McpError {
+        McpError::Protocol {
+            detail: detail.into(),
+        }
+    }
+}
+
+/// What the server said about itself in `initialize`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerInfo {
+    /// `serverInfo.name`.
+    pub name: String,
+    /// `serverInfo.version`.
+    pub version: String,
+    /// The negotiated revision.
+    pub protocol_version: String,
+    /// The server's `instructions`: text for chat agents. Kept for the debug
+    /// view only; FreeCut never acts on it.
+    pub instructions: Option<String>,
+}
+
+/// One tool from `tools/list`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolInfo {
+    /// The tool name.
+    pub name: String,
+    /// Its description (untrusted text, not shown as instructions).
+    pub description: String,
+    /// Its JSON Schema for arguments.
+    pub input_schema: Value,
+}
+
+/// A successful tool result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolOutput {
+    /// `structuredContent`, when present.
+    pub structured: Option<Value>,
+    /// The `text` content items.
+    pub texts: Vec<String>,
+}
+
+impl ToolOutput {
+    /// The result as JSON (§4.3): `structuredContent`, else the first text
+    /// parsed as JSON, else that text as a string.
+    pub fn value(&self) -> Option<Value> {
+        if let Some(v) = &self.structured {
+            return Some(v.clone());
+        }
+        let text = self.texts.first()?;
+        Some(serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.clone())))
+    }
+}
+
+#[derive(Debug, Default)]
+struct Session {
+    id: Option<String>,
+    protocol: Option<String>,
+    server: Option<ServerInfo>,
+    next_id: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Request,
+    Notification,
+}
+
+#[derive(Debug)]
+struct Outgoing<'a> {
+    method: &'a str,
+    params: Option<Value>,
+    kind: Kind,
+}
+
+#[derive(Debug)]
+struct Answer {
+    result: Value,
+    session: Option<String>,
+}
+
+/// An MCP client for one server and one account.
+pub struct McpClient {
+    endpoint: String,
+    transport: Arc<dyn HttpTransport>,
+    tokens: Arc<dyn TokenSource>,
+    waiter: Arc<dyn Waiter>,
+    client_version: String,
+    session: Mutex<Session>,
+}
+
+impl fmt::Debug for McpClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("McpClient")
+            .field("endpoint", &self.endpoint)
+            .field("client_version", &self.client_version)
+            .finish_non_exhaustive()
+    }
+}
+
+impl McpClient {
+    /// A client for `endpoint`. Nothing is sent until the first call.
+    pub fn new(
+        endpoint: impl Into<String>,
+        transport: Arc<dyn HttpTransport>,
+        tokens: Arc<dyn TokenSource>,
+        waiter: Arc<dyn Waiter>,
+        client_version: impl Into<String>,
+    ) -> McpClient {
+        McpClient {
+            endpoint: endpoint.into(),
+            transport,
+            tokens,
+            waiter,
+            client_version: client_version.into(),
+            session: Mutex::new(Session::default()),
+        }
+    }
+
+    /// The endpoint URL.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// The server's description from the last handshake.
+    pub fn server(&self) -> Option<ServerInfo> {
+        self.lock().server.clone()
+    }
+
+    /// The current session id, if the server issued one.
+    pub fn session_id(&self) -> Option<String> {
+        self.lock().id.clone()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Session> {
+        self.session.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Runs the handshake (§4.2): `initialize`, then
+    /// `notifications/initialized`. Starts a new session.
+    ///
+    /// # Errors
+    /// [`McpError`] when the handshake fails or the server's revision is not
+    /// supported.
+    pub fn initialize(&self, cancel: &CancelToken) -> Result<ServerInfo, McpError> {
+        {
+            let mut s = self.lock();
+            s.id = None;
+            s.protocol = None;
+            s.server = None;
+        }
+        let params = json!({
+            "protocolVersion": LATEST_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "FreeCut", "version": self.client_version},
+        });
+        let answer = self.exchange(
+            &Outgoing {
+                method: "initialize",
+                params: Some(params),
+                kind: Kind::Request,
+            },
+            CallClass::Free,
+            CallLimits::READ,
+            cancel,
+        )?;
+        let info = parse_initialize(&answer.result)?;
+        if let Some(id) = &answer.session
+            && !id.bytes().all(|b| (0x21..=0x7e).contains(&b))
+        {
+            return Err(McpError::protocol(
+                "the session id has characters MCP does not allow",
+            ));
+        }
+        {
+            let mut s = self.lock();
+            s.id = answer.session;
+            s.protocol = Some(info.protocol_version.clone());
+            s.server = Some(info.clone());
+        }
+        self.exchange(
+            &Outgoing {
+                method: "notifications/initialized",
+                params: None,
+                kind: Kind::Notification,
+            },
+            CallClass::Free,
+            CallLimits::READ,
+            cancel,
+        )?;
+        tracing::debug!(server = %info.name, version = %info.version, protocol = %info.protocol_version, "mcp session started");
+        Ok(info)
+    }
+
+    fn ensure_initialized(&self, cancel: &CancelToken) -> Result<(), McpError> {
+        let ready = self.lock().protocol.is_some();
+        if !ready {
+            self.initialize(cancel)?;
+        }
+        Ok(())
+    }
+
+    /// Lists every tool, following `nextCursor` (§4.2).
+    ///
+    /// # Errors
+    /// [`McpError`] when a page cannot be fetched or read.
+    pub fn list_tools(&self, cancel: &CancelToken) -> Result<Vec<ToolInfo>, McpError> {
+        self.ensure_initialized(cancel)?;
+        let mut tools = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_TOOL_PAGES {
+            let params = cursor.as_ref().map(|c| json!({ "cursor": c }));
+            let page = self
+                .exchange(
+                    &Outgoing {
+                        method: "tools/list",
+                        params,
+                        kind: Kind::Request,
+                    },
+                    CallClass::Free,
+                    CallLimits::READ,
+                    cancel,
+                )?
+                .result;
+            let items = page
+                .get("tools")
+                .and_then(Value::as_array)
+                .ok_or_else(|| McpError::protocol("tools/list without a tools array"))?;
+            for item in items {
+                let name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| McpError::protocol("a tool without a name"))?;
+                tools.push(ToolInfo {
+                    name: name.to_owned(),
+                    description: item
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    input_schema: item
+                        .get("inputSchema")
+                        .cloned()
+                        .unwrap_or_else(|| json!({})),
+                });
+            }
+            match page.get("nextCursor").and_then(Value::as_str) {
+                Some(next) if !next.is_empty() => cursor = Some(next.to_owned()),
+                _ => return Ok(tools),
+            }
+        }
+        Err(McpError::protocol("tools/list did not end"))
+    }
+
+    /// Calls a tool (§4.3). `class` decides the retry rules; `limits` the
+    /// timeouts.
+    ///
+    /// # Errors
+    /// [`McpError`]; a result with `isError: true` is [`McpError::Tool`].
+    pub fn call_tool(
+        &self,
+        name: &str,
+        arguments: Value,
+        class: CallClass,
+        limits: CallLimits,
+        cancel: &CancelToken,
+    ) -> Result<ToolOutput, McpError> {
+        // A failed handshake means this call never left, whatever the
+        // handshake's own requests did.
+        self.ensure_initialized(cancel)
+            .map_err(|e| McpError::BeforeSending(Box::new(e)))?;
+        tracing::debug!(tool = name, ?class, "tools/call");
+        let answer = self.exchange(
+            &Outgoing {
+                method: "tools/call",
+                params: Some(json!({ "name": name, "arguments": arguments })),
+                kind: Kind::Request,
+            },
+            class,
+            limits,
+            cancel,
+        )?;
+        parse_tool_result(answer.result)
+    }
+
+    /// Ends the session with `DELETE` (on disconnect and quit; best effort,
+    /// 2 s). The next call starts a new session.
+    pub fn close(&self) {
+        let session = {
+            let mut s = self.lock();
+            s.protocol = None;
+            s.server = None;
+            s.id.take()
+        };
+        let Some(id) = session else {
+            return;
+        };
+        let cancel = CancelToken::new();
+        let Ok(token) = self.tokens.bearer(TokenPurpose::Ordinary, &cancel) else {
+            return;
+        };
+        let mut request = HttpRequest::get(self.endpoint.clone(), CallLimits::CLOSE)
+            .header("mcp-session-id", id)
+            .with_bearer(token);
+        request.method = Method::Delete;
+        if let Err(e) = self.transport.send(request, &cancel) {
+            tracing::debug!(error = %e, "could not close the mcp session");
+        }
+    }
+
+    /// One logical exchange with §4.5's retry and resend rules.
+    fn exchange(
+        &self,
+        out: &Outgoing<'_>,
+        class: CallClass,
+        limits: CallLimits,
+        cancel: &CancelToken,
+    ) -> Result<Answer, McpError> {
+        let mut retries = 0;
+        let mut renewed = false;
+        let mut reinitialized = false;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(McpError::Cancelled {
+                    send: SendState::NotSent,
+                });
+            }
+            let err = match self.send_once(out, class, limits, cancel) {
+                Ok(answer) => return Ok(answer),
+                Err(err) => err,
+            };
+            match err {
+                McpError::Unauthorized { challenge } if !renewed => {
+                    renewed = true;
+                    if let Err(e) = self.tokens.renew(cancel) {
+                        return Err(if class.resends_after_refusal() {
+                            McpError::SignIn(e)
+                        } else {
+                            McpError::Unauthorized { challenge }
+                        });
+                    }
+                    if !class.resends_after_refusal() {
+                        return Err(McpError::NotAccepted(NotAcceptedReason::Unauthorized));
+                    }
+                }
+                McpError::SessionExpired if !reinitialized && out.method != "initialize" => {
+                    reinitialized = true;
+                    let renewed = self.initialize(cancel);
+                    if !class.resends_after_refusal() {
+                        // The refusal is the answer to this call; a failed
+                        // renewal only affects the next one.
+                        if let Err(e) = renewed {
+                            tracing::debug!(error = %e, "could not open a new session");
+                        }
+                        return Err(McpError::NotAccepted(NotAcceptedReason::SessionExpired));
+                    }
+                    renewed?;
+                }
+                err if retries < MAX_RETRIES && class.may_retry(&err) => {
+                    let delay = backoff_delay(retries, self.waiter.jitter());
+                    retries += 1;
+                    tracing::debug!(method = out.method, retry = retries, ?delay, error = %err, "retrying");
+                    if !self.waiter.wait(delay, cancel) {
+                        return Err(McpError::Cancelled {
+                            send: SendState::NotSent,
+                        });
+                    }
+                }
+                err => return Err(err),
+            }
+        }
+    }
+
+    /// One HTTP request, no retries.
+    fn send_once(
+        &self,
+        out: &Outgoing<'_>,
+        class: CallClass,
+        limits: CallLimits,
+        cancel: &CancelToken,
+    ) -> Result<Answer, McpError> {
+        let is_initialize = out.method == "initialize";
+        let (id, session, protocol) = {
+            let mut s = self.lock();
+            s.next_id += 1;
+            (s.next_id, s.id.clone(), s.protocol.clone())
+        };
+        let message = match out.kind {
+            Kind::Request => jsonrpc::request(id, out.method, out.params.clone()),
+            Kind::Notification => jsonrpc::notification(out.method, out.params.clone()),
+        };
+        let body = serde_json::to_vec(&message).map_err(|e| McpError::protocol(e.to_string()))?;
+        if class == CallClass::Preflight {
+            guard::verify_outgoing_preflight(&body).map_err(McpError::Guard)?;
+        }
+        let token = self
+            .tokens
+            .bearer(class.token_purpose(), cancel)
+            .map_err(McpError::SignIn)?;
+        let mut request = HttpRequest::post_json(self.endpoint.clone(), body, limits)
+            .header("accept", "application/json, text/event-stream")
+            .with_bearer(token);
+        if !is_initialize {
+            if let Some(version) = protocol {
+                request = request.header("mcp-protocol-version", version);
+            }
+            if let Some(sid) = &session {
+                request = request.header("mcp-session-id", sid.clone());
+            }
+        }
+        tracing::trace!(target: WIRE_TARGET, method = out.method, body = %redact::body(&request.body), "mcp request");
+        let started = Instant::now();
+        let response = self
+            .transport
+            .send(request, cancel)
+            .map_err(McpError::Transport)?;
+        tracing::debug!(
+            method = out.method,
+            status = response.status,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "mcp answer"
+        );
+        let session_header = response.header("mcp-session-id").map(str::to_owned);
+        let www_authenticate = response.header("www-authenticate").map(str::to_owned);
+        let challenge = || www_authenticate.as_deref().and_then(parse_bearer_challenge);
+        match response.status {
+            200..=299 => match out.kind {
+                Kind::Notification => Ok(Answer {
+                    result: Value::Null,
+                    session: session_header,
+                }),
+                Kind::Request => {
+                    let result = self.read_answer(response, id, cancel)?;
+                    Ok(Answer {
+                        result,
+                        session: session_header,
+                    })
+                }
+            },
+            401 => Err(McpError::Unauthorized {
+                challenge: challenge(),
+            }),
+            403 => Err(McpError::Forbidden {
+                challenge: challenge(),
+            }),
+            404 if session.is_some() => Err(McpError::SessionExpired),
+            status => {
+                let excerpt = excerpt(response, cancel);
+                Err(McpError::Http { status, excerpt })
+            }
+        }
+    }
+
+    fn read_answer(
+        &self,
+        mut response: HttpResponse,
+        id: i64,
+        cancel: &CancelToken,
+    ) -> Result<Value, McpError> {
+        match response.media_type().as_deref() {
+            Some("application/json") => {
+                let bytes =
+                    read_body(&mut response.body, cancel, MAX_ANSWER_BYTES).map_err(body_error)?;
+                tracing::trace!(target: WIRE_TARGET, body = %redact::body(&bytes), "mcp answer body");
+                let value: Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| McpError::protocol(format!("invalid JSON: {e}")))?;
+                for message in jsonrpc::messages(value).map_err(McpError::protocol)? {
+                    if let Some(outcome) = self.handle_incoming(&message, id, cancel)? {
+                        return outcome;
+                    }
+                }
+                Err(McpError::protocol(
+                    "the answer has no response to the request",
+                ))
+            }
+            Some("text/event-stream") => self.read_stream(response, id, cancel),
+            other => Err(McpError::protocol(format!(
+                "unexpected content type {}",
+                other.unwrap_or("(none)")
+            ))),
+        }
+    }
+
+    fn read_stream(
+        &self,
+        mut response: HttpResponse,
+        id: i64,
+        cancel: &CancelToken,
+    ) -> Result<Value, McpError> {
+        let mut parser = SseParser::new(MAX_ANSWER_BYTES);
+        let mut chunk = [0u8; 8 * 1024];
+        loop {
+            if cancel.is_cancelled() {
+                return Err(McpError::Cancelled {
+                    send: SendState::MaybeSent,
+                });
+            }
+            let n = match response.body.read(&mut chunk) {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) if cancel.is_cancelled() => {
+                    return Err(McpError::Cancelled {
+                        send: SendState::MaybeSent,
+                    });
+                }
+                Err(e) => return Err(McpError::protocol(format!("the event stream broke: {e}"))),
+            };
+            if n == 0 {
+                return Err(McpError::protocol(
+                    "the event stream ended before the response",
+                ));
+            }
+            let events = parser
+                .feed(&chunk[..n])
+                .map_err(|e| McpError::protocol(e.to_string()))?;
+            for event in events {
+                if event.data.trim().is_empty() {
+                    continue; // priming or keep-alive event
+                }
+                tracing::trace!(target: WIRE_TARGET, data = %redact::body(event.data.as_bytes()), "mcp event");
+                let value: Value = serde_json::from_str(&event.data)
+                    .map_err(|e| McpError::protocol(format!("invalid JSON in an event: {e}")))?;
+                for message in jsonrpc::messages(value).map_err(McpError::protocol)? {
+                    if let Some(outcome) = self.handle_incoming(&message, id, cancel)? {
+                        return outcome;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handles one message; `Some` when it answers request `id`.
+    #[allow(clippy::type_complexity)] // Option<Result<..>>: "not ours" vs "ours, maybe an error"
+    fn handle_incoming(
+        &self,
+        message: &Value,
+        id: i64,
+        cancel: &CancelToken,
+    ) -> Result<Option<Result<Value, McpError>>, McpError> {
+        match jsonrpc::parse(message).map_err(McpError::protocol)? {
+            Incoming::Response { id: rid, outcome } => {
+                if rid == json!(id) {
+                    Ok(Some(outcome.map_err(McpError::Rpc)))
+                } else {
+                    tracing::debug!("ignored a response to another request");
+                    Ok(None)
+                }
+            }
+            Incoming::Request { id: rid, method } => {
+                self.answer_server_request(&rid, &method, cancel);
+                Ok(None)
+            }
+            Incoming::Notification { method } => {
+                if method == "notifications/progress" || method == "notifications/message" {
+                    tracing::debug!(%method, "server notification");
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    /// FreeCut declares no client capabilities: `ping` gets the empty result
+    /// MCP requires, anything else "method not found" (§4.1).
+    fn answer_server_request(&self, id: &Value, method: &str, cancel: &CancelToken) {
+        let reply = if method == "ping" {
+            jsonrpc::result(id, json!({}))
+        } else {
+            jsonrpc::error(
+                id,
+                jsonrpc::METHOD_NOT_FOUND,
+                "FreeCut does not serve requests",
+            )
+        };
+        let Ok(token) = self.tokens.bearer(TokenPurpose::Ordinary, cancel) else {
+            return;
+        };
+        let (session, protocol) = {
+            let s = self.lock();
+            (s.id.clone(), s.protocol.clone())
+        };
+        let mut request = HttpRequest::post_json(
+            self.endpoint.clone(),
+            reply.to_string().into_bytes(),
+            CallLimits::READ,
+        )
+        .header("accept", "application/json, text/event-stream")
+        .with_bearer(token);
+        if let Some(version) = protocol {
+            request = request.header("mcp-protocol-version", version);
+        }
+        if let Some(sid) = session {
+            request = request.header("mcp-session-id", sid);
+        }
+        if let Err(e) = self.transport.send(request, cancel) {
+            tracing::debug!(error = %e, %method, "could not answer a server request");
+        }
+    }
+}
+
+fn body_error(e: BodyError) -> McpError {
+    match e {
+        BodyError::Cancelled => McpError::Cancelled {
+            send: SendState::MaybeSent,
+        },
+        other => McpError::protocol(other.to_string()),
+    }
+}
+
+/// The start of an error body as quoted text.
+fn excerpt(mut response: HttpResponse, cancel: &CancelToken) -> String {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while buf.len() < MAX_EXCERPT_BYTES && !cancel.is_cancelled() {
+        match response.body.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => buf.extend_from_slice(&chunk[..n.min(MAX_EXCERPT_BYTES - buf.len())]),
+        }
+    }
+    crate::error::quoted(&String::from_utf8_lossy(&buf))
+}
+
+fn parse_initialize(result: &Value) -> Result<ServerInfo, McpError> {
+    let version = result
+        .get("protocolVersion")
+        .and_then(Value::as_str)
+        .ok_or_else(|| McpError::protocol("initialize without protocolVersion"))?;
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&version) {
+        return Err(McpError::UnsupportedVersion(version.to_owned()));
+    }
+    let info = result.get("serverInfo");
+    let text = |key: &str| {
+        info.and_then(|i| i.get(key))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    Ok(ServerInfo {
+        name: text("name"),
+        version: text("version"),
+        protocol_version: version.to_owned(),
+        instructions: result
+            .get("instructions")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
+}
+
+fn parse_tool_result(result: Value) -> Result<ToolOutput, McpError> {
+    let obj = result
+        .as_object()
+        .ok_or_else(|| McpError::protocol("a tool result that is not an object"))?;
+    let texts = obj
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|c| c.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|c| c.get("text").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let output = ToolOutput {
+        structured: obj.get("structuredContent").cloned(),
+        texts,
+    };
+    if obj.get("isError").and_then(Value::as_bool).unwrap_or(false) {
+        return Err(McpError::Tool {
+            message: output.texts.first().cloned().unwrap_or_default(),
+            structured: output.value().filter(Value::is_object),
+        });
+    }
+    Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_values_prefer_structured_content() {
+        let out = parse_tool_result(json!({
+            "content": [{"type": "text", "text": "{\"cost\":{\"credits\":1}}"}],
+            "structuredContent": {"cost": {"credits": 2}}
+        }))
+        .unwrap();
+        assert_eq!(out.value(), Some(json!({"cost": {"credits": 2}})));
+        let out =
+            parse_tool_result(json!({"content": [{"type": "text", "text": "{\"a\":1}"}]})).unwrap();
+        assert_eq!(out.value(), Some(json!({"a": 1})));
+        let out =
+            parse_tool_result(json!({"content": [{"type": "text", "text": "plain"}]})).unwrap();
+        assert_eq!(out.value(), Some(json!("plain")));
+        assert_eq!(
+            parse_tool_result(json!({"content": []})).unwrap().value(),
+            None
+        );
+    }
+
+    #[test]
+    fn tool_errors_carry_the_message() {
+        let err = parse_tool_result(json!({
+            "content": [{"type": "text", "text": "Invalid request: unknown model \"x\""}],
+            "isError": true
+        }))
+        .unwrap_err();
+        assert!(
+            matches!(err, McpError::Tool { ref message, structured: None } if message.starts_with("Invalid request"))
+        );
+    }
+
+    #[test]
+    fn initialize_accepts_only_supported_revisions() {
+        let ok = parse_initialize(
+            &json!({"protocolVersion": "2025-06-18", "serverInfo": {"name": "s", "version": "1"}}),
+        )
+        .unwrap();
+        assert_eq!(ok.protocol_version, "2025-06-18");
+        assert_eq!(
+            parse_initialize(&json!({"protocolVersion": "2024-11-05"})),
+            Err(McpError::UnsupportedVersion("2024-11-05".into()))
+        );
+    }
+
+    #[test]
+    fn only_free_calls_retry_after_an_answer() {
+        let http = McpError::Http {
+            status: 503,
+            excerpt: String::new(),
+        };
+        let not_sent = McpError::Transport(TransportError::not_sent(
+            crate::transport::TransportErrorKind::Connect,
+            "",
+        ));
+        let maybe = McpError::Transport(TransportError::maybe_sent(
+            crate::transport::TransportErrorKind::Timeout,
+            "",
+        ));
+        assert!(CallClass::Free.may_retry(&http));
+        assert!(CallClass::Free.may_retry(&not_sent));
+        assert!(!CallClass::Free.may_retry(&maybe));
+        assert!(!CallClass::Preflight.may_retry(&http));
+        assert!(CallClass::Preflight.may_retry(&not_sent));
+        assert!(!CallClass::Preflight.may_retry(&maybe));
+        assert!(!CallClass::Paid.may_retry(&not_sent));
+        assert!(!CallClass::Paid.may_retry(&http));
+    }
+}

@@ -1,0 +1,9 @@
+{
+  "params": {
+    "aspect_ratio": "1:1",
+    "count": 1,
+    "get_cost": true,
+    "model": "gpt_image_2_5",
+    "prompt": "a red apple on a white table"
+  }
+}
