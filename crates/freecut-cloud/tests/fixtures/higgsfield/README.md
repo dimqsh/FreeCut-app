@@ -25,3 +25,26 @@ transport, so they show the tool results' JSON, not the HTTP framing
 signed-in FreeCut client exists (see §15 of the architecture doc).
 
 Tokens, e-mails, subject ids and signed URLs: none are present.
+
+## Recorded by FreeCut itself (`recorded/`)
+
+`recorded/free-calls.jsonl` is written by
+
+```text
+cargo run -p freecut-cloud --features http --example record
+```
+
+which the owner runs once and signs in to in the browser. It records
+FreeCut's own HTTP exchanges, so it shows what the excerpts above cannot:
+content types, SSE or JSON answers, session and protocol headers. Free calls
+only: discovery, one client registration, the code exchange, `initialize`,
+`tools/list`, the `models_explore` listings and the session `DELETE`. The
+tool's transport refuses any paid tool and anything carrying `get_cost`
+before it is sent.
+
+Before writing, the tool removes the `Authorization` header, replaces secret
+fields (tokens, codes, client id) and the client id wherever else it appears,
+and replaces e-mail addresses, JWTs and UUIDs with stable fakes; session ids
+become `fake-session-N` and signed URLs lose their query. Review the file
+before committing it. Not recorded yet.
+

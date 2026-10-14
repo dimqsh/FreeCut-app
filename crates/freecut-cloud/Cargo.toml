@@ -36,6 +36,13 @@ ureq = { workspace = true, optional = true }
 # errors to classify as "not sent" (§4.5).
 rustls = { workspace = true, features = ["ring"], optional = true }
 
+# Records FreeCut's own free exchanges with the service as fixtures; the
+# owner signs in once (architecture §13). Its tests run with `http`.
+[[example]]
+name = "record"
+required-features = ["http"]
+test = true
+
 [dev-dependencies]
 pretty_assertions.workspace = true
 proptest.workspace = true
