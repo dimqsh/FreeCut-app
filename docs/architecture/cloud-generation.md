@@ -948,6 +948,22 @@ README).
   Generated bin with *How it was made*; Place puts one on the timeline and Undo removes it (the
   file stays); quitting during a run and restarting resumes and imports it; a submission that
   times out after sending shows *Outcome unknown* and is never sent again on its own.
+- **Worker obligations (review round 2, R9; acceptance criteria, each with a test):**
+  - **Drain the late queue.** Late job ids can arrive up to 120 s after a cancel or after an
+    answer the client gave up on (longer across resumes) and sit only in
+    `McpClient::take_late_results`. The worker drains it on every tick and before quitting and
+    writes every id to the ledger; draining once right after a cancel is not enough. Test: a
+    late answer that arrives after the cancel tick still reaches the ledger.
+  - **Explain blocked checks.** Cost checks use pooled connections without the cancel gate, so
+    cancelling a check in flight ends as *PossiblyStarted* and blocks that tool's checks until
+    restart. The run sheet says so in plain words. If that proves too harsh, route checks
+    through the gated agent instead. Test: a cancelled check shows the explanation, and the
+    next check of that tool is refused without a request.
+  - **Keep `notify_cancelled` off the UI thread.** It blocks, and `TokenSource::bearer` may
+    refresh over the network under a token that cannot be cancelled. Only the cloud worker
+    calls into `freecut-cloud`. Test: the UI thread's cancel path returns without a call into
+    the client.
+  - **One `PreflightGuard` per app run**, shared by every provider the worker creates (R6).
 
 ### H3 — AI edit actions on clips
 
