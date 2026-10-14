@@ -478,7 +478,7 @@ struct Scrubber {
 impl Scrubber {
     fn value(&mut self, value: &Value) -> Value {
         match value {
-            Value::String(s) => Value::String(self.text(s)),
+            Value::String(s) => Value::String(self.string(s)),
             Value::Array(items) => Value::Array(items.iter().map(|v| self.value(v)).collect()),
             Value::Object(map) => Value::Object(
                 map.iter()
@@ -504,10 +504,40 @@ impl Scrubber {
             .clone()
     }
 
-    /// UUIDs anywhere (inside escaped JSON and URL paths too), then word by
-    /// word: e-mail addresses, JWTs and signed URL queries.
+    /// A string value: an event stream is scrubbed line by line, each
+    /// `data:` line as parsed JSON; a string that holds JSON (a tool result's
+    /// text item) is parsed, scrubbed and written back; anything else is
+    /// scrubbed as text. Scrubbing parsed JSON keeps it valid: replacing
+    /// inside escaped JSON could drop an escaping backslash (review R21).
+    fn string(&mut self, s: &str) -> String {
+        if s.lines().any(|l| l.starts_with("data:")) {
+            return s
+                .lines()
+                .map(|line| match line.strip_prefix("data:") {
+                    Some(data) => match serde_json::from_str::<Value>(data.trim()) {
+                        Ok(v) => format!("data: {}", self.value(&v)),
+                        Err(_) => self.text(line),
+                    },
+                    None => self.text(line),
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        let trimmed = s.trim_start();
+        if (trimmed.starts_with('{') || trimmed.starts_with('['))
+            && let Ok(v) = serde_json::from_str::<Value>(s)
+        {
+            return self.value(&v).to_string();
+        }
+        self.text(s)
+    }
+
+    /// UUIDs, e-mail addresses and JWTs wherever they sit (review R21), then
+    /// word by word: signed URL queries.
     fn text(&mut self, text: &str) -> String {
         let text = self.uuids(text);
+        let text = self.emails(&text);
+        let text = jwts(&text);
         let mut out = String::with_capacity(text.len());
         let mut word = String::new();
         let flush = |word: &mut String, out: &mut String, this: &mut Scrubber| {
@@ -561,17 +591,59 @@ impl Scrubber {
         out
     }
 
+    /// Every e-mail address, written with `@` or `%40`: only the address is
+    /// replaced, so surrounding escapes and URLs stay intact. The local part
+    /// never takes a character that an escaping backslash precedes.
+    fn emails(&mut self, text: &str) -> String {
+        let b = text.as_bytes();
+        let local = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'+' | b'-');
+        let domain = |c: u8| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-');
+        let mut out = String::with_capacity(text.len());
+        let (mut last, mut i) = (0, 0);
+        while i < b.len() {
+            let at = if b[i] == b'@' {
+                1
+            } else if b[i..].starts_with(b"%40") {
+                3
+            } else {
+                0
+            };
+            if at == 0 {
+                i += 1;
+                continue;
+            }
+            let mut l = i;
+            while l > last && local(b[l - 1]) && !(l >= 2 && b[l - 2] == b'\\') {
+                l -= 1;
+            }
+            let mut r = i + at;
+            while r < b.len() && domain(b[r]) {
+                r += 1;
+            }
+            while r > i + at && matches!(b[r - 1], b'.' | b'-') {
+                r -= 1;
+            }
+            let host = &text[i + at..r];
+            let tld_ok = host
+                .rsplit('.')
+                .next()
+                .is_some_and(|t| t.len() >= 2 && t.bytes().all(|c| c.is_ascii_alphabetic()));
+            if l < i && host.contains('.') && tld_ok {
+                out.push_str(&text[last..l]);
+                out.push_str("user");
+                out.push_str(&text[i..i + at]);
+                out.push_str("example.test");
+                last = r;
+                i = r;
+            } else {
+                i += 1;
+            }
+        }
+        out.push_str(&text[last..]);
+        out
+    }
+
     fn word(&mut self, word: &str) -> String {
-        if word.starts_with("eyJ") && word.matches('.').count() == 2 {
-            return "<jwt>".into();
-        }
-        if let Some((user, domain)) = word.split_once('@')
-            && !user.is_empty()
-            && domain.contains('.')
-            && !word.contains("://")
-        {
-            return "user@example.test".into();
-        }
         if (word.starts_with("https://") || word.starts_with("http://"))
             && let Some((base, query)) = word.split_once('?')
         {
@@ -587,6 +659,47 @@ impl Scrubber {
     }
 }
 
+/// Every JWT (`eyJ…` with at least three dot-separated base64url parts, JWS
+/// or JWE), wherever it sits: after `=` or `;`, in brackets, before a full
+/// stop (review R21).
+fn jwts(text: &str) -> String {
+    let b = text.as_bytes();
+    let part = |c: u8| c.is_ascii_alphanumeric() || c == b'-' || c == b'_';
+    let mut out = String::with_capacity(text.len());
+    let (mut last, mut i) = (0, 0);
+    while i + 3 <= b.len() {
+        if &b[i..i + 3] == b"eyJ" {
+            let (mut j, mut end, mut parts) = (i, i, 0);
+            loop {
+                let start = j;
+                while j < b.len() && part(b[j]) {
+                    j += 1;
+                }
+                if j == start {
+                    break;
+                }
+                parts += 1;
+                end = j;
+                if j < b.len() && b[j] == b'.' {
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            if parts >= 3 {
+                out.push_str(&text[last..i]);
+                out.push_str("<jwt>");
+                last = end;
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
 /// Errors as text: the tool reports and exits.
 mod anyhow_free {
     pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -597,7 +710,7 @@ mod anyhow_free {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)] // test code
     use super::*;
-    use freecut_cloud::fake::{FakeService, ToolReply};
+    use freecut_cloud::fake::{FakeService, StreamMode, ToolReply};
     use freecut_cloud::mcp::{McpClient, McpError, RunTag};
     use freecut_cloud::secret::Secret;
 
@@ -665,6 +778,58 @@ mod tests {
         assert!(!text.contains("owner@example.com"));
         assert!(!text.contains("0b4f6d2a") && !text.contains("0B4F6D2A"));
         assert!(text.contains("\"mcp-session-id\":\"fake-session-"));
+    }
+
+    /// Every `data:` line of a recorded event stream, parsed.
+    fn data_lines(lines: &[Value]) -> Vec<Value> {
+        lines
+            .iter()
+            .filter_map(|l| l["response"]["body"].as_str())
+            .flat_map(|body| body.lines().filter_map(|l| l.strip_prefix("data:")))
+            .filter(|d| !d.trim().is_empty())
+            .map(|d| serde_json::from_str(d.trim()).unwrap_or_else(|e| panic!("{e}: {d}")))
+            .collect()
+    }
+
+    /// R21: over SSE, as the service answers, the e-mail and the id inside
+    /// the escaped tool result are scrubbed, e-mails and JWTs are found
+    /// anywhere, and every data line still parses.
+    #[test]
+    fn sse_answers_are_scrubbed_and_stay_valid_json() {
+        let fake = fake();
+        fake.set_stream(StreamMode::Sse { chunk: 64 });
+        fake.on_tool("models_explore", |_| {
+            ToolReply::Json(json!({"items": [], "has_more": false,
+                "contact": "owner@example.com",
+                "link": "https://x.example/u?who=owner%40example.com&next=1",
+                "auth": "Bearer=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl;",
+                "job": "0B4F6D2A-1111-4222-8333-944455556666"}))
+        });
+        let recorder = Arc::new(Recorder::new(Arc::new(fake.clone())));
+        let provider = HiggsfieldProvider::with_endpoint(
+            ENDPOINT,
+            recorder.clone(),
+            Arc::new(StaticToken(Secret::new("t1"))),
+            Arc::new(NoWait),
+            "0.1.0",
+            Arc::new(PreflightGuard::new()),
+            Arc::new(LateQueue::new()),
+        );
+        provider.catalogue(&CancelToken::new()).unwrap();
+        let lines = recorder.lines();
+        let data = data_lines(&lines);
+        assert!(!data.is_empty());
+        let text = lines.iter().map(Value::to_string).collect::<String>();
+        for leak in [
+            "owner@example.com",
+            "owner%40example.com",
+            "0b4f6d2a",
+            "0B4F6D2A",
+            "eyJzdWIiOiIxIn0",
+        ] {
+            assert!(!text.contains(leak), "{leak} was recorded");
+        }
+        assert!(text.contains("example.test"));
     }
 
     #[test]

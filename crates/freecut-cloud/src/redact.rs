@@ -15,6 +15,9 @@ pub const SECRET_FIELDS: &[&str] = &[
     "registration_access_token",
     "token",
     "authorization",
+    // Account data, not a secret, but never written to a log or fixture
+    // (review round 2, R21).
+    "email",
     // Not a secret, but the owner keeps the registered client id out of
     // every log (2026-10-14).
     "client_id",
