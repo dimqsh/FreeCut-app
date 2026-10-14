@@ -322,7 +322,8 @@ pub fn parse_auth_server(
 ) -> Result<AuthServer, DiscoveryError> {
     let raw: RawAuthServer =
         serde_json::from_slice(body).map_err(|e| DiscoveryError::Malformed(e.to_string()))?;
-    if !same_url(&raw.issuer, expected_issuer) {
+    // RFC 8414 §3.3: identical, not merely equivalent (review SEC-7).
+    if raw.issuer != expected_issuer {
         return Err(DiscoveryError::IssuerMismatch {
             expected: expected_issuer.to_owned(),
             found: raw.issuer,
@@ -352,7 +353,8 @@ pub fn parse_auth_server(
     })
 }
 
-/// URL equality ignoring a trailing slash.
+/// URL equality ignoring a trailing slash: for the resource identifier
+/// only. Issuers are compared exactly (RFC 8414 §3.3, RFC 9207).
 pub(crate) fn same_url(a: &str, b: &str) -> bool {
     a.trim_end_matches('/') == b.trim_end_matches('/')
 }
@@ -462,11 +464,20 @@ mod tests {
         assert!(
             parse_auth_server(
                 base("https://clerk.higgsfield.ai", true).as_bytes(),
-                "https://clerk.higgsfield.ai/",
+                "https://clerk.higgsfield.ai",
                 &p
             )
             .is_ok()
         );
+        // SEC-7: issuers match exactly; a trailing slash is another issuer.
+        assert!(matches!(
+            parse_auth_server(
+                base("https://clerk.higgsfield.ai", true).as_bytes(),
+                "https://clerk.higgsfield.ai/",
+                &p
+            ),
+            Err(DiscoveryError::IssuerMismatch { .. })
+        ));
         assert!(matches!(
             parse_auth_server(
                 base("https://mcp.higgsfield.ai", true).as_bytes(),

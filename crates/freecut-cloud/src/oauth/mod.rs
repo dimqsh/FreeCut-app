@@ -35,7 +35,7 @@ use crate::transport::{CallLimits, HttpRequest, HttpTransport, SendState, read_b
 
 use self::discovery::{
     AuthPolicy, AuthServer, DiscoveryError, ProtectedResource, auth_server_metadata_urls,
-    parse_auth_server, parse_protected_resource, protected_resource_urls, same_url,
+    parse_auth_server, parse_protected_resource, protected_resource_urls,
 };
 use self::pkce::Pkce;
 use self::token::{TokenError, TokenSet, parse_token_response};
@@ -216,7 +216,8 @@ pub fn parse_callback(
         return Err(CallbackError::StateMismatch);
     }
     match (&iss, server.authorization_response_iss_parameter_supported) {
-        (Some(iss), _) if !same_url(iss, &server.issuer) => {
+        // RFC 9207: the exact issuer string (review SEC-7).
+        (Some(iss), _) if *iss != server.issuer => {
             return Err(CallbackError::IssuerMismatch);
         }
         (None, true) => return Err(CallbackError::IssuerMismatch),
@@ -852,12 +853,12 @@ impl TokenManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
-            .filter(|s| same_url(&s.issuer, issuer))
+            .filter(|s| s.issuer == issuer)
         {
             return Ok(server.clone());
         }
         let found = self.oauth.discover(None, cancel)?.server;
-        if !same_url(&found.issuer, issuer) {
+        if found.issuer != issuer {
             // The service moved sign-in elsewhere: the old tokens cannot be
             // refreshed there.
             return Err(CloudError::SignInExpired);
@@ -1115,6 +1116,15 @@ mod tests {
         assert_eq!(
             parse_callback(
                 "/callback?code=c&state=abc&iss=https%3A%2F%2Fevil.example",
+                &state,
+                &s
+            ),
+            Err(CallbackError::IssuerMismatch)
+        );
+        // SEC-7: exact match, a trailing slash included.
+        assert_eq!(
+            parse_callback(
+                "/callback?code=c&state=abc&iss=https%3A%2F%2Fclerk.higgsfield.ai%2F",
                 &state,
                 &s
             ),
