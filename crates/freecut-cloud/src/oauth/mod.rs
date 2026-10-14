@@ -698,7 +698,12 @@ pub struct TokenManager {
     oauth: OAuthClient,
     clock: Arc<dyn Clock>,
     server: Mutex<Option<AuthServer>>,
+    /// One refresh at a time (held across the network call).
     refreshing: Mutex<()>,
+    /// One write to the store at a time: sign-in, pasted token, the write
+    /// after a refresh, and disconnect (review SEC-1). Never held across a
+    /// network call.
+    writing: Mutex<()>,
 }
 
 impl fmt::Debug for TokenManager {
@@ -724,6 +729,7 @@ impl TokenManager {
             clock,
             server: Mutex::new(None),
             refreshing: Mutex::new(()),
+            writing: Mutex::new(()),
         }
     }
 
@@ -764,6 +770,7 @@ impl TokenManager {
             &registration.issuer,
             None,
         );
+        let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         self.store
             .set(self.provider, &Credential::OAuth(credential.clone()))
             .map_err(store_failed)?;
@@ -775,6 +782,7 @@ impl TokenManager {
     /// # Errors
     /// A store failure as [`CloudError::SignInUnavailable`].
     pub fn store_pasted(&self, token: Secret) -> Result<(), CloudError> {
+        let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         self.store
             .set(self.provider, &Credential::Bearer { token })
             .map_err(store_failed)
@@ -800,12 +808,11 @@ impl TokenManager {
         Ok(found)
     }
 
-    /// Refreshes unless another thread already did since `seen` was read.
-    fn refresh(
-        &self,
-        seen: &OAuthCredential,
-        cancel: &CancelToken,
-    ) -> Result<OAuthCredential, CloudError> {
+    /// Refreshes unless another thread already did since `seen` was read,
+    /// and returns the access token to use. The new tokens are written only
+    /// if the stored credential is still the one refreshed: a disconnect or
+    /// a new sign-in during the network call wins (review SEC-1).
+    fn refresh(&self, seen: &OAuthCredential, cancel: &CancelToken) -> Result<Secret, CloudError> {
         let _one_at_a_time = self
             .refreshing
             .lock()
@@ -815,7 +822,7 @@ impl TokenManager {
             Credential::Bearer { .. } => return Err(CloudError::SignInExpired),
         };
         if current.access != seen.access {
-            return Ok(current);
+            return Ok(current.access);
         }
         let Some(refresh_token) = current.refresh.clone() else {
             return Err(CloudError::SignInExpired);
@@ -831,11 +838,24 @@ impl TokenManager {
             &current.issuer,
             Some(&current),
         );
-        self.store
-            .set(self.provider, &Credential::OAuth(renewed.clone()))
-            .map_err(store_failed)?;
-        tracing::debug!("access token refreshed");
-        Ok(renewed)
+        let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
+        match self.store.get(self.provider).map_err(store_failed)? {
+            None => {
+                tracing::debug!("signed out during a refresh; the new tokens are dropped");
+                Err(CloudError::NotConnected)
+            }
+            Some(Credential::OAuth(now)) if now.access == current.access => {
+                self.store
+                    .set(self.provider, &Credential::OAuth(renewed.clone()))
+                    .map_err(store_failed)?;
+                tracing::debug!("access token refreshed");
+                Ok(renewed.access)
+            }
+            Some(replaced) => {
+                tracing::debug!("the sign-in changed during a refresh; the new tokens are dropped");
+                Ok(replaced.access_token().clone())
+            }
+        }
     }
 
     /// Revokes the tokens when the service offers revocation (best effort),
@@ -859,6 +879,7 @@ impl TokenManager {
                 .revoke(&server, &c.client_id, &c.access, "access_token", cancel)
                 .unwrap_or(false);
         }
+        let _write = self.writing.lock().unwrap_or_else(PoisonError::into_inner);
         self.store.delete(self.provider).map_err(store_failed)?;
         Ok(Disconnected { revoked })
     }
@@ -886,7 +907,7 @@ impl TokenSource for TokenManager {
             };
         }
         match self.refresh(&credential, cancel) {
-            Ok(renewed) => Ok(renewed.access),
+            Ok(access) => Ok(access),
             // Still valid for a moment: use it and refresh next time.
             Err(CloudError::Offline | CloudError::NoAnswer) if left > 0 => Ok(credential.access),
             Err(e) => Err(e),

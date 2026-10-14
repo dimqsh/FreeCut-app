@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -332,6 +332,10 @@ const MAX_PARTS: usize = 8;
 #[derive(Debug)]
 pub struct ChunkedSecretStore<E> {
     entries: E,
+    /// Readers share; `set` and `delete` are exclusive, so concurrent writes
+    /// cannot mix parts and a read never sees parts being removed
+    /// (review SEC-1). Another process is kept out by the ledger lock (H2).
+    lock: RwLock<()>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -370,7 +374,10 @@ const MAX_LABEL_CHARS: usize = 256;
 impl<E: EntryStore> ChunkedSecretStore<E> {
     /// A store over `entries`.
     pub fn new(entries: E) -> ChunkedSecretStore<E> {
-        ChunkedSecretStore { entries }
+        ChunkedSecretStore {
+            entries,
+            lock: RwLock::new(()),
+        }
     }
 
     /// The underlying entries (tests inspect them).
@@ -485,6 +492,7 @@ fn split_chars(text: &str, max: usize) -> Vec<String> {
 
 impl<E: EntryStore> SecretStore for ChunkedSecretStore<E> {
     fn get(&self, provider: ProviderId) -> Result<Option<Credential>, SecretError> {
+        let _read = self.lock.read().unwrap_or_else(PoisonError::into_inner);
         let Some(meta) = self.read_meta(provider)? else {
             return Ok(None);
         };
@@ -517,6 +525,7 @@ impl<E: EntryStore> SecretStore for ChunkedSecretStore<E> {
     }
 
     fn set(&self, provider: ProviderId, credential: &Credential) -> Result<(), SecretError> {
+        let _write = self.lock.write().unwrap_or_else(PoisonError::into_inner);
         // A damaged old entry must not block signing in again.
         let old = self.read_meta(provider).unwrap_or(None);
         let generation = old.as_ref().map_or(1, |m| m.generation.wrapping_add(1));
@@ -571,6 +580,7 @@ impl<E: EntryStore> SecretStore for ChunkedSecretStore<E> {
     }
 
     fn delete(&self, provider: ProviderId) -> Result<(), SecretError> {
+        let _write = self.lock.write().unwrap_or_else(PoisonError::into_inner);
         let old = self.read_meta(provider).unwrap_or(None);
         // Removing `meta` first makes the credential unreadable at once; the
         // parts are orphans after that.
@@ -806,6 +816,42 @@ mod tests {
                 Some(new.clone())
             );
         }
+    }
+
+    /// SEC-1: writers are exclusive, so concurrent `set`s never mix parts and
+    /// a reader never sees parts being removed.
+    #[test]
+    fn concurrent_writes_and_reads_never_mix_or_tear() {
+        let store = std::sync::Arc::new(ChunkedSecretStore::new(
+            MemoryEntryStore::with_windows_limit(),
+        ));
+        let a = oauth(3_000, 1_300, 'a');
+        let b = oauth(2_500, 1_250, 'b');
+        store.set(ProviderId::HIGGSFIELD, &a).unwrap();
+        let writers: Vec<_> = [a.clone(), b.clone()]
+            .into_iter()
+            .map(|cred| {
+                let store = store.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..200 {
+                        store.set(ProviderId::HIGGSFIELD, &cred).unwrap();
+                    }
+                })
+            })
+            .collect();
+        let reader = {
+            let (store, a, b) = (store.clone(), a.clone(), b.clone());
+            std::thread::spawn(move || {
+                for _ in 0..400 {
+                    let read = store.get(ProviderId::HIGGSFIELD).unwrap();
+                    assert!(read == Some(a.clone()) || read == Some(b.clone()));
+                }
+            })
+        };
+        for w in writers {
+            w.join().unwrap();
+        }
+        reader.join().unwrap();
     }
 
     #[test]

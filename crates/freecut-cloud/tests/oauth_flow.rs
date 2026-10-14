@@ -488,6 +488,70 @@ fn disconnect_revokes_both_tokens_then_deletes() {
     assert_eq!(manager.credential(), Err(CloudError::NotConnected));
 }
 
+/// A token route that blocks until the test lets it answer, so another
+/// action can happen while a refresh is in flight.
+fn blocking_refresh(
+    fake: &FakeService,
+) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let started_tx = Mutex::new(started_tx);
+    let go_rx = Mutex::new(go_rx);
+    fake.on_route(Method::Post, TOKEN, move |_| {
+        let _ = started_tx.lock().unwrap().send(());
+        let _ = go_rx
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(5));
+        (200, token_answer("at-2", Some("rt-2"), 3600))
+    });
+    (started_rx, go_tx)
+}
+
+/// SEC-1: Disconnect while a refresh is in flight wins; the refreshed tokens
+/// are not written back.
+#[test]
+fn disconnect_during_a_refresh_wins() {
+    let fake = signed_out_service();
+    fake.on_route(Method::Post, REVOKE, |_| (200, json!({})));
+    let (started, go) = blocking_refresh(&fake);
+    let (manager, clock) = signed_in(&fake, 0, 100);
+    *clock.0.lock().unwrap() = 90;
+    let m = manager.clone();
+    let refresh = std::thread::spawn(move || m.bearer(TokenPurpose::Ordinary, &CancelToken::new()));
+    started
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    manager.disconnect(&CancelToken::new()).unwrap();
+    go.send(()).unwrap();
+    assert_eq!(refresh.join().unwrap(), Err(CloudError::NotConnected));
+    assert_eq!(manager.credential(), Err(CloudError::NotConnected));
+}
+
+/// SEC-1: a new sign-in during a refresh wins; the old refresh does not
+/// overwrite it.
+#[test]
+fn a_new_sign_in_during_a_refresh_wins() {
+    let fake = signed_out_service();
+    let (started, go) = blocking_refresh(&fake);
+    let (manager, clock) = signed_in(&fake, 0, 100);
+    *clock.0.lock().unwrap() = 90;
+    let m = manager.clone();
+    let refresh = std::thread::spawn(move || m.bearer(TokenPurpose::Ordinary, &CancelToken::new()));
+    started
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    manager.store_pasted(Secret::new("pasted-1")).unwrap();
+    go.send(()).unwrap();
+    assert_eq!(refresh.join().unwrap().unwrap().expose(), "pasted-1");
+    assert_eq!(
+        manager.credential().unwrap(),
+        Credential::Bearer {
+            token: Secret::new("pasted-1")
+        }
+    );
+}
+
 #[test]
 fn disconnect_deletes_even_when_revocation_fails() {
     let fake = signed_out_service();
