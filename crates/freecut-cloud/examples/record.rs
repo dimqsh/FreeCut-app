@@ -29,8 +29,9 @@
 //! reviews the file before committing it. The access token lives in memory
 //! only and is dropped at exit; nothing is stored in the keychain.
 //!
-//! `--filter-headers <file>` applies the header allow list to a file recorded
-//! before the list existed, without signing in or calling the service.
+//! `--filter-headers <file>` applies the header allow list and today's
+//! scrubber to a file recorded before them, without signing in or calling
+//! the service.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
@@ -222,26 +223,33 @@ fn summary(
 }
 
 /// Rewrites a recorded file keeping only [`RECORDED_HEADERS`] (review round
-/// 3): no network, no sign-in. Everything but the dropped headers stays as
-/// it was.
+/// 3) and running today's scrubber over it again (N6): no network, no
+/// sign-in. The secrets of the run that made it are no longer known, so the
+/// final check of a live run (R22) cannot be repeated here.
 fn filter_file(path: &Path) -> anyhow_free::Result {
     let text = std::fs::read_to_string(path)?;
     let mut dropped = BTreeSet::new();
+    let mut scrub = Scrubber::default();
     let mut out = String::with_capacity(text.len());
     let mut lines = 0;
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let value: Value = serde_json::from_str(line)?;
-        out.push_str(&filter_headers(&value, &mut dropped).to_string());
+        out.push_str(&refilter_line(&value, &mut dropped, &mut scrub).to_string());
         out.push('\n');
         lines += 1;
     }
     std::fs::write(path, out)?;
     println!(
-        "Kept only the allowed headers in {lines} exchanges of {}.\nDropped: {}",
+        "Kept only the allowed headers in {lines} exchanges of {}, and scrubbed them again.\nDropped: {}",
         path.display(),
         dropped.into_iter().collect::<Vec<_>>().join(", ")
     );
     Ok(())
+}
+
+/// One line of an older recording: headers filtered, then scrubbed again.
+fn refilter_line(line: &Value, dropped: &mut BTreeSet<String>, scrub: &mut Scrubber) -> Value {
+    scrub.value(&filter_headers(line, dropped))
 }
 
 /// `line` with every header off [`RECORDED_HEADERS`] removed from its request
@@ -1539,6 +1547,23 @@ mod tests {
         // An exchange that ended in an error has no answer; it passes as is.
         let failed = json!({"request": {"headers": {}}, "error": "x"});
         assert_eq!(filter_headers(&failed, &mut BTreeSet::new()), failed);
+    }
+
+    /// N6: the one-off pass also runs today's scrubber, so an older file
+    /// gets the current rules.
+    #[test]
+    fn the_one_off_pass_rescrubs_bodies() {
+        let line = json!({
+            "request": {"method": "GET", "url": ENDPOINT, "headers": {"accept": "x"}, "body": null},
+            "response": {"status": 200, "headers": {"content-type": "application/json"},
+                "body": {"contact": "owner@example.com", "job": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                    "unlim": {"remaining": 4242}}},
+        });
+        let out = refilter_line(&line, &mut BTreeSet::new(), &mut Scrubber::default());
+        let text = out.to_string();
+        for leak in ["owner@example.com", "7c9e6679", "4242", "accept"] {
+            assert!(!text.contains(leak), "{leak} in {text}");
+        }
     }
 
     /// Round 3 check: a UUID is replaced wherever it sits, not only as a
