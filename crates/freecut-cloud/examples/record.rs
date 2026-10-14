@@ -8,7 +8,9 @@
 //!
 //! **Free calls only**: sign-in discovery, one client registration, the
 //! browser sign-in and its code exchange, then `initialize`, `tools/list`,
-//! `models_explore` listings and the session `DELETE`. Before anything
+//! `models_explore` listings, and a session `DELETE` only if the server
+//! issued a session (Higgsfield's issues none, architecture §15.1). Each run
+//! registers one more FreeCut client at the service. Before anything
 //! leaves the computer, the recording transport refuses every body but the
 //! few the tool sends (see [`refusal`]): no other tool, free or paid, no
 //! other action, no batch, nothing that names `get_cost`.
@@ -39,6 +41,7 @@ use std::time::{Duration, Instant};
 
 use freecut_cloud::CancelToken;
 use freecut_cloud::catalogue::OutputKind;
+use freecut_cloud::error::quoted;
 use freecut_cloud::guard::{PreflightGuard, uuid_spans};
 use freecut_cloud::http::{TransportConfig, UreqTransport};
 use freecut_cloud::mcp::{LateQueue, StaticToken};
@@ -161,6 +164,18 @@ fn main() -> anyhow_free::Result {
     for line in &lines {
         writeln!(file, "{line}")?;
     }
+    print!("{}", summary(&info, &catalogue, lines.len(), &out));
+    Ok(())
+}
+
+/// What the run did, for the terminal. The server's own name and version
+/// are service text and are shown quoted (review N2).
+fn summary(
+    info: &freecut_cloud::provider::ServiceInfo,
+    catalogue: &freecut_cloud::catalogue::Catalogue,
+    exchanges: usize,
+    out: &Path,
+) -> String {
     let count = |kind: OutputKind| {
         catalogue
             .models()
@@ -168,21 +183,19 @@ fn main() -> anyhow_free::Result {
             .filter(|m| m.output == kind)
             .count()
     };
-    println!(
-        "Wrote {} exchanges to {}.\nServer {} {}, protocol {}; {} allowed tools offered, missing {:?}.\nModels listed: {} image, {} video, {} audio ({} shown after review).\nReview the file before committing it.",
-        lines.len(),
+    format!(
+        "Wrote {exchanges} exchanges to {}.\nServer {} {}, protocol {}; {} allowed tools offered, missing {:?}.\nModels listed: {} image, {} video, {} audio ({} shown after review).\nReview the file before committing it.\n",
         out.display(),
-        info.server_name,
-        info.server_version,
-        info.protocol_version,
+        quoted(&info.server_name),
+        quoted(&info.server_version),
+        quoted(&info.protocol_version),
         info.offered.len(),
         info.missing,
         count(OutputKind::Image),
         count(OutputKind::Video),
         count(OutputKind::Audio),
         catalogue.visible().count(),
-    );
-    Ok(())
+    )
 }
 
 /// Rewrites a recorded file keeping only [`RECORDED_HEADERS`] (review round
@@ -1767,6 +1780,30 @@ mod tests {
         );
         assert!(plain_endpoint("https://clerk.example/oauth/authorize").is_ok());
         assert!(plain_endpoint("https://clerk.example/oauth/authorize?tenant=x").is_err());
+    }
+
+    /// N2: the server's name and version are service text: control and
+    /// bidi characters do not reach the terminal.
+    #[test]
+    fn the_summary_quotes_the_servers_own_text() {
+        let info = freecut_cloud::provider::ServiceInfo {
+            server_name: "Higgsfield\u{202E}IA\u{1b}[2J".into(),
+            server_version: "1.0.0\nreal".into(),
+            protocol_version: "2025-11-25".into(),
+            offered: vec!["models_explore".into()],
+            missing: vec![],
+        };
+        let text = summary(
+            &info,
+            &freecut_cloud::catalogue::Catalogue::default(),
+            10,
+            Path::new("f.jsonl"),
+        );
+        assert!(
+            !text.contains('\u{202E}') && !text.contains('\u{1b}'),
+            "{text:?}"
+        );
+        assert!(text.contains("1.0.0 real"), "{text}");
     }
 
     #[test]

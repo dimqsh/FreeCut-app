@@ -38,7 +38,9 @@ which the owner runs once and signs in to in the browser. It records
 FreeCut's own HTTP exchanges, so it shows what the excerpts above cannot:
 content types, SSE or JSON answers, session and protocol headers. Free calls
 only: discovery, one client registration, the code exchange, `initialize`,
-`tools/list`, the `models_explore` listings and the session `DELETE`. The
+`tools/list`, the `models_explore` listings, and a session `DELETE` only if
+the server issued a session (Higgsfield's issues none). Each run registers one
+more FreeCut client at the service (two exist after the first run). The
 tool's transport refuses any paid tool and anything carrying `get_cost`
 before it is sent.
 
