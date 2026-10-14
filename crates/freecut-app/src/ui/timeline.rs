@@ -612,6 +612,9 @@ pub struct TimelineOutput {
     pub blade_time: Option<Tick>,
     /// A gesture (a clip, edge, marker or playhead drag) is running.
     pub dragging: bool,
+    /// In Match's pick mode (CL-020), a clip was clicked: the clip and the
+    /// sequence time of the frame under the pointer.
+    pub match_reference: Option<(ClipId, Tick)>,
 }
 
 /// Draws the timeline and handles its gestures. `mixer_open` checks the
@@ -1150,7 +1153,22 @@ pub fn show(
                 .is_some_and(|(_, t)| t.header.flags.locked)
         })
     };
-    if response.hover_pos().is_some() && matches!(view.drag, Drag::None) && hover_flag.is_some() {
+    let picking = project.match_pick.is_some();
+    if let Some(pos) = response.hover_pos()
+        && picking
+        && r.lanes.contains(pos)
+    {
+        // CL-020's pick mode: a frame of a clip is the target.
+        let icon = if hit(pos).is_some() {
+            CursorIcon::Crosshair
+        } else {
+            CursorIcon::NotAllowed
+        };
+        ui.ctx().set_cursor_icon(icon);
+    } else if response.hover_pos().is_some()
+        && matches!(view.drag, Drag::None)
+        && hover_flag.is_some()
+    {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
     } else if let Some(pos) = response.hover_pos()
         && matches!(view.drag, Drag::None)
@@ -1183,8 +1201,9 @@ pub fn show(
         ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
     }
 
-    // Press: decide what the gesture is.
+    // Press: decide what the gesture is (none while Match picks a frame).
     if response.drag_started()
+        && !picking
         && let Some(pos) = response.interact_pointer_pos()
     {
         let live = project.doc().clone();
@@ -1577,6 +1596,15 @@ pub fn show(
         };
         if handled {
             // A dot or the line took the click.
+        } else if r.lanes.contains(p) && picking {
+            // CL-020's pick mode: the clicked clip's frame is the match
+            // reference; the selection stays.
+            match hit(p) {
+                Some((clip, _)) => out.match_reference = Some((clip, quantize(sc.tick(p.x)))),
+                None => {
+                    out.status = Some("Click a frame of a clip, or press Esc to stop".to_owned());
+                }
+            }
         } else if let Some((i, _)) = on_flag {
             // A flag selects its marker (TL-037); Shift adds or removes.
             let m = flags[i].r;

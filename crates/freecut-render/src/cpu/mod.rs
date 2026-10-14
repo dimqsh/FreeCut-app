@@ -444,7 +444,29 @@ impl Compositor {
         let length_scale = effects::output_length_scale(to_output);
         let mut layers: Vec<draw::Clipped> = Vec::with_capacity(plan.nodes.len());
         for node in &plan.nodes {
-            let PlanNode::Layer(layer) = node;
+            let layer = match node {
+                PlanNode::Layer(layer) => layer,
+                PlanNode::Adjust(adjust) => {
+                    // An adjustment clip (CL-006, README C52): what is
+                    // below it is drawn, then the frame, background
+                    // included, is graded in canvas space at output
+                    // resolution; Mix is folded into the stack.
+                    self.draw(frame, &layers);
+                    layers.clear();
+                    if let Some(compiled) =
+                        self.grades
+                            .compiled(&adjust.color, &*self.luts, self.threads)
+                    {
+                        crate::color::grade_in_place(
+                            &compiled,
+                            &mut frame.rgba,
+                            width,
+                            self.threads,
+                        );
+                    }
+                    continue;
+                }
+            };
             let fx = LayerEffects::of(layer);
             let Some(prepared) = self.prepare(layer, to_output, images, plan.frame, &fx) else {
                 continue;
@@ -466,22 +488,27 @@ impl Compositor {
             };
             layers.extend(prepared.clip(width, height));
         }
+        self.draw(frame, &layers);
+    }
+
+    /// Draws `layers` over `frame`, in bands across the threads.
+    fn draw(&self, frame: &mut Frame, layers: &[draw::Clipped]) {
         if layers.is_empty() {
             return;
         }
+        let (width, height) = (frame.width, frame.height);
         let row_bytes = width as usize * 4;
         let bands = self
             .threads
             .min((height / MIN_BAND_ROWS).max(1) as usize)
             .max(1);
         if bands == 1 {
-            draw::draw_rows(&mut frame.rgba, 0, width, &layers);
+            draw::draw_rows(&mut frame.rgba, 0, width, layers);
             return;
         }
         let rows_per_band = (height as usize).div_ceil(bands);
         std::thread::scope(|scope| {
             for (i, band) in frame.rgba.chunks_mut(rows_per_band * row_bytes).enumerate() {
-                let layers = &layers;
                 let y0 = (i * rows_per_band) as u32;
                 scope.spawn(move || draw::draw_rows(band, y0, width, layers));
             }
@@ -541,7 +568,10 @@ impl Compositor {
             picture
                 .filter(|p| p.is_valid() && !p.is_empty())
                 .map(|p| match &layer.color {
-                    Some(stack) => self.grades.graded(&p, stack, &*self.luts, self.threads),
+                    Some(stack) => {
+                        self.grades
+                            .graded(&p, layer.display_size, stack, &*self.luts, self.threads)
+                    }
                     None => p,
                 });
         match picture {

@@ -235,6 +235,59 @@ enum Then {
     R6(R6Scene),
     /// R3 toolbar round: the toolbar, tools and markers.
     R3(R3Look),
+    /// K4: adjustment clips, saved looks and the Adjust tab.
+    K4(K4Look),
+    /// K5: the Auto and Match sections.
+    K5(K5Look),
+    /// K6: the Masks page and the Stage's mask handles.
+    K6(K6Look),
+}
+
+/// What a K6 scene shows (CL-031): the Look lens on its Masks page.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum K6Look {
+    /// The graded video with three masks (a feathered, turned ellipse,
+    /// chosen, a subtracted rectangle and a band), the ellipse's outline,
+    /// feather band and handles on the Stage.
+    Masks,
+    /// The band chosen: its edge handle and two parallel lines.
+    Band,
+    /// No mask yet: the sentence and Add mask.
+    Empty,
+    /// The adjustment clip, its ellipse in canvas space.
+    Adjust,
+    /// The video and the title selected: one clip at a time.
+    Several,
+}
+
+/// What a K5 scene shows: the graded video's Basic page with Light, Color
+/// and LUT folded, so Auto and Match show.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum K5Look {
+    /// Nothing measured yet: the Auto and Match buttons.
+    Before,
+    /// Auto measured the video (its rows, Strength, Re-run, Apply to
+    /// sliders) and the video matched to the other clip (the reference,
+    /// Intensity, Re-match, Change reference…).
+    Done,
+    /// [`K5Look::Done`] with Auto folded, so Match's rows show.
+    Matched,
+    /// Match's pick mode.
+    Picking,
+    /// An Auto analysis running: the spinner and Cancel.
+    Running,
+}
+
+/// What a K4 scene shows: the graded demo with an adjustment clip over
+/// the video and title, three saved looks (and one file FreeCut can't
+/// read).
+#[derive(Clone, Copy)]
+enum K4Look {
+    /// The Adjust tab on this row, the adjustment clip selected (its Look
+    /// lens with Mix and Presets).
+    Tab(crate::ui::adjust::AdjustFilter),
+    /// The graded video selected and the Save look sheet open.
+    SaveLook,
 }
 
 /// What an R3 toolbar-round scene shows.
@@ -903,6 +956,110 @@ fn main_window_snapshots() {
             r6s("r6-unsaved-dark", T::Dark, WINDOW, R6Scene::Unsaved),
         ]);
     }
+    // K4: the Adjust tab, the adjustment clip's lens and Save look.
+    let k4s = |name, theme, size, look| Scene {
+        name,
+        theme,
+        size,
+        then: Then::K4(look),
+    };
+    let mut k4 = vec![k4s(
+        "k4-adjust-saved-dark",
+        T::Dark,
+        WINDOW,
+        K4Look::Tab(crate::ui::adjust::AdjustFilter::Saved),
+    )];
+    if out.is_some() {
+        use crate::ui::adjust::AdjustFilter as F;
+        let compact = egui::vec2(1100.0, 700.0);
+        let tall = egui::vec2(1440.0, 1400.0);
+        k4.extend([
+            k4s("k4-adjust-new-dark", T::Dark, WINDOW, K4Look::Tab(F::New)),
+            k4s("k4-adjust-new-light", T::Light, WINDOW, K4Look::Tab(F::New)),
+            k4s(
+                "k4-adjust-saved-light",
+                T::Light,
+                WINDOW,
+                K4Look::Tab(F::Saved),
+            ),
+            k4s(
+                "k4-adjust-saved-hc",
+                T::HighContrast,
+                WINDOW,
+                K4Look::Tab(F::Saved),
+            ),
+            k4s("k4-adjust-luts-dark", T::Dark, WINDOW, K4Look::Tab(F::Luts)),
+            k4s(
+                "k4-adjust-bundled-light",
+                T::Light,
+                WINDOW,
+                K4Look::Tab(F::Bundled),
+            ),
+            k4s(
+                "k4-adjust-imported-dark",
+                T::Dark,
+                WINDOW,
+                K4Look::Tab(F::Imported),
+            ),
+            k4s(
+                "k4-adjust-compact-dark",
+                T::Dark,
+                compact,
+                K4Look::Tab(F::Saved),
+            ),
+            k4s("k4-adjust-tall-dark", T::Dark, tall, K4Look::Tab(F::Saved)),
+            k4s("k4-save-look-dark", T::Dark, WINDOW, K4Look::SaveLook),
+            k4s("k4-save-look-light", T::Light, WINDOW, K4Look::SaveLook),
+            k4s("k4-save-look-hc", T::HighContrast, WINDOW, K4Look::SaveLook),
+        ]);
+    }
+    // K5: Auto and Match.
+    let k5s = |name, theme, size, look| Scene {
+        name,
+        theme,
+        size,
+        then: Then::K5(look),
+    };
+    // Tall, so both sections and their buttons show under the header.
+    let tall = egui::vec2(1440.0, 1200.0);
+    let mut k5 = vec![k5s("k5-auto-match-dark", T::Dark, tall, K5Look::Done)];
+    if out.is_some() {
+        let compact = egui::vec2(1100.0, 700.0);
+        k5.extend([
+            k5s("k5-auto-match-light", T::Light, tall, K5Look::Done),
+            k5s("k5-auto-match-hc", T::HighContrast, tall, K5Look::Done),
+            k5s("k5-before-dark", T::Dark, tall, K5Look::Before),
+            k5s("k5-before-light", T::Light, tall, K5Look::Before),
+            k5s("k5-pick-dark", T::Dark, tall, K5Look::Picking),
+            k5s("k5-pick-light", T::Light, tall, K5Look::Picking),
+            k5s("k5-running-dark", T::Dark, tall, K5Look::Running),
+            k5s("k5-matched-dark", T::Dark, tall, K5Look::Matched),
+            k5s("k5-matched-light", T::Light, tall, K5Look::Matched),
+            k5s("k5-auto-match-compact-dark", T::Dark, compact, K5Look::Done),
+        ]);
+    }
+    // K6: colour masks.
+    let k6s = |name, theme, size, look| Scene {
+        name,
+        theme,
+        size,
+        then: Then::K6(look),
+    };
+    let mut k6 = vec![k6s("k6-masks-dark", T::Dark, tall, K6Look::Masks)];
+    if out.is_some() {
+        let compact = egui::vec2(1100.0, 700.0);
+        k6.extend([
+            k6s("k6-masks-light", T::Light, tall, K6Look::Masks),
+            k6s("k6-masks-hc", T::HighContrast, tall, K6Look::Masks),
+            k6s("k6-masks-window-dark", T::Dark, WINDOW, K6Look::Masks),
+            k6s("k6-masks-compact-dark", T::Dark, compact, K6Look::Masks),
+            k6s("k6-band-light", T::Light, tall, K6Look::Band),
+            k6s("k6-empty-dark", T::Dark, WINDOW, K6Look::Empty),
+            k6s("k6-empty-light", T::Light, WINDOW, K6Look::Empty),
+            k6s("k6-adjust-dark", T::Dark, tall, K6Look::Adjust),
+            k6s("k6-several-dark", T::Dark, WINDOW, K6Look::Several),
+        ]);
+    }
     // FREECUT_SNAPSHOT_ONLY=<prefix> keeps the scenes whose name starts
     // with it (FREECUT_SNAPSHOT_ONLY_R2 is the R2 set).
     let only = std::env::var("FREECUT_SNAPSHOT_ONLY")
@@ -915,6 +1072,9 @@ fn main_window_snapshots() {
         .chain(r5)
         .chain(r6)
         .chain(r3)
+        .chain(k4)
+        .chain(k5)
+        .chain(k6)
         .filter(|s| only.as_deref().is_none_or(|o| s.name.starts_with(o)));
     for scene in scenes {
         let project = match scene.then {
@@ -929,6 +1089,9 @@ fn main_window_snapshots() {
             Then::Inspect(what) => Some(inspect_project(media_dir.path(), what)),
             Then::Timeline(_) => Some(timeline_project(media_dir.path())),
             Then::R3(_) => Some(toolbar_project(media_dir.path())),
+            Then::K4(_) => Some(adjust_project(media_dir.path())),
+            Then::K5(look) => Some(k5_project(media_dir.path(), look)),
+            Then::K6(look) => Some(k6_project(media_dir.path(), look)),
             _ => Some(demo_project(media_dir.path())),
         };
         let mut harness = harness(project, scene.theme, scene.size, out.is_some());
@@ -959,8 +1122,13 @@ fn main_window_snapshots() {
                     (SelectionKind::Video, Lens::Look, _) => match what {
                         Inspect::LookLut {
                             fold_color: true, ..
-                        } => &[CardId::Light, CardId::ColorBalance],
-                        Inspect::LookLut { .. } => &[CardId::Light],
+                        } => &[
+                            CardId::Auto,
+                            CardId::Match,
+                            CardId::Light,
+                            CardId::ColorBalance,
+                        ],
+                        Inspect::LookLut { .. } => &[CardId::Auto, CardId::Match, CardId::Light],
                         _ => &[],
                     },
                     _ => &[],
@@ -982,6 +1150,45 @@ fn main_window_snapshots() {
             Then::R6(scene) => r6_scene(&mut harness, scene, media_dir.path()),
             Then::Timeline(look) => look_at_timeline(&mut harness, look),
             Then::R3(look) => r3_scene(&mut harness, look),
+            Then::K4(look) => k4_scene(&mut harness, look),
+            Then::K5(look) => {
+                use crate::ui::inspector::lens::{CardId, Lens, SelectionKind};
+                let ws = &mut harness.state_mut().inspector_mut().workspace;
+                ws.set_lens(SelectionKind::Video, Lens::Look);
+                ws.set_look_page(
+                    SelectionKind::Video,
+                    freecut_timeline::model::ColorPage::Basic,
+                );
+                for card in [CardId::Light, CardId::ColorBalance, CardId::Lut] {
+                    ws.card(SelectionKind::Video, card).open = false;
+                }
+                if look == K5Look::Matched {
+                    ws.card(SelectionKind::Video, CardId::Auto).open = false;
+                }
+                settle(&mut harness);
+            }
+            Then::K6(look) => {
+                use crate::ui::inspector::lens::{Lens, SelectionKind};
+                let kind = match look {
+                    K6Look::Adjust => SelectionKind::Adjustment,
+                    K6Look::Several => SelectionKind::Several,
+                    _ => SelectionKind::Video,
+                };
+                let ws = &mut harness.state_mut().inspector_mut().workspace;
+                ws.set_lens(kind, Lens::Look);
+                ws.set_look_page(kind, freecut_timeline::model::ColorPage::Masks);
+                // The ellipse is chosen in the Masks scenes, the band in
+                // the Band scene (the last added is chosen otherwise).
+                if look == K6Look::Masks
+                    && let Some(clip) = harness
+                        .state()
+                        .project_for_tests()
+                        .and_then(|p| p.selection.first().copied())
+                {
+                    crate::ui::inspector::masks::remember_chosen(&harness.ctx, clip, 1);
+                }
+                settle(&mut harness);
+            }
             Then::HoverGutter => {
                 let panel =
                     egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("media"))
@@ -1011,6 +1218,363 @@ fn main_window_snapshots() {
         image.save(&path).unwrap();
         eprintln!("snapshot: {}", path.display());
     }
+}
+
+/// The graded demo of the Look scenes with an adjustment clip over the
+/// video and the title (a warm, muted, contrasty look at Mix 80 %),
+/// selected.
+fn adjust_project(dir: &Path) -> Project {
+    use freecut_timeline::edit::{AdjustSpan, EditRequest};
+    use freecut_timeline::history::Coalesce;
+    use freecut_timeline::model::{ColorParamId as C, ColorStack};
+
+    let mut project = inspect_project(
+        dir,
+        Inspect::Look(freecut_timeline::model::ColorPage::Basic),
+    );
+    let seq = project.doc().root();
+    let stack = ColorStack::default()
+        .with(C::Contrast, 20)
+        .with(C::Temperature, 30)
+        .with(C::Saturation, -70)
+        .with(C::Amount, 80);
+    let req = EditRequest::AddAdjustmentClip {
+        seq,
+        span: AdjustSpan::AtPlayhead(project.playhead),
+        color: Some(std::sync::Arc::new(stack)),
+    };
+    project.apply(&req, Coalesce::Never).unwrap();
+    project.editor.mark_saved();
+    project
+}
+
+/// The graded video of the Look scenes with what a K6 scene shows: its
+/// masks, or the adjustment clip of the K4 scenes with an ellipse, or the
+/// video and the title selected.
+fn k6_project(dir: &Path, look: K6Look) -> Project {
+    use freecut_timeline::edit::{ColorEdit, EditRequest};
+    use freecut_timeline::history::Coalesce;
+    use freecut_timeline::model::{
+        Angle, ColorParamId, Mask, MaskCombine, MaskPoint, MaskShape, MaskShapeKind, PerMille,
+    };
+
+    let mut project = match look {
+        K6Look::Adjust => adjust_project(dir),
+        _ => inspect_project(
+            dir,
+            Inspect::Look(freecut_timeline::model::ColorPage::Masks),
+        ),
+    };
+    let Some(&clip) = project.selection.first() else {
+        return project;
+    };
+    let seq = project.doc().root();
+    let edit = |project: &mut Project, edit: ColorEdit| {
+        let req = EditRequest::EditColor {
+            seq,
+            clips: vec![clip],
+            edit,
+        };
+        project.apply(&req, Coalesce::Never).unwrap();
+    };
+    // A grade strong enough to see where the masks let it through.
+    if look != K6Look::Adjust {
+        edit(
+            &mut project,
+            ColorEdit::SetParams(vec![
+                (ColorParamId::Saturation, -100),
+                (ColorParamId::Exposure, 25),
+            ]),
+        );
+    }
+    match look {
+        K6Look::Empty => {}
+        K6Look::Several => {
+            let title = project
+                .doc()
+                .sequence(seq)
+                .unwrap()
+                .tracks()
+                .flat_map(|(_, t)| t.clips())
+                .find(|c| c.content.text().is_some())
+                .map(|c| c.id);
+            project.selection.extend(title);
+        }
+        K6Look::Adjust => {
+            edit(
+                &mut project,
+                ColorEdit::AddMask(Mask {
+                    size: MaskPoint::new(9_000, 6_000),
+                    linked: false,
+                    feather: PerMille::new(500),
+                    ..Mask::new(MaskShapeKind::Ellipse)
+                }),
+            );
+        }
+        K6Look::Masks | K6Look::Band => {
+            edit(
+                &mut project,
+                ColorEdit::AddMask(Mask {
+                    center: MaskPoint::new(-1_500, -500),
+                    size: MaskPoint::new(8_000, 5_500),
+                    linked: false,
+                    rotation: Angle::from_degrees(-12),
+                    feather: PerMille::new(350),
+                    ..Mask::new(MaskShapeKind::Ellipse)
+                }),
+            );
+            edit(
+                &mut project,
+                ColorEdit::AddMask(Mask {
+                    center: MaskPoint::new(-1_800, -600),
+                    size: MaskPoint::new(2_000, 1_400),
+                    shape: MaskShape::Rectangle {
+                        roundness: PerMille::new(500),
+                    },
+                    ..Mask::new(MaskShapeKind::Rectangle)
+                }),
+            );
+            edit(
+                &mut project,
+                ColorEdit::SetMaskMode {
+                    id: 2,
+                    mode: MaskCombine::Subtract,
+                },
+            );
+            edit(
+                &mut project,
+                ColorEdit::AddMask(Mask {
+                    center: MaskPoint::new(0, 2_800),
+                    rotation: Angle::from_degrees(8),
+                    feather: PerMille::new(200),
+                    shape: MaskShape::Band {
+                        width: PerMille::new(300),
+                    },
+                    ..Mask::new(MaskShapeKind::Band)
+                }),
+            );
+        }
+    }
+    project.editor.mark_saved();
+    project
+}
+
+/// The graded video of the Look scenes, with what `look` shows: Auto and
+/// Match measured for real by the app's job (a fixed correction and match
+/// when there is no footage to measure), pick mode, or a job running.
+fn k5_project(dir: &Path, look: K5Look) -> Project {
+    use crate::jobs::color::{Analysis, Outcome, edit_for, plan, run};
+    use freecut_render::color::{LutSource, NoLuts};
+    use freecut_timeline::edit::{ColorEdit, EditRequest};
+    use freecut_timeline::history::Coalesce;
+    use freecut_timeline::model::{
+        AutoCorrection, AutoOffsets, AutoSource, AutoStyle, ClipContent, MatchRef, MatchTransform,
+    };
+
+    let mut project = inspect_project(
+        dir,
+        Inspect::Look(freecut_timeline::model::ColorPage::Basic),
+    );
+    let Some(&video) = project.selection.first() else {
+        return project;
+    };
+    match look {
+        K5Look::Before => {}
+        K5Look::Picking => {
+            project.match_pick = Some(crate::session::MatchPick {
+                target: video,
+                graded: true,
+            });
+        }
+        K5Look::Running => {
+            project.color_job = Some(crate::session::ColorJob {
+                id: u64::MAX,
+                clip: video,
+                auto: true,
+                cancel: std::sync::Arc::default(),
+            });
+        }
+        K5Look::Done | K5Look::Matched => {
+            let seq = project.doc().root();
+            let luts: std::sync::Arc<dyn LutSource> = std::sync::Arc::new(NoLuts);
+            let measure = |project: &Project, analysis: Analysis| {
+                plan(
+                    project.doc(),
+                    &project.media_paths,
+                    &project.offline,
+                    video,
+                    analysis,
+                    project.playhead,
+                    1,
+                )
+                .ok()
+                .map(|r| run(r, std::sync::Arc::clone(&luts)))
+                .filter(|done| done.result.is_ok())
+            };
+            let auto = Analysis::Auto {
+                style: AutoStyle::Natural,
+                source: AutoSource::WholeClip,
+            };
+            let edit = match measure(&project, auto) {
+                Some(done) => edit_for(project.doc(), &done).ok(),
+                None => Some(EditRequest::EditColor {
+                    seq,
+                    clips: vec![video],
+                    edit: ColorEdit::SetAuto(Some(AutoCorrection::new(
+                        AutoOffsets {
+                            exposure: 12,
+                            temperature: -8,
+                            blacks: -4,
+                            whites: 6,
+                            ..AutoOffsets::default()
+                        },
+                        AutoStyle::Natural,
+                        AutoSource::WholeClip,
+                    ))),
+                }),
+            };
+            if let Some(edit) = edit {
+                project.apply(&edit, Coalesce::Never).unwrap();
+            }
+            // The match: to the other picture on the timeline at its
+            // middle, or a fixed one.
+            let other = project
+                .doc()
+                .sequence(seq)
+                .unwrap()
+                .tracks()
+                .flat_map(|(_, t)| t.clips())
+                .find(|c| {
+                    c.id != video
+                        && matches!(
+                            c.content,
+                            ClipContent::Media { .. } | ClipContent::Image { .. }
+                        )
+                        && c.content.takes_color()
+                })
+                .map(|c| (c.id, c.content_time_at(c.start()).unwrap_or_default()));
+            let reference = MatchRef::Clip {
+                clip: other.map_or(video, |o| o.0),
+                at: other.map_or_else(Default::default, |o| o.1),
+                graded: true,
+            };
+            let measured = measure(
+                &project,
+                Analysis::Match {
+                    reference: reference.clone(),
+                },
+            )
+            .filter(|done| matches!(done.result, Ok(Outcome::Match { .. })))
+            .and_then(|done| edit_for(project.doc(), &done).ok());
+            let edit = measured.unwrap_or(EditRequest::EditColor {
+                seq,
+                clips: vec![video],
+                edit: ColorEdit::SetMatch(Some(MatchTransform::new(
+                    [11_000, 12_000, 9_000],
+                    [-300, 150, -200],
+                    reference,
+                ))),
+            });
+            project.apply(&edit, Coalesce::Never).unwrap();
+            let req = EditRequest::EditColor {
+                seq,
+                clips: vec![video],
+                edit: ColorEdit::SetParam(
+                    freecut_timeline::model::ColorParamId::MatchIntensity,
+                    80,
+                ),
+            };
+            project.apply(&req, Coalesce::Never).unwrap();
+        }
+    }
+    project.editor.mark_saved();
+    project
+}
+
+/// Three saved looks and one file a newer FreeCut wrote.
+fn saved_looks() -> crate::looks::SavedLooks {
+    use freecut_timeline::model::{
+        ColorParamId as C, ColorStack, HslChannel, HueBand, LutSlot, Section, SectionMask,
+        SectionSnapshot,
+    };
+    let look =
+        |id: &str, name: &str, stack: ColorStack, sections: &[Section]| crate::looks::SavedLook {
+            id: id.into(),
+            name: name.into(),
+            lut: stack.lut.as_ref().map(|l| l.lut.clone()),
+            snapshot: std::sync::Arc::new(SectionSnapshot::new(&stack, SectionMask::of(sections))),
+        };
+    let teal = crate::luts::bundled()
+        .into_iter()
+        .find(|b| b.file == "split-teal-warm-01.cube")
+        .map(|b| b.lut_ref());
+    crate::looks::SavedLooks {
+        looks: vec![
+            look(
+                "a",
+                "Warm evening",
+                ColorStack::default()
+                    .with(C::Temperature, 40)
+                    .with(C::Exposure, 10),
+                &[Section::Light, Section::Color],
+            ),
+            look(
+                "b",
+                "Teal and orange",
+                ColorStack::default().with_lut(teal.map(LutSlot::new)),
+                &[Section::Lut],
+            ),
+            look(
+                "c",
+                "Soft greens",
+                ColorStack::default().with(
+                    C::Hsl {
+                        band: HueBand::Green,
+                        channel: HslChannel::Saturation,
+                    },
+                    -35,
+                ),
+                &[Section::Hsl],
+            ),
+        ],
+        unavailable: vec![(
+            "3f2a9c".into(),
+            "Made with a newer FreeCut (look format 2)".into(),
+        )],
+        loading: false,
+    }
+}
+
+fn k4_scene(harness: &mut Harness<'_, FreeCutApp>, look: K4Look) {
+    harness.state_mut().set_looks_for_tests(saved_looks());
+    match look {
+        K4Look::Tab(filter) => {
+            let assets = harness.state_mut().assets_mut();
+            assets.tab = crate::ui::assets::AssetTab::Adjust;
+            assets.adjust.filter = filter;
+        }
+        K4Look::SaveLook => {
+            let video = harness.state().project_for_tests().and_then(|p| {
+                p.doc()
+                    .sequence(p.doc().root())?
+                    .tracks()
+                    .flat_map(|(_, t)| t.clips())
+                    .find(|c| {
+                        c.color.is_some()
+                            && !matches!(
+                                c.content,
+                                freecut_timeline::model::ClipContent::Generated { .. }
+                            )
+                    })
+                    .and_then(|c| Some((c.id, c.color.as_deref()?.clone())))
+            });
+            if let Some((id, stack)) = video {
+                harness.state_mut().select_for_tests(vec![id]);
+                harness.state_mut().open_save_look_for_tests(stack, true);
+            }
+        }
+    }
+    settle(harness);
 }
 
 /// The demo project selected as `what` shows, with a title styled so the

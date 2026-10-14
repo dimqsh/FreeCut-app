@@ -19,8 +19,15 @@
 //! (`super::stage`): side handles that set the box width (TX-005; the
 //! opposite edge stays, Alt keeps the centre) and, with a tailed bubble,
 //! the tail-tip handle (TX-055). Each handle drag is one undo entry and Esc
-//! cancels it. Handles for scale and rotation come later. While playing,
-//! nothing on the canvas reacts and no outline is drawn.
+//! cancels it. Handles for scale and rotation come later. While the Look
+//! lens's Masks page edits a colour mask of the one selected clip
+//! ([`Project::mask_focus`], CL-031), the canvas shows that mask's outline,
+//! its feather band and its handles (TR-019, `super::stage`): the centre
+//! moves it, the edge and corner handles size it, the knob turns it, the
+//! small outer handle sets the feather and a band's edge its width; each
+//! drag is one undo entry, Esc cancels it, and Shift keeps one axis, the
+//! ratio or 15° steps. While playing, nothing on the canvas reacts and no
+//! outline is drawn.
 
 use eframe::egui::{
     self, Color32, DragValue, Key, PointerButton, Pos2, Rect, Sense, Stroke, TextureHandle, Vec2,
@@ -30,7 +37,8 @@ use freecut_timeline::glam::DVec2;
 use freecut_timeline::history::{Coalesce, GestureId};
 use freecut_timeline::ids::ClipId;
 use freecut_timeline::model::{
-    CanvasPos, ClipContent, Document, GainDb, MasterAudio, RefPx, TailTip, TextClipData,
+    CanvasPos, ClipContent, ColorMask, ColorMaskParam, ColorStack, Document, GainDb, GeneratedKind,
+    MasterAudio, PropValue, RefPx, TailTip, TextClipData,
 };
 use freecut_timeline::plan::ref_px_scale;
 use freecut_timeline::time::Tick;
@@ -44,7 +52,7 @@ use crate::ui::canvas::{
 };
 use crate::ui::drag::DragGesture;
 use crate::ui::props::{self, Edit};
-use crate::ui::stage::{self, Handle, TextHandles, WidthDrag};
+use crate::ui::stage::{self, Handle, MaskFrame, MaskHandle, TextHandles, WidthDrag};
 use crate::widgets::icon_button::IconButton;
 use crate::widgets::panel::pane_header;
 use crate::widgets::text_then_icon;
@@ -386,6 +394,15 @@ enum Dragging {
         grab: DVec2,
         last: Option<TailTip>,
     },
+    /// A handle of the colour mask being edited (CL-031, TR-019), on the
+    /// mask and frame as they were when the drag began.
+    Mask {
+        handle: MaskHandle,
+        frame: MaskFrame,
+        start: ColorMask,
+        grab: DVec2,
+        last: Option<(ColorMaskParam, PropValue)>,
+    },
 }
 
 /// Player state that outlives a frame.
@@ -533,6 +550,7 @@ pub fn show(
         canvas_input(ui, &response, project, state, view, canvas, &mut out);
         draw_outlines(&painter, &look, project, view, canvas);
         draw_text_handles(&painter, project, view, canvas);
+        draw_mask_handles(&painter, &look, project, view, canvas);
     }
     if response.double_clicked()
         && let Some(p) = response.interact_pointer_pos()
@@ -1059,7 +1077,22 @@ fn canvas_input(
     {
         let at = to_canvas(canvas, view, press);
         let grabbed = handle_under(project, view, canvas, press);
-        if let Some((clip, layer, size, handle, point)) = grabbed
+        let mask = mask_handle_under(project, view, canvas, press);
+        if let Some((clip, frame, start, handle, point)) = mask {
+            state.drag = Some(CanvasDrag {
+                clip,
+                start: at,
+                origin: shown_position(project, clip).unwrap_or(CanvasPos::CENTER),
+                gesture: project.begin_gesture(),
+                what: Dragging::Mask {
+                    handle,
+                    frame,
+                    start,
+                    grab: point - at,
+                    last: None,
+                },
+            });
+        } else if let Some((clip, layer, size, handle, point)) = grabbed
             && let Some(origin) = shown_position(project, clip)
         {
             let grab = point - at;
@@ -1208,8 +1241,169 @@ fn drag_to(
                 *last = Some(tip);
             }
         }
+        Dragging::Mask {
+            handle,
+            frame,
+            start,
+            grab,
+            last,
+        } => {
+            // The centre follows the pointer's travel; other handles sit
+            // where the pointer is, less where it grabbed them.
+            let at = if *handle == MaskHandle::Center {
+                pointer
+            } else {
+                pointer + *grab
+            };
+            let Some(set) = stage::mask_drag(frame, start, *handle, drag.start, at, shift) else {
+                return Ok(());
+            };
+            if Some(set) != *last {
+                let (param, value) = set;
+                let edit = freecut_timeline::edit::ColorEdit::SetMaskParam {
+                    id: start.id,
+                    param,
+                    value,
+                };
+                apply(project, Edit::Color(edit))?;
+                *last = Some(set);
+            }
+        }
     }
     Ok(())
+}
+
+/// The colour mask the Masks page edits (CL-031), when the Stage can show
+/// it: its clip is the one selected, not on a locked track and visible in
+/// the latest frame (an adjustment clip's frame is the canvas). Its frame
+/// and the mask as it shows at the playhead (keyed values evaluated).
+fn focused_mask(
+    project: &Project,
+    view: &CanvasView<'_>,
+) -> Option<(ClipId, MaskFrame, ColorMask)> {
+    let focus = project.mask_focus?;
+    if project.selection.as_slice() != [focus.clip] {
+        return None;
+    }
+    let doc = project.doc();
+    if !pickable(doc, focus.clip) {
+        return None;
+    }
+    let clip = doc.clip(focus.clip)?;
+    let frame = match clip.content {
+        ClipContent::Generated {
+            kind: GeneratedKind::Adjustment,
+        } => {
+            // Only while it covers the playhead.
+            if project.playhead < clip.start() || project.playhead >= clip.end() {
+                return None;
+            }
+            MaskFrame::canvas(view.canvas)
+        }
+        _ => MaskFrame::of_layer(view.layer(focus.clip)?),
+    };
+    let stack = match clip.content_time_at(project.playhead) {
+        Some(ct) => clip.color_at(ct),
+        None => clip.color.clone(),
+    };
+    let mask = *ColorStack::of(stack.as_ref()).mask(focus.id)?;
+    Some((focus.clip, frame, mask))
+}
+
+/// The handle of the edited mask under screen point `p`: its clip, frame,
+/// the mask, which handle and where it is (canvas px).
+fn mask_handle_under(
+    project: &Project,
+    view: &CanvasView<'_>,
+    canvas: Rect,
+    p: Pos2,
+) -> Option<(ClipId, MaskFrame, ColorMask, MaskHandle, DVec2)> {
+    let (clip, frame, mask) = focused_mask(project, view)?;
+    let reach =
+        f64::from(HANDLE_REACH) * f64::from(view.canvas.0) / f64::from(canvas.width().max(1.0));
+    let handles = stage::mask_handles(&frame, &mask);
+    let (handle, point) = stage::mask_handle_at(&handles, to_canvas(canvas, view, p), reach)?;
+    Some((clip, frame, mask, handle, point))
+}
+
+/// The edited mask's outline (1.5 pt `accent` over a dark underlay), its
+/// feather band (dashed) and its handles: white squares on the edges, a
+/// ring at the centre, a dot on the knob and an arrow-like diamond for the
+/// feather (TR-019, ui-concept §9.1).
+fn draw_mask_handles(
+    painter: &egui::Painter,
+    look: &theme::Look,
+    project: &Project,
+    view: &CanvasView<'_>,
+    canvas: Rect,
+) {
+    let Some((_, frame, mask)) = focused_mask(project, view) else {
+        return;
+    };
+    let h = stage::mask_handles(&frame, &mask);
+    let min = DVec2::new(f64::from(canvas.min.x), f64::from(canvas.min.y));
+    let size = DVec2::new(f64::from(canvas.width()), f64::from(canvas.height()));
+    let screen = |p: DVec2| {
+        let s = canvas_to_screen(p, min, size, view.canvas);
+        Pos2::new(s.x as f32, s.y as f32)
+    };
+    let points = |line: &Vec<DVec2>| line.iter().map(|p| screen(*p)).collect::<Vec<Pos2>>();
+    let accent = Stroke::new(1.5, look.palette.accent);
+    let shadow = Stroke::new(3.0, Color32::from_black_alpha(110));
+    let thin = Stroke::new(1.0, Color32::from_white_alpha(170));
+    for line in &h.feather {
+        let pts = points(line);
+        let mut pts = pts;
+        if h.closed
+            && let Some(first) = pts.first().copied()
+        {
+            pts.push(first);
+        }
+        painter.extend(egui::Shape::dashed_line(&pts, thin, 4.0, 4.0));
+    }
+    for line in &h.outline {
+        let pts = points(line);
+        for stroke in [shadow, accent] {
+            if h.closed {
+                painter.add(egui::Shape::closed_line(pts.clone(), stroke));
+            } else {
+                painter.add(egui::Shape::line(pts.clone(), stroke));
+            }
+        }
+    }
+    let rim = Stroke::new(1.0, surface::LABEL_DARK);
+    let [from, to] = h.stem.map(screen);
+    painter.line_segment([from, to], Stroke::new(1.0, Color32::WHITE));
+    for (handle, at) in &h.handles {
+        let at = screen(*at);
+        match handle {
+            MaskHandle::Center => {
+                painter.circle_stroke(at, 6.0, Stroke::new(3.0, surface::LABEL_DARK));
+                painter.circle_stroke(at, 6.0, Stroke::new(1.5, Color32::WHITE));
+            }
+            MaskHandle::Rotate => {
+                painter.circle(at, 5.0, Color32::WHITE, rim);
+            }
+            MaskHandle::Feather => {
+                let d = 5.0;
+                let diamond = vec![
+                    at + Vec2::new(0.0, -d),
+                    at + Vec2::new(d, 0.0),
+                    at + Vec2::new(0.0, d),
+                    at + Vec2::new(-d, 0.0),
+                ];
+                painter.add(egui::Shape::convex_polygon(
+                    diamond,
+                    look.palette.accent,
+                    rim,
+                ));
+            }
+            _ => {
+                let rect = Rect::from_center_size(at, Vec2::splat(10.0));
+                painter.rect(rect, 1.0, Color32::WHITE, rim, egui::StrokeKind::Outside);
+            }
+        }
+    }
 }
 
 /// The single selected text clip, its box in the latest frame and its
@@ -1255,6 +1449,7 @@ fn handle_under(
 /// selection, even outside the box).
 fn on_handle(project: &Project, view: &CanvasView<'_>, canvas: Rect, p: Pos2) -> bool {
     handle_under(project, view, canvas, p).is_some()
+        || mask_handle_under(project, view, canvas, p).is_some()
 }
 
 fn text_handles(view: &CanvasView<'_>, layer: &LayerBox, data: &TextClipData) -> TextHandles {
@@ -1508,6 +1703,122 @@ mod tests {
             }
             at
         }
+    }
+
+    /// A rig whose clip is a graded adjustment clip with an ellipse mask
+    /// the Masks page edits (CL-031): its frame is the canvas.
+    fn mask_rig() -> Rig {
+        use freecut_timeline::edit::{AdjustSpan, ColorEdit};
+        use freecut_timeline::model::{ColorParamId, Mask, MaskShapeKind};
+        let mut rig = Rig::new();
+        let seq = rig.project.doc().root();
+        let graded = std::sync::Arc::new(ColorStack::default().with(ColorParamId::Exposure, 30));
+        let req = EditRequest::AddAdjustmentClip {
+            seq,
+            span: AdjustSpan::AtPlayhead(Tick::ZERO),
+            color: Some(graded),
+        };
+        rig.project.apply(&req, Coalesce::Never).unwrap();
+        let adjust = rig.project.selection[0];
+        let req = EditRequest::EditColor {
+            seq,
+            clips: vec![adjust],
+            edit: ColorEdit::AddMask(Mask::new(MaskShapeKind::Ellipse)),
+        };
+        rig.project.apply(&req, Coalesce::Never).unwrap();
+        rig.clip = adjust;
+        rig.project.selection = vec![adjust];
+        rig.project.mask_focus = Some(crate::session::MaskFocus {
+            clip: adjust,
+            id: 1,
+        });
+        rig
+    }
+
+    fn the_mask(rig: &Rig) -> ColorMask {
+        *ColorStack::of(rig.project.doc().clip(rig.clip).unwrap().color.as_ref())
+            .mask(1)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_mask_handle_drag_is_one_entry_and_esc_cancels_it() {
+        use freecut_timeline::model::{MaskPoint, PropPath};
+        let mut rig = mask_rig();
+        rig.frame(Vec::new());
+        // The centre handle sits at the canvas centre: drag it 100 pt right.
+        let centre = rig.screen(DVec2::new(960.0, 540.0));
+        let entries = rig.project.editor.history().len();
+        let end = rig.drag(centre, Vec2::new(100.0, 0.0), Modifiers::NONE);
+        rig.frame(vec![button(end, false)]);
+        rig.frame(Vec::new());
+        let m = the_mask(&rig);
+        let want = 100.0 * rig.per_point() / 1080.0 * 10_000.0;
+        assert!(
+            (f64::from(m.mask.center.x) - want).abs() < 20.0 && m.mask.center.y == 0,
+            "{:?}, wanted x ≈ {want}",
+            m.mask.center
+        );
+        assert_eq!(rig.project.editor.history().len(), entries + 1, "one entry");
+        assert_eq!(rig.project.selection, [rig.clip], "still selected");
+        rig.project.undo().unwrap();
+        assert_eq!(the_mask(&rig).mask.center, MaskPoint::new(0, 0));
+
+        // The width handle, then Esc: back as it was, no entry.
+        let width = rig.screen(DVec2::new(960.0 + 270.0, 540.0));
+        let entries = rig.project.editor.history().len();
+        let end = rig.drag(width, Vec2::new(60.0, 0.0), Modifiers::NONE);
+        assert_ne!(
+            the_mask(&rig).mask.size,
+            MaskPoint::new(5_000, 5_000),
+            "live"
+        );
+        rig.frame(vec![key(Key::Escape, Modifiers::NONE)]);
+        rig.frame(vec![button(end, false)]);
+        rig.frame(Vec::new());
+        assert_eq!(the_mask(&rig).mask.size, MaskPoint::new(5_000, 5_000));
+        assert_eq!(rig.project.editor.history().len(), entries);
+
+        // With the centre keyed, a drag sets the key at the playhead.
+        let seq = rig.project.doc().root();
+        let center = PropPath::ColorMask {
+            id: 1,
+            param: ColorMaskParam::Shape(freecut_timeline::model::MaskParam::Center),
+        };
+        let req = EditRequest::EditKeys {
+            seq,
+            clips: vec![rig.clip],
+            prop: center,
+            edit: freecut_timeline::edit::KeyEdit::Add {
+                at: Tick::ZERO,
+                value: None,
+            },
+        };
+        rig.project.apply(&req, Coalesce::Never).unwrap();
+        rig.frame(Vec::new());
+        let end = rig.drag(centre, Vec2::new(0.0, 50.0), Modifiers::NONE);
+        rig.frame(vec![button(end, false)]);
+        rig.frame(Vec::new());
+        let clip = rig.project.doc().clip(rig.clip).unwrap().clone();
+        let keys = clip.keys.keys(center);
+        assert_eq!(keys.len(), 1);
+        let PropValue::MaskPoint(p) = keys[0].value else {
+            panic!("a mask point key");
+        };
+        assert!(p.y > 0 && p.x == 0, "{p:?}");
+        assert_eq!(
+            the_mask(&rig).mask.center,
+            MaskPoint::new(0, 0),
+            "static kept"
+        );
+
+        // Without the focus there are no handles: a drag there is the
+        // canvas's own (it grabs the title below) and leaves the mask.
+        rig.project.mask_focus = None;
+        let before = the_mask(&rig);
+        let end = rig.drag(centre, Vec2::new(40.0, 0.0), Modifiers::NONE);
+        rig.frame(vec![button(end, false)]);
+        assert_eq!(the_mask(&rig), before);
     }
 
     #[test]

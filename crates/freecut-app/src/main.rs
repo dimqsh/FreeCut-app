@@ -9,6 +9,7 @@ mod clip_streams;
 mod hdr;
 mod imports;
 mod jobs;
+mod looks;
 mod luts;
 mod posters;
 mod preview;

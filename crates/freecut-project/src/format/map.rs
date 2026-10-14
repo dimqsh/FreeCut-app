@@ -29,12 +29,12 @@ use std::sync::Arc;
 use freecut_timeline::ids::{ClipId, GroupId, LinkId, MAX_ID, MarkerId, MediaId, SeqId, TrackId};
 use freecut_timeline::model::{
     Angle, Animatable, Attachment, AudioStreamInfo, CanvasPos, Clip, ClipAnimations, ClipAudio,
-    ClipContent, ClipKeys, Document, EmbeddedAudio, FadeCurve, Fingerprint, FollowKind, GainDb,
-    GeneratedKind, GeneratedMediaKind, Keyframe, MAX_MARKER_NAME_CHARS, MAX_MARKER_NOTE_CHARS,
-    Marker, MarkerOrigin, Markers, MasterAudio, MediaInfo, MediaItem, MediaKind, MediaOrigin,
-    MediaSource, PaletteColor, Pan, PerMille, ProjectSettings, Rgba8, Rotation, Scale, Sequence,
-    SequenceFlags, StoredPath, StreamSel, TextOrigin, Track, TrackAudio, TrackFlags, TrackHeader,
-    TrackKind, Transform, VideoStreamInfo,
+    ClipContent, ClipKeys, ColorStack, Document, EmbeddedAudio, FadeCurve, Fingerprint, FollowKind,
+    GainDb, GeneratedKind, GeneratedMediaKind, Keyframe, MAX_MARKER_NAME_CHARS,
+    MAX_MARKER_NOTE_CHARS, Marker, MarkerOrigin, Markers, MasterAudio, MediaInfo, MediaItem,
+    MediaKind, MediaOrigin, MediaSource, PaletteColor, Pan, PerMille, ProjectSettings, Rgba8,
+    Rotation, Scale, Sequence, SequenceFlags, StoredPath, StreamSel, TextOrigin, Track, TrackAudio,
+    TrackFlags, TrackHeader, TrackKind, Transform, VideoStreamInfo,
 };
 use freecut_timeline::time::{FrameRate, MarkRange, Rational, SampleRate, Tick, TimeRange};
 use serde::de::DeserializeOwned;
@@ -121,6 +121,41 @@ impl At {
             message: message.to_string(),
         }
     }
+}
+
+/// A colour stack outside a project (a saved look, CL-026): the JSON at
+/// `path` read with the clip rules of [`color`] (defaults left out, values
+/// out of range clamped, a list that is no curve refused at its path).
+/// Returns the stack and whether anything was clamped. Unknown keys are
+/// dropped.
+pub(crate) fn read_stack(value: Value, path: &str) -> Result<(ColorStack, bool), OpenError> {
+    let at = At::root().key(path);
+    let dto: ColorDto = decode_at(value, &at)?;
+    let mut extras = Extras::new();
+    let mut clamped = false;
+    let adjustment = ClipContent::Generated {
+        kind: GeneratedKind::Adjustment,
+    };
+    let stack = color::read_color(
+        dto,
+        &at,
+        &adjustment,
+        Owner::Root,
+        &mut extras,
+        &mut clamped,
+    )?
+    .unwrap_or_default();
+    Ok((stack, clamped))
+}
+
+/// `stack` as the JSON [`read_stack`] reads, every default left out
+/// (`{}` for the default stack).
+pub(crate) fn write_stack(stack: &ColorStack) -> Value {
+    let extras = Extras::new();
+    let give = Give::new(&extras, Owner::Root);
+    color::write_color(Some(stack), &give)
+        .and_then(|dto| serde_json::to_value(dto).ok())
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()))
 }
 
 /// Decodes `value`, the value at `at`, as a `T`; errors name the full path.

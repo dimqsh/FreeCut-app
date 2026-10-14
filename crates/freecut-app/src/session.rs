@@ -55,6 +55,9 @@ pub struct Project {
     /// The LUTs the Look lens offers and which of them are missing (CL-016,
     /// CL-017); the app's, shared by every project and refreshed by it.
     pub luts: Arc<crate::luts::LutChoices>,
+    /// The saved looks the Adjust tab and the Presets select list
+    /// (CL-026); the app's, shared by every project and refreshed by it.
+    pub looks: Arc<crate::looks::SavedLooks>,
     pub selection: Vec<ClipId>,
     /// The selected markers (TL-037): kept beside the clip selection, never
     /// undoable; markers that no longer exist drop out after every change.
@@ -75,6 +78,43 @@ pub struct Project {
     /// counting down or recording, and its start must not move under it
     /// (AU-027). Undo and redo are refused too.
     pub edit_lock: Option<&'static str>,
+    /// The Auto or Match analysis running on the pool (CL-019, CL-020),
+    /// for the Look lens's spinner and Cancel; never saved.
+    pub color_job: Option<ColorJob>,
+    /// Match's pick mode (CL-020): the clip waiting for a reference frame
+    /// to be clicked on the timeline; never saved.
+    pub match_pick: Option<MatchPick>,
+    /// The colour mask the Look lens's Masks page is editing (CL-031), so
+    /// the Stage draws its outline and handles (TR-019). Set by the
+    /// inspector every frame it shows the page; never saved.
+    pub mask_focus: Option<MaskFocus>,
+}
+
+/// The colour mask being edited on the Stage (CL-031, TR-019).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaskFocus {
+    pub clip: ClipId,
+    /// The mask's id in the clip's stack.
+    pub id: u16,
+}
+
+/// An analysis running for a clip (CL-019, CL-020).
+#[derive(Debug, Clone)]
+pub struct ColorJob {
+    pub id: u64,
+    pub clip: ClipId,
+    /// Auto (`true`) or Match.
+    pub auto: bool,
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Match's pick mode (CL-020).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatchPick {
+    /// The clip to match.
+    pub target: ClipId,
+    /// Measure the reference as graded (CL-020's default) or ungraded.
+    pub graded: bool,
 }
 
 /// Why an edit didn't happen, for the status line.
@@ -101,6 +141,7 @@ impl Project {
             media_paths: BTreeMap::new(),
             offline: BTreeSet::new(),
             luts: Arc::default(),
+            looks: Arc::default(),
             selection: Vec::new(),
             markers: BTreeSet::new(),
             playhead: Tick::ZERO,
@@ -109,6 +150,9 @@ impl Project {
             upgraded_from: None,
             notes: Vec::new(),
             edit_lock: None,
+            color_job: None,
+            match_pick: None,
+            mask_focus: None,
         }
     }
 
@@ -657,6 +701,11 @@ pub fn op_name(op: OpKind) -> &'static str {
         OpKind::EditColor(ColorOp::Curve) => "Curve",
         OpKind::EditColor(ColorOp::Puck) => "Color Wheel",
         OpKind::EditColor(ColorOp::Lut) => "LUT",
+        OpKind::EditColor(ColorOp::Look) => "Apply Look",
+        OpKind::EditColor(ColorOp::Auto) => "Auto Color",
+        OpKind::EditColor(ColorOp::Match) => "Match Color",
+        OpKind::EditColor(ColorOp::Mask) => "Color Mask",
+        OpKind::AddAdjustmentClip => "Add Adjustment Clip",
     }
 }
 

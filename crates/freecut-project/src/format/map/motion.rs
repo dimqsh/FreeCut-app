@@ -30,8 +30,8 @@ use std::sync::Arc;
 use freecut_timeline::model::{
     Angle, AnimOrder, AnimParams, AnimUnit, AnimationSpec, CanvasPos, Clip, ClipAnimations,
     ClipContent, ClipKeys, DeciDegrees, Direction, EaseCurve, EaseDir, Interp, Keyframe, LoopSeams,
-    PerMille, PresetId, PropPath, PropValue, RefPx, Scale, SignedPerMille, Slot, SlotPolicy,
-    TailTip, Travel, ValueKind, slot_policy,
+    MaskPoint, PerMille, PresetId, PropPath, PropValue, RefPx, Scale, SignedPerMille, Slot,
+    SlotPolicy, TailTip, Travel, ValueKind, slot_policy,
 };
 use freecut_timeline::time::Tick;
 
@@ -245,12 +245,16 @@ fn read_track(
         PropPath::Text(_) | PropPath::FillStopColor(_) | PropPath::Reveal => {
             clip.content.text().is_some()
         }
-        PropPath::Color(_) | PropPath::ColorPuck(_) => clip.content.takes_color(),
+        PropPath::Color(_) | PropPath::ColorPuck(_) | PropPath::ColorMask { .. } => {
+            clip.content.takes_color()
+        }
     };
     if !fits {
         let only = match prop {
             PropPath::Transform(_) => "visual clips",
-            PropPath::Color(_) | PropPath::ColorPuck(_) => "video, image and adjustment clips",
+            PropPath::Color(_) | PropPath::ColorPuck(_) | PropPath::ColorMask { .. } => {
+                "video, image and adjustment clips"
+            }
             _ => "text clips",
         };
         return Err(prop_at.bad(format!("`{prop}` takes keyframes only on {only}")));
@@ -358,6 +362,10 @@ fn read_value(
             let x = fit(i64::from(x), i16::MIN, i16::MAX, clamped);
             let y = fit(i64::from(y), i16::MIN, i16::MAX, clamped);
             return Ok((PropValue::Puck { x, y }, extra));
+        }
+        ValueKind::MaskPoint => {
+            let (x, y, extra) = read_point(raw, at, clamped)?;
+            return Ok((PropValue::MaskPoint(MaskPoint::new(x, y)), extra));
         }
         ValueKind::Color => match &raw {
             serde_json::Value::String(text) => match parse_color(text) {
@@ -486,6 +494,7 @@ fn write_value(value: PropValue, point_extra: impl FnOnce() -> Fields) -> KeyVal
         PropValue::Color(c) => KeyValueDto::Color(color_text(c)),
         PropValue::Level(v) => KeyValueDto::Int(i64::from(v)),
         PropValue::Puck { x, y } => point(i32::from(x), i32::from(y), point_extra()),
+        PropValue::MaskPoint(p) => point(p.x, p.y, point_extra()),
     }
 }
 

@@ -338,7 +338,9 @@ impl<I: LayerImages> ExportRenderer<I> {
 fn clip_showing(plan: &FramePlan, failure: &ImageFailure) -> Option<ClipId> {
     let mut fallback = None;
     for node in plan.nodes.iter().rev() {
-        let PlanNode::Layer(layer) = node;
+        let PlanNode::Layer(layer) = node else {
+            continue;
+        };
         match &layer.source {
             LayerSource::Video { asset, source_time } if *asset == failure.asset => {
                 if failure.source_time == Some(*source_time) {

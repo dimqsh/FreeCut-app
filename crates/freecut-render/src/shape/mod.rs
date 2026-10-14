@@ -9,6 +9,7 @@
 //! where they meet.
 
 pub mod bubble;
+pub mod mask;
 
 use zeno::{Command, Mask, Vector};
 

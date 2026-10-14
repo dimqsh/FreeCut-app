@@ -1685,6 +1685,45 @@ design of §6 L5 stays the target; this is the reference it will be checked agai
   and a found LUT's hash, interpolation and skin switch are part of the digest. FreeCut's eight
   bundled LUTs (`assets/luts/`, CL-045) are baked from their recipes through `eval_pixel` by
   `tests/bundled_luts.rs`, which also checks that the checked-in files re-bake byte for byte.
+- **As built in K4.** `PlanNode::Adjust(AdjustPlan { clip, track, color, frame_index })` is
+  emitted only for a non-identity evaluated stack. `render_into` draws the drawables collected
+  so far with the banded `draw_rows` (now `Compositor::draw`), clears the list, and grades the
+  frame in place with `color::grade_in_place` through `GradeCache::compiled` (the same
+  digest-keyed cache of compiled stacks as clips; a missing LUT is collected the same way). The
+  background is part of the frame, so it is graded; layers drawn later are not. Stages that
+  look at neighbours (K7) and masks (K6) will run inside the same step. `tests/color_k4.rs`
+  checks order, bottom-up stacking, Mix 0, thread counts, a golden PNG and preview == export
+  for an adjustment clip over three clips and a title.
+- **As built in K5.** Stage 4 is `color::matching::MatchStage`: `gain · v + offset` per
+  Rec.709 `Y'`, `Cb`, `Cr` channel of code values, then `lerp(input, matched, intensity)`; it
+  is affine, so the lattice reproduces it exactly, and while it is active the bake evaluates
+  whole pixels (stages 5–6 are no longer per channel). The skin mask reads the stage-4 output
+  and the Amount blend goes back to the stage-3b input. The evaluator reads the Light and Color
+  sliders from `ColorStack::effective_basic()` (Auto's offsets at Strength added, each section's
+  switch applied), so Auto is not a stage. `ColorDigest` hashes those effective sliders and an
+  active match (`COLOR_ALGO_VERSION` 4). `color::stats` holds the pure analysis: `frame_stats`
+  (per-channel and luma histograms of pixels with alpha above one half, and linear-light sums
+  of the usable and the near-grey pixels), `auto_color` (white balance from the near-grey
+  average, exposure and the range ends from the 0.5 %/99.5 % luma points, contrast from the
+  resulting luma spread), `ycc_stats`/`match_stats` (Reinhard-style transfer with CL-020's
+  limits), `analysis_picture` (integer box filter to ≤ 512 px) and `stack_input` (stage 4 on
+  a picture). `tests/color_k5.rs` checks the casts, refusals, determinism across threads,
+  Strength against plain sliders (same digest), self-match identity, limits, the lattice, two
+  golden PNGs and preview == export with keyed Strength and Intensity.
+- **As built in K6.** `freecut_render::shape::mask` holds `coverage(&ColorMask, item_px,
+  point)`, `combined`, `MaskSet` (masks compiled once per grade) and `MaskSpace` (a buffer's
+  pixel centres in shorter sides of the item: `MaskSpace::picture` maps a stored picture into
+  its display frame through rotation, mirroring and pixel aspect, `MaskSpace::canvas` is an
+  adjustment clip's frame). `CompiledStack` carries the masks and Amount; its lattice is the
+  stack's without masks at Amount 100, and `GradeCache` keys that lattice by the unmasked digest
+  and the graded picture by the full digest and the display size. `grade_displayed(stack,
+  picture, display, threads)` is `grade` for a picture shown in a display frame (the compositor
+  passes `LayerPlan::display_size`); `grade` uses the picture's upright size and
+  `grade_in_place` the frame itself. Full coverage writes the lattice value, none leaves the
+  pixel, alpha is never touched. `tests/color_k6.rs` checks coverage goldens per shape and for
+  the three combine modes, monotonic feather, invert as the complement, a zero-size mask, alpha,
+  clip masks following the clip and adjustment masks staying on the canvas, thread counts, a
+  graded golden and preview == export for a keyed ellipse. `COLOR_ALGO_VERSION` is 5.
 - **Bake.** `bake(&ColorStack, BakeSize) -> Arc<Lattice>`: for every node `(i, j, k)` of an
   `n³` grid (`n` = 33, or 65 when a curve's steepest baked segment exceeds a slope of 4 or the
   user LUT is larger than 33³), the input `(i, j, k) / (n − 1)` goes through `eval_pixel`'s
@@ -1732,9 +1771,9 @@ design of §6 L5 stays the target; this is the reference it will be checked agai
   test chart per control extreme, checked in and later used as the GPU goldens.
 
 Still to do on this path (not the GPU design): blend modes, clip masks (color masks
-share their core, above), effects and transitions; the color stack's K4–K6 stages and
-adjustment clips; trilinear filtering between mip levels; per-glyph hue and glow modulation
-(only the tint/lightness style channel has a per-glyph form).
+share their core, above), effects and transitions;
+trilinear filtering between mip levels; per-glyph hue and glow modulation (only the
+tint/lightness style channel has a per-glyph form).
 
 ---
 

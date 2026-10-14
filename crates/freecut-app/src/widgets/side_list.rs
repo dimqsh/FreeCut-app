@@ -208,6 +208,16 @@ pub fn splitter(ui: &mut egui::Ui, id: Id, x: f32, span: Rangef, width: &mut f32
 /// A chip (§13.9): a 24 pt pill in `bg.field` with a `type.caption`
 /// label; selected = `overlay.selection` with `accent.text`.
 pub fn chip(ui: &mut egui::Ui, label: &str, selected: bool) -> Response {
+    chip_with(ui, None, label, selected)
+}
+
+/// [`chip`] under its own `id`, so it keeps its state (and tests find it)
+/// however the row around it changes.
+pub fn chip_at(ui: &mut egui::Ui, id: egui::Id, label: &str, selected: bool) -> Response {
+    chip_with(ui, Some(id), label, selected)
+}
+
+fn chip_with(ui: &mut egui::Ui, id: Option<egui::Id>, label: &str, selected: bool) -> Response {
     let look = theme::look(ui.ctx());
     let p = look.palette;
     let font = Type::Caption.style(ui.style()).resolve(ui.style());
@@ -218,7 +228,13 @@ pub fn chip(ui: &mut egui::Ui, label: &str, selected: bool) -> Response {
     };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, color);
     let size = Vec2::new(galley.size().x + 20.0, 24.0);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, response) = match id {
+        None => ui.allocate_exact_size(size, Sense::click()),
+        Some(id) => {
+            let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+            (rect, ui.interact(rect, id, Sense::click()))
+        }
+    };
     if ui.is_rect_visible(rect) {
         let radius = 12;
         let fill = if selected {

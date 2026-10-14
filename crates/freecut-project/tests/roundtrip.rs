@@ -262,8 +262,10 @@ fn random_plans_reach_text_and_transforms() {
 /// The random plans above really exercise the format-6 data: their
 /// documents hold transform and text keys with eased segments, all three
 /// animation slots, and eased volume keys; format 10's colour stacks and
-/// colour keys; format 11's HSL, curves, wheels and puck keys; and
-/// format 12's LUT slots, skin protection and their keys.
+/// colour keys; format 11's HSL, curves, wheels and puck keys; format
+/// 12's LUT slots, skin protection and their keys; format 13's auto
+/// corrections, matches and their keys; and format 14's colour masks of
+/// every shape and mode and their keys.
 #[test]
 fn random_plans_reach_keys_and_animations() {
     use freecut_timeline::model::{Interp, PropPath, Slot};
@@ -278,8 +280,14 @@ fn random_plans_reach_keys_and_animations() {
     let (mut graded, mut color_keys, mut puck_keys) = (0, 0, 0);
     let (mut hsl, mut curves, mut wheels) = (0, 0, 0);
     let (mut luts, mut skins, mut k3_keys) = (0, 0, 0);
+    let (mut autos, mut matches, mut k5_keys) = (0, 0, 0);
+    let (mut shapes, mut modes, mut k6_keys) = (
+        std::collections::BTreeSet::new(),
+        std::collections::BTreeSet::new(),
+        0,
+    );
     let mut slots = [0; 3];
-    for _ in 0..96 {
+    for _ in 0..960 {
         let plan = doc_plan().new_tree(&mut runner).unwrap().current();
         let (doc, _) = build(&plan);
         for clip in doc
@@ -294,8 +302,13 @@ fn random_plans_reach_keys_and_animations() {
                         freecut_timeline::model::ColorParamId::LutIntensity
                         | freecut_timeline::model::ColorParamId::SkinAmount(_),
                     ) => k3_keys += 1,
+                    PropPath::Color(
+                        freecut_timeline::model::ColorParamId::AutoStrength
+                        | freecut_timeline::model::ColorParamId::MatchIntensity,
+                    ) => k5_keys += 1,
                     PropPath::Color(_) => color_keys += 1,
                     PropPath::ColorPuck(_) => puck_keys += 1,
+                    PropPath::ColorMask { .. } => k6_keys += 1,
                     _ => text_keys += 1,
                 }
                 eased_keys += track.keys().iter().filter(|k| eased(k.interp)).count();
@@ -307,6 +320,12 @@ fn random_plans_reach_keys_and_animations() {
                 wheels += usize::from(c.wheels.any_set());
                 luts += usize::from(c.lut.is_some());
                 skins += usize::from(c.basic.skin.on || c.lut.as_ref().is_some_and(|l| l.skin.on));
+                autos += usize::from(c.auto.is_some());
+                matches += usize::from(c.match_xf.is_some());
+                for m in &c.masks {
+                    shapes.insert(m.mask.kind());
+                    modes.insert(m.mode);
+                }
             }
             for (n, slot) in slots.iter_mut().zip(Slot::ALL) {
                 *n += usize::from(clip.animations.get(slot).is_some());
@@ -332,6 +351,16 @@ fn random_plans_reach_keys_and_animations() {
     assert!(
         luts > 0 && skins > 0 && k3_keys > 0,
         "{luts} {skins} {k3_keys}"
+    );
+    // Format 13: auto corrections, matches and their keys.
+    assert!(
+        autos > 0 && matches > 0 && k5_keys > 0,
+        "{autos} {matches} {k5_keys}"
+    );
+    // Format 14: masks of every shape and mode, and their keys.
+    assert!(
+        shapes.len() == 4 && modes.len() == 3 && k6_keys > 0,
+        "{shapes:?} {modes:?} {k6_keys}"
     );
 }
 

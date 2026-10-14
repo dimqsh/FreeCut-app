@@ -7,9 +7,12 @@
 //! - [`progress`]: its lock-free progress cell, ETA window and the text the
 //!   progress and result views show.
 //! - [`luts`]: importing LUT files into the library (CL-016).
+//! - [`color`]: measuring a clip's footage for Auto and Match (CL-019,
+//!   CL-020).
 //! - [`platform`]: blocking OS calls for the export dialog (destination
 //!   checks, "Open" and "Show in folder"), run on the pool.
 
+pub mod color;
 pub mod export;
 pub mod luts;
 pub mod platform;

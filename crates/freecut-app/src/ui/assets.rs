@@ -5,8 +5,9 @@
 //! chip row under the toolbar.
 //!
 //! Only tabs with content in this build are shown, Media (PM-050), Audio
-//! (AU-030's project audio) and Text (TX-001's Add text tile); the others
-//! stay hidden until they exist. Favorites and Recent (UI-006) don't exist
+//! (AU-030's project audio), Text (TX-001's Add text tile) and Adjust
+//! (CL-044: adjustment clips, saved looks and LUTs); the others stay
+//! hidden until they exist. Favorites and Recent (UI-006) don't exist
 //! yet, so no Drawer has a *Mine* group.
 
 use std::collections::{HashMap, HashSet};
@@ -15,6 +16,7 @@ use eframe::egui::{self, DragAndDrop, Id, Margin, Rect, Sense, TextureHandle, Ui
 use freecut_timeline::ids::MediaId;
 use freecut_timeline::model::Document;
 
+use super::adjust::{self, AdjustFilter, AdjustState};
 use super::audio::{self, AudioFilter, AudioState};
 use super::media::{self, MediaState};
 use super::text;
@@ -33,11 +35,17 @@ pub enum AssetTab {
     Media,
     Audio,
     Text,
+    Adjust,
 }
 
 impl AssetTab {
     /// The tabs this build has content for, in order.
-    pub const SHOWN: [AssetTab; 3] = [AssetTab::Media, AssetTab::Audio, AssetTab::Text];
+    pub const SHOWN: [AssetTab; 4] = [
+        AssetTab::Media,
+        AssetTab::Audio,
+        AssetTab::Text,
+        AssetTab::Adjust,
+    ];
 
     /// The tab's icon (UI-004: icon + label; ui-concept §14's icon font).
     pub fn glyph(self) -> &'static str {
@@ -45,6 +53,7 @@ impl AssetTab {
             AssetTab::Media => icons::MEDIA,
             AssetTab::Audio => icons::AUDIO,
             AssetTab::Text => icons::TEXT,
+            AssetTab::Adjust => icons::ADJUST,
         }
     }
 
@@ -53,14 +62,17 @@ impl AssetTab {
             AssetTab::Media => "Media",
             AssetTab::Audio => "Audio",
             AssetTab::Text => "Text",
+            AssetTab::Adjust => "Adjust",
         }
     }
 
-    /// The Shelf group (§8.1): *Bring in* (Media, Audio), *Write* (Text).
+    /// The Shelf group (§8.1): *Bring in* (Media, Audio), *Write* (Text),
+    /// *Grade* (Adjust).
     fn group(self) -> u8 {
         match self {
             AssetTab::Media | AssetTab::Audio => 0,
             AssetTab::Text => 1,
+            AssetTab::Adjust => 2,
         }
     }
 }
@@ -73,6 +85,7 @@ pub struct AssetsState {
     pub tab: AssetTab,
     pub audio: AudioState,
     pub media: MediaState,
+    pub adjust: AdjustState,
     /// The side list's wanted width (§8.2); shown clamped to the panel.
     pub side_width: f32,
     /// Folded side-list groups: (tab, group index).
@@ -85,6 +98,7 @@ impl Default for AssetsState {
             tab: AssetTab::default(),
             audio: AudioState::default(),
             media: MediaState::default(),
+            adjust: AdjustState::default(),
             side_width: side_list::DEFAULT_WIDTH,
             folded: HashSet::new(),
         }
@@ -131,6 +145,10 @@ pub struct AssetsOutput {
     pub status: Option<String>,
     /// The Add text tile was clicked (TX-001).
     pub add_text: bool,
+    /// The Adjust tab's Import (CL-016).
+    pub import_luts: bool,
+    /// The Adjust tab's Delete… on a saved look: `(id, name)`.
+    pub delete_look: Option<(String, String)>,
 }
 
 /// One side-list group: a title and its rows (label, item count).
@@ -224,6 +242,7 @@ pub fn show(
             state.audio.filter.index(),
         ),
         AssetTab::Text => (text::groups(), 0),
+        AssetTab::Adjust => (adjust::groups(project), state.adjust.filter.index()),
     };
     let narrow = !side_list_visible(body.width());
     let mut picked = None;
@@ -286,6 +305,12 @@ pub fn show(
                 AssetTab::Text => {
                     out.add_text = text::show(ui, chips).add_clicked;
                 }
+                AssetTab::Adjust => {
+                    let adjust = adjust::show(ui, project, &mut state.adjust, importing, chips);
+                    out.import_luts = adjust.import_luts;
+                    out.delete_look = adjust.delete_look;
+                    out.status = adjust.status;
+                }
             }
         });
     ui.advance_cursor_after_rect(body);
@@ -305,6 +330,11 @@ fn pick_row(state: &mut AssetsState, tab: AssetTab, i: usize) {
             }
         }
         AssetTab::Text => {}
+        AssetTab::Adjust => {
+            if let Some(f) = AdjustFilter::ALL.get(i) {
+                state.adjust.filter = *f;
+            }
+        }
     }
 }
 

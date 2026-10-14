@@ -625,6 +625,8 @@ fn the_frozen_v9_kitchen_sink_opens_without_colour() {
 /// holds).
 fn kitchen_sink_without_k2() -> freecut_timeline::model::Document {
     let mut v = kitchen_value();
+    strip_k6(&mut v);
+    strip_k5(&mut v);
     strip_k3(&mut v);
     strip_k2(&mut v);
     decode(&compact(&v)).unwrap().document
@@ -634,8 +636,94 @@ fn kitchen_sink_without_k2() -> freecut_timeline::model::Document {
 /// holds).
 fn kitchen_sink_without_k3() -> freecut_timeline::model::Document {
     let mut v = kitchen_value();
+    strip_k6(&mut v);
+    strip_k5(&mut v);
     strip_k3(&mut v);
     decode(&compact(&v)).unwrap().document
+}
+
+/// Today's kitchen sink without what format 13 added (what format 12
+/// holds).
+fn kitchen_sink_without_k5() -> freecut_timeline::model::Document {
+    let mut v = kitchen_value();
+    strip_k6(&mut v);
+    strip_k5(&mut v);
+    decode(&compact(&v)).unwrap().document
+}
+
+/// Today's kitchen sink without what format 14 added (what format 13
+/// holds).
+fn kitchen_sink_without_k6() -> freecut_timeline::model::Document {
+    let mut v = kitchen_value();
+    strip_k6(&mut v);
+    decode(&compact(&v)).unwrap().document
+}
+
+#[test]
+fn the_frozen_v13_kitchen_sink_opens_without_masks() {
+    let v13 = std::fs::read(fixture("v13/kitchen_sink.freecut")).unwrap();
+    assert_eq!(
+        to_value(&v13)["format_version"],
+        13,
+        "the fixture is frozen"
+    );
+    let opened = decode(&v13).unwrap();
+    assert_eq!(
+        opened.warnings[0],
+        OpenWarning::Migrated {
+            from: 13,
+            to: CURRENT_FORMAT_VERSION
+        }
+    );
+    assert!(!opened.needs_save, "an upgrade alone is not a change");
+    assert!(opened.backup_on_save(), "but the original is kept once");
+    let sink = kitchen_sink_without_k6();
+    for seq in opened.document.sequences() {
+        assert_eq!(Some(seq), sink.sequence(seq.id), "sequence {}", seq.id);
+    }
+    for seq in opened.document.sequences() {
+        for (_, track) in seq.tracks() {
+            for clip in track.clips() {
+                let s = freecut_timeline::model::ColorStack::of(clip.color.as_ref());
+                assert!(s.masks.is_empty(), "clip {}", clip.id);
+            }
+        }
+    }
+    check_expected(&opened, "v13/kitchen_sink.expected.freecut");
+}
+
+#[test]
+fn the_frozen_v12_kitchen_sink_opens_without_auto_or_match() {
+    let v12 = std::fs::read(fixture("v12/kitchen_sink.freecut")).unwrap();
+    assert_eq!(
+        to_value(&v12)["format_version"],
+        12,
+        "the fixture is frozen"
+    );
+    let opened = decode(&v12).unwrap();
+    assert_eq!(
+        opened.warnings[0],
+        OpenWarning::Migrated {
+            from: 12,
+            to: CURRENT_FORMAT_VERSION
+        }
+    );
+    assert!(!opened.needs_save, "an upgrade alone is not a change");
+    assert!(opened.backup_on_save(), "but the original is kept once");
+    let sink = kitchen_sink_without_k5();
+    for seq in opened.document.sequences() {
+        assert_eq!(Some(seq), sink.sequence(seq.id), "sequence {}", seq.id);
+    }
+    // Every stack has no auto correction and no match.
+    for seq in opened.document.sequences() {
+        for (_, track) in seq.tracks() {
+            for clip in track.clips() {
+                let s = freecut_timeline::model::ColorStack::of(clip.color.as_ref());
+                assert!(s.auto.is_none() && s.match_xf.is_none());
+            }
+        }
+    }
+    check_expected(&opened, "v12/kitchen_sink.expected.freecut");
 }
 
 #[test]
@@ -710,6 +798,38 @@ fn the_frozen_v10_kitchen_sink_opens_without_hsl_curves_or_wheels() {
 
 proptest! {
     #![proptest_config(ProptestConfig { cases: 128, ..ProptestConfig::default() })]
+
+    /// A format-13 file opens to the document today's editor makes from the
+    /// same edits, and saving it again writes the current format.
+    #[test]
+    fn v13_files_open_to_what_the_editor_makes_today(plan in doc_plan_v13()) {
+        let (doc, ids) = build(&plan);
+        let current = encode(&doc, ids, &Extras::new()).unwrap();
+        let v13 = to_v13(&to_value(&current));
+        let opened = decode(&compact(&v13)).unwrap();
+        prop_assert_eq!(opened.ids.next(), ids);
+        prop_assert_eq!(
+            &opened.warnings,
+            &vec![OpenWarning::Migrated { from: 13, to: CURRENT_FORMAT_VERSION }]
+        );
+        prop_assert_eq!(&opened.document, &doc);
+    }
+
+    /// A format-12 file opens to the document today's editor makes from the
+    /// same edits, and saving it again writes the current format.
+    #[test]
+    fn v12_files_open_to_what_the_editor_makes_today(plan in doc_plan_v12()) {
+        let (doc, ids) = build(&plan);
+        let current = encode(&doc, ids, &Extras::new()).unwrap();
+        let v12 = to_v12(&to_value(&current));
+        let opened = decode(&compact(&v12)).unwrap();
+        prop_assert_eq!(opened.ids.next(), ids);
+        prop_assert_eq!(
+            &opened.warnings,
+            &vec![OpenWarning::Migrated { from: 12, to: CURRENT_FORMAT_VERSION }]
+        );
+        prop_assert_eq!(&opened.document, &doc);
+    }
 
     /// A format-11 file opens to the document today's editor makes from the
     /// same edits, and saving it again writes the current format.

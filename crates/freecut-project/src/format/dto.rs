@@ -459,12 +459,19 @@ pub(crate) struct ClipDto {
 
 /// A clip's colour stack (format 10, CL-001, CL-007, CL-008, CL-023,
 /// CL-035; format 11 adds HSL, Curves and Wheels, CL-013 to CL-015; format
-/// 12 the LUT slot and skin protection, CL-017, CL-030). Every part at its
-/// default is left out: Amount 100, no bypass, every section on, sliders at
-/// 0, curves on the diagonal, pucks centred, no LUT, skin protection off at
-/// Amount 70.
+/// 12 the LUT slot and skin protection, CL-017, CL-030; format 13 Auto and
+/// Match, CL-019, CL-020; format 14 colour masks, CL-031). Every part at
+/// its default is left out: Amount 100, no bypass, every section on,
+/// sliders at 0, curves on the diagonal, pucks centred, no LUT, skin
+/// protection off at Amount 70, no auto correction, no match, no masks.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct ColorDto {
+    /// Format 13: the auto correction (CL-019); absent is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<AutoDto>,
+    /// Format 13: the colour match (CL-020); absent is none.
+    #[serde(default, rename = "match", skip_serializing_if = "Option::is_none")]
+    pub matched: Option<MatchDto>,
     /// The master bypass (CL-023); absent is off.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bypass: bool,
@@ -493,6 +500,49 @@ pub(crate) struct ColorDto {
     /// Format 12: the user LUT (CL-017); absent is none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lut: Option<LutDto>,
+    /// Format 14: the colour masks (CL-031), in combine order, at most 8;
+    /// absent is none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub masks: Vec<ColorMaskDto>,
+    #[serde(flatten)]
+    pub extra: Fields,
+}
+
+/// One colour mask (format 14, CL-031, TR-017, TR-018): its id (1–65535,
+/// unique in the stack; keyframe paths name it), its shape (`linear`,
+/// `band`, `ellipse` or `rectangle`) and its values in mask units
+/// (10000 = the item's shorter side), each left out at the shape's
+/// default: centre `[0, 0]`, size `[5000, 5000]` (`[6000, 4000]` for a
+/// rectangle), linked for an ellipse only, rotation 0 (1/100 degree),
+/// feather 0 and roundness 0 (per mille), band width 500 (per mille of the
+/// shorter side), not inverted, Expand 0 (−100..100), mode `add`
+/// (`subtract`, `intersect`).
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ColorMaskDto {
+    pub id: i64,
+    pub shape: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub center: Option<[i64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[i64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feather: Option<i64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub invert: bool,
+    /// Rectangles only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roundness: Option<i64>,
+    /// Bands only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expand: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     #[serde(flatten)]
     pub extra: Fields,
 }
@@ -514,6 +564,81 @@ pub(crate) struct LutDto {
     /// Skin protection of the LUT (CL-030); absent is off at Amount 70.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skin: Option<SkinDto>,
+    #[serde(flatten)]
+    pub extra: Fields,
+}
+
+/// An auto correction (format 13, CL-019): the slider offsets that aren't
+/// 0, then its style, source and Strength, each left out at its default
+/// (Natural, the whole clip, 100).
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct AutoDto {
+    #[serde(default)]
+    pub offsets: AutoOffsetsDto,
+    /// `natural` or `vivid`; absent is natural.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    /// `clip` or `playhead`; absent is clip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// 0–100 %; absent is 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strength: Option<i64>,
+    #[serde(flatten)]
+    pub extra: Fields,
+}
+
+/// An auto correction's offsets, −100 to +100; each left out at 0.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(crate) struct AutoOffsetsDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exposure: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contrast: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whites: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blacks: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vibrance: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saturation: Option<i64>,
+    #[serde(flatten)]
+    pub extra: Fields,
+}
+
+/// A colour match (format 13, CL-020): the gains (5000–20000) and offsets
+/// (±10000) of Rec.709 `Y'`, `Cb` and `Cr`, ×10⁴; its Intensity (absent
+/// is 100); and where its reference frame came from.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct MatchDto {
+    pub gain: [i64; 3],
+    pub offset: [i64; 3],
+    /// 0–100 %; absent is 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intensity: Option<i64>,
+    pub reference: MatchRefDto,
+    #[serde(flatten)]
+    pub extra: Fields,
+}
+
+/// A match's reference: a clip (`clip`, and `ungraded` when it was
+/// measured without its own colour stack) or a library item (`media`), and
+/// the content time of the frame in ticks. Exactly one of `clip` and
+/// `media`.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct MatchRefDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<NonZeroU64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<NonZeroU64>,
+    pub at: i64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ungraded: bool,
     #[serde(flatten)]
     pub extra: Fields,
 }

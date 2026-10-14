@@ -349,7 +349,9 @@ fn layer_boxes(
         .nodes
         .iter()
         .filter_map(|node| {
-            let PlanNode::Layer(layer) = node;
+            let PlanNode::Layer(layer) = node else {
+                return None;
+            };
             let (to_canvas, size) = match &layer.source {
                 LayerSource::Text { .. } => {
                     let text = images.text(layer)?;

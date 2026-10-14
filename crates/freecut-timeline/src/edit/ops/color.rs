@@ -1,5 +1,5 @@
 //! Colour adjustments (CL-007, CL-008, CL-013, CL-014, CL-015, CL-017,
-//! CL-023, CL-024, CL-030, CL-035): one
+//! CL-019, CL-020, CL-023, CL-024, CL-030, CL-035): one
 //! [`ColorEdit`] on every listed clip that takes a colour stack (video,
 //! images and adjustment clips). Others are skipped; the edit is refused
 //! when none takes one, and clips on locked tracks refuse it.
@@ -10,13 +10,16 @@
 //! value; a keyed slider is edited through its keys (`EditKeys`, which the
 //! app sends for a slider that has keys, TR-027).
 
+use std::sync::Arc;
+
 use super::props::update_clips;
 use crate::edit::tx::Tx;
 use crate::edit::{EditError, OpKind, Plan};
 use crate::ids::{ClipId, SeqId};
 use crate::model::{
-    Clip, ColorParamId, ColorStack, Curve, CurveChannel, HueBand, LutInterp, LutSlot, PropGroup,
-    PropPath, Section, SkinScope, WheelId,
+    AutoCorrection, AutoOffsets, Clip, ColorMask, ColorMaskParam, ColorParamId, ColorStack, Curve,
+    CurveChannel, HueBand, Keyframe, LutInterp, LutSlot, Mask, MaskCombine, MatchTransform,
+    PropGroup, PropPath, PropValue, Section, SectionSnapshot, SkinScope, WheelId,
 };
 
 /// One change to the colour stacks of clips.
@@ -60,6 +63,54 @@ pub enum ColorEdit {
     /// Skin protection's switch in one scope (CL-030); the LUT scope does
     /// nothing without a LUT.
     SetSkin { scope: SkinScope, on: bool },
+    /// The snapshot's sections replace the clip's (CL-025's replace,
+    /// CL-026's apply of a saved look): their values and switches, with
+    /// the keys of those sections removed in the same entry. Other
+    /// sections, Amount and bypass stay.
+    ApplySections(Arc<SectionSnapshot>),
+    /// The auto correction (CL-019): `Some` stores a run's offsets (a
+    /// clip that already has a correction keeps its Strength and its
+    /// Strength keys, CL-019's Re-run); `None` removes the correction and
+    /// its Strength keys in the same entry.
+    SetAuto(Option<AutoCorrection>),
+    /// **Apply to sliders** (CL-019): the correction's offsets at its
+    /// static Strength are added into the Light and Color sliders, each
+    /// clamped into its range (a keyed slider's keys all move by the
+    /// offset), and the correction and its Strength keys are removed, as
+    /// one entry. Nothing on a clip without a correction.
+    ApplyAutoToSliders,
+    /// The colour match (CL-020): `Some` stores a transform (a clip that
+    /// already has one keeps its Intensity, CL-020's Re-match); `None`
+    /// removes it and its Intensity keys in the same entry.
+    SetMatch(Option<MatchTransform>),
+    // K6
+    /// A colour mask added at the end of the list (CL-031), under the
+    /// smallest id the clip's stack doesn't use, combined by Add with
+    /// Expand 0. Nothing on a stack that already holds
+    /// [`crate::model::MAX_COLOR_MASKS`].
+    AddMask(Mask),
+    /// Mask `id` removed, with its keys, in the same entry; undo puts both
+    /// back in place.
+    RemoveMask(u16),
+    /// Mask `id` moved to position `to` of the list (clamped), the other
+    /// masks keeping their order.
+    ReorderMask { id: u16, to: usize },
+    /// Mask `mask.id` replaced (its shape, values, invert, link, Expand
+    /// and mode): a shape switch, a field or a canvas drag. A switch to
+    /// another shape removes the keys of the values the new shape lacks
+    /// (roundness, band width) in the same entry (TR-017). A keyed value
+    /// is edited through its keys, like a keyed slider.
+    SetMask(ColorMask),
+    /// Mask `id`'s combine mode (TR-020).
+    SetMaskMode { id: u16, mode: MaskCombine },
+    /// One keyable value of mask `id` (CL-031's `SetColorMaskParam`, one
+    /// entry per drag), clamped; nothing on a clip without the mask or a
+    /// mask without the value. A keyed value is edited through its keys.
+    SetMaskParam {
+        id: u16,
+        param: ColorMaskParam,
+        value: PropValue,
+    },
 }
 
 /// What a colour edit did, for its undo label.
@@ -79,6 +130,14 @@ pub enum ColorOp {
     Puck,
     /// The LUT slot: its file or its sampling.
     Lut,
+    /// Sections copied from a saved look or another clip.
+    Look,
+    /// An auto correction stored, applied to the sliders or removed.
+    Auto,
+    /// A colour match stored or removed.
+    Match,
+    /// A colour mask added, removed, moved or changed.
+    Mask,
 }
 
 impl ColorEdit {
@@ -94,6 +153,15 @@ impl ColorEdit {
             | ColorEdit::ResetWheel(_) => ColorOp::Reset,
             ColorEdit::SetCurve { .. } => ColorOp::Curve,
             ColorEdit::SetPuck { .. } => ColorOp::Puck,
+            ColorEdit::ApplySections(_) => ColorOp::Look,
+            ColorEdit::SetAuto(_) | ColorEdit::ApplyAutoToSliders => ColorOp::Auto,
+            ColorEdit::SetMatch(_) => ColorOp::Match,
+            ColorEdit::AddMask(_)
+            | ColorEdit::RemoveMask(_)
+            | ColorEdit::ReorderMask { .. }
+            | ColorEdit::SetMask(_)
+            | ColorEdit::SetMaskMode { .. }
+            | ColorEdit::SetMaskParam { .. } => ColorOp::Mask,
         }
     }
 
@@ -167,6 +235,89 @@ impl ColorEdit {
                 stack.with_lut(lut)
             }
             ColorEdit::SetSkin { scope, on } => stack.with_skin(*scope, *on),
+            ColorEdit::ApplySections(snapshot) => {
+                let held = snapshot.sections();
+                out.keys = out
+                    .keys
+                    .without(|p| matches!(p.group(), Some(PropGroup::Color(s)) if held.is_on(s)));
+                snapshot.applied_to(&stack)
+            }
+            ColorEdit::SetAuto(Some(auto)) => {
+                let strength = stack.auto.map_or(auto.strength, |old| old.strength);
+                stack.with_auto(Some(AutoCorrection { strength, ..*auto }))
+            }
+            ColorEdit::SetAuto(None) => {
+                out.keys = out.keys.without(|p| p == strength_key());
+                stack.with_auto(None)
+            }
+            ColorEdit::ApplyAutoToSliders => {
+                let Some(auto) = stack.auto else {
+                    return Some(out);
+                };
+                for id in AutoOffsets::PARAMS {
+                    let added = auto.added(id);
+                    let prop = PropPath::Color(id);
+                    let keys = out.keys.keys(prop);
+                    if added == 0 || keys.is_empty() {
+                        continue;
+                    }
+                    let moved: Arc<[Keyframe<PropValue>]> = keys
+                        .iter()
+                        .map(|k| Keyframe {
+                            value: match k.value {
+                                PropValue::Level(v) => {
+                                    PropValue::Level(id.spec().clamp(v.saturating_add(added)))
+                                }
+                                other => other,
+                            },
+                            ..*k
+                        })
+                        .collect();
+                    out.keys = out.keys.with_track(prop, moved);
+                }
+                out.keys = out.keys.without(|p| p == strength_key());
+                stack.with_auto_applied()
+            }
+            ColorEdit::SetMatch(Some(xf)) => {
+                let intensity = stack
+                    .match_xf
+                    .as_ref()
+                    .map_or(xf.intensity, |m| m.intensity);
+                stack.with_match(Some(xf.with_intensity(intensity)))
+            }
+            ColorEdit::SetMatch(None) => {
+                out.keys = out
+                    .keys
+                    .without(|p| p == PropPath::Color(ColorParamId::MatchIntensity));
+                stack.with_match(None)
+            }
+            ColorEdit::AddMask(mask) => match stack.with_mask_added(*mask) {
+                Some((s, _)) => s,
+                None => stack,
+            },
+            ColorEdit::RemoveMask(id) => {
+                let id = *id;
+                out.keys = out
+                    .keys
+                    .without(|p| matches!(p, PropPath::ColorMask { id: k, .. } if k == id));
+                stack.without_mask(id)
+            }
+            ColorEdit::ReorderMask { id, to } => stack.with_mask_moved(*id, *to),
+            ColorEdit::SetMask(mask) => {
+                let after = stack.with_mask(*mask);
+                // TR-017: values the new shape lacks lose their keys.
+                if let Some(m) = after.mask(mask.id) {
+                    let m = *m;
+                    out.keys = out.keys.without(|p| {
+                        matches!(p, PropPath::ColorMask { id, param } if id == m.id && m.get(param).is_none())
+                    });
+                }
+                after
+            }
+            ColorEdit::SetMaskMode { id, mode } => stack.with_mask_mode(*id, *mode),
+            ColorEdit::SetMaskParam { id, param, value } => {
+                stack.with_mask_param(*id, *param, *value)
+            }
         };
         out.color = ColorStack::stored(after);
         Some(out)
@@ -189,9 +340,17 @@ pub(crate) fn edit_color(
     )
 }
 
+/// Auto's Strength key path.
+fn strength_key() -> PropPath {
+    PropPath::Color(ColorParamId::AutoStrength)
+}
+
 /// Whether `prop` is a colour control's (a slider or a wheel's puck).
 pub fn is_color_prop(prop: PropPath) -> bool {
-    matches!(prop, PropPath::Color(_) | PropPath::ColorPuck(_))
+    matches!(
+        prop,
+        PropPath::Color(_) | PropPath::ColorPuck(_) | PropPath::ColorMask { .. }
+    )
 }
 
 /// Whether `clip`'s colour shows any change from its footage at some time:
@@ -207,7 +366,6 @@ mod tests {
     use crate::model::{ClipContent, MediaKind, TextClipData};
     use crate::time::{Tick, TimeRange};
     use core::num::NonZeroU64;
-    use std::sync::Arc;
 
     fn clip(content: ClipContent) -> Clip {
         Clip::new(

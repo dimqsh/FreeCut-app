@@ -27,7 +27,7 @@ use freecut_timeline::motion::{
     Channel, ChannelProp, ChannelUnit, Curve, ParamDefaults, Pivot, PresetKind, PresetManifest,
     PresetTable, samples,
 };
-use freecut_timeline::plan::{FramePlan, LayerSource, PlanInputs, PlanNode};
+use freecut_timeline::plan::{FramePlan, LayerSource, PlanInputs};
 use freecut_timeline::time::{FrameRate, TICKS_PER_SECOND, Tick, TimeRange};
 
 const W: u32 = 480;
@@ -231,7 +231,7 @@ fn letter_rise_reveals_letters_in_reading_order() {
     );
     // The plan hands the per-letter work to the renderer.
     let plan = r.plan(&p, f(5));
-    let PlanNode::Layer(layer) = &plan.nodes[0];
+    let layer = plan.nodes[0].layer().unwrap();
     let text = TextLayer::from_plan(layer).unwrap();
     assert!(text.motion.is_some());
     assert_eq!(letters(&still, &still), vec![Letter::Rest; 5]);
@@ -381,7 +381,7 @@ fn keyed_fill_colour_is_drawn_at_each_time() {
     );
     let mut r = Render::new();
     let plan = r.plan(&p, f(30));
-    let PlanNode::Layer(layer) = &plan.nodes[0];
+    let layer = plan.nodes[0].layer().unwrap();
     let LayerSource::Text { data, .. } = &layer.source else {
         panic!("{layer:?}");
     };

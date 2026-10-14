@@ -17,6 +17,7 @@ pub mod help;
 pub mod icon_button;
 pub mod import_button;
 pub mod keyframe;
+pub mod mask_shape;
 pub mod panel;
 pub mod row;
 pub mod segmented;

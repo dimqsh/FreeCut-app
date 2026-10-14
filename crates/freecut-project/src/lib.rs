@@ -23,6 +23,8 @@
 //!   that recovers takes interrupted by a crash (AU-027, PM-041).
 //! - [`luts`]: the user's LUT library in app data, an index and hashed
 //!   copies (CL-016); it never parses a LUT.
+//! - [`look`]: saved looks (CL-026), the `.fclook` file format and the
+//!   library of them in app data.
 //!
 //! # Design rules
 //!
@@ -43,6 +45,7 @@ mod extras;
 mod format;
 pub mod fs;
 pub mod lock;
+pub mod look;
 pub mod luts;
 pub mod migrate;
 mod names;

@@ -581,7 +581,9 @@ fn blurred_layers_are_cached_while_their_motion_holds() {
     assert!(first == again);
     // A new blur radius is a new entry.
     let mut moved = p.clone();
-    let freecut_timeline::plan::PlanNode::Layer(l) = &mut moved.nodes[0];
+    let freecut_timeline::plan::PlanNode::Layer(l) = &mut moved.nodes[0] else {
+        panic!("a layer");
+    };
     l.motion = motion(7.0, 0.7, Direction::Up, 0.3);
     let changed = c.render(&moved, 480, 270, &mut images);
     assert_eq!(c.cached_blurs(), 3);

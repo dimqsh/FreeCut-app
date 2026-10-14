@@ -280,7 +280,7 @@ fn op() -> impl Strategy<Value = Op> {
             .prop_map(|(pick, layer, on)| Op::TextLayer { pick, layer, on }),
         2 => (any::<u16>(), 1u8..3, 0u8..7, any::<i32>())
             .prop_map(|(pick, count, which, value)| Op::SetTransform { pick, count, which, value }),
-        4 => (any::<u16>(), 1u8..3, 0u8..19, any::<i32>())
+        4 => (any::<u16>(), 1u8..3, 0u8..23, any::<i32>())
             .prop_map(|(pick, count, which, value)| Op::Color { pick, count, which, value }),
         4 => (any::<u16>(), 1u8..3, -30i64..30, -1i8..2)
             .prop_map(|(pick, count, delta, shift)| Op::Move { pick, count, delta, shift }),
@@ -558,10 +558,48 @@ fn request(fx: &Fixture, op: &Op) -> Option<EditRequest> {
                     .collect();
                 freecut_timeline::model::Curve::new(points).unwrap_or_default()
             };
+            // K4: an adjustment clip over the picked clips or at a time,
+            // sometimes graded.
+            if *which == 7 && v % 3 != 0 {
+                let graded = (v % 2 == 0).then(|| {
+                    Arc::new(
+                        freecut_timeline::model::ColorStack::default().with(param, (v >> 8) as i16),
+                    )
+                });
+                let span = if v % 5 == 0 {
+                    freecut_timeline::edit::AdjustSpan::AtPlayhead(f(i64::from((v >> 4) as u8)))
+                } else {
+                    freecut_timeline::edit::AdjustSpan::Selection(pick(fx, *p, *count))
+                };
+                return Some(EditRequest::AddAdjustmentClip {
+                    seq,
+                    span,
+                    color: graded,
+                });
+            }
+            let snapshot = |fx: &Fixture| {
+                // The sections of the first picked clip's stack (often
+                // the defaults), or a set built from `v`.
+                let from = pick(fx, *p, 1)
+                    .first()
+                    .and_then(|c| fx.doc().clip(*c))
+                    .and_then(|c| c.color.as_deref().cloned())
+                    .unwrap_or_else(|| {
+                        freecut_timeline::model::ColorStack::default()
+                            .with(param, (v >> 8) as i16)
+                            .with_curve(channel, curve.clone())
+                    });
+                let mask = freecut_timeline::model::SectionMask::from_bits((v >> 3) as u16);
+                Arc::new(freecut_timeline::model::SectionSnapshot::new(&from, mask))
+            };
             EditRequest::EditColor {
                 seq,
                 clips: pick(fx, *p, *count),
                 edit: match which {
+                    13 if v % 2 == 0 => E::ApplySections(snapshot(fx)),
+                    // K6: colour masks, in a slot that was a reset, so the
+                    // random stream stays as it was.
+                    13 if v % 4 == 1 => color_mask_edit(v >> 2),
                     0 | 1 => E::SetParam(param, (v >> 8) as i16),
                     2 => E::SetParams(vec![(param, (v >> 4) as i16), (C::Hue, v as i16)]),
                     3 => E::SetSectionEnabled(section, v % 2 == 0),
@@ -594,6 +632,51 @@ fn request(fx: &Fixture, op: &Op) -> Option<EditRequest> {
                         freecut_timeline::model::LutInterp::ALL[(v as u32 as usize) % 2],
                     ),
                     18 => E::SetParam(C::LUT[(v as u32 as usize) % 2], (v >> 2) as i16),
+                    // K5: auto corrections and matches.
+                    19 => {
+                        E::SetAuto(
+                            (v % 4 != 0).then(|| freecut_timeline::model::AutoCorrection {
+                                strength: (v >> 24) as u8,
+                                ..freecut_timeline::model::AutoCorrection::new(
+                                    freecut_timeline::model::AutoOffsets {
+                                        exposure: (v >> 8) as i8 as i16,
+                                        temperature: (v >> 16) as i8 as i16,
+                                        blacks: v as i8 as i16,
+                                        ..Default::default()
+                                    },
+                                    freecut_timeline::model::AutoStyle::ALL
+                                        [(v as u32 as usize) % 2],
+                                    freecut_timeline::model::AutoSource::ALL
+                                        [(v as u32 as usize >> 1) % 2],
+                                )
+                            }),
+                        )
+                    }
+                    20 => E::ApplyAutoToSliders,
+                    21 => E::SetMatch((v % 4 != 0).then(|| {
+                        let reference = match pick(fx, *p, 1).first() {
+                            Some(clip) => freecut_timeline::model::MatchRef::Clip {
+                                clip: *clip,
+                                at: f(i64::from((v >> 4) as u8)),
+                                graded: v % 2 == 0,
+                            },
+                            None => freecut_timeline::model::MatchRef::Media {
+                                media: freecut_timeline::ids::MediaId::from_raw(
+                                    core::num::NonZeroU64::MIN,
+                                ),
+                                at: f(0),
+                            },
+                        };
+                        freecut_timeline::model::MatchTransform::new(
+                            [v >> 16, v >> 8, 10_000 + (v % 7_000)],
+                            [v % 3_000, (v >> 4) % 900, -(v % 500)],
+                            reference,
+                        )
+                    })),
+                    22 => E::SetParam(
+                        [C::AutoStrength, C::MatchIntensity][(v as u32 as usize) % 2],
+                        (v >> 2) as i16,
+                    ),
                     _ => E::ResetAll,
                 },
             }
@@ -1615,6 +1698,11 @@ fn key_prop(n: u8, v: i32) -> PropPath {
         22 => PropPath::Color(freecut_timeline::model::ColorParamId::SkinAmount(
             freecut_timeline::model::SkinScope::ALL[(v as u32 as usize) % 2],
         )),
+        // K6: a value of one of the first masks (often one the clip lacks).
+        15 if v % 2 == 0 => PropPath::ColorMask {
+            id: 1 + (v as u32 >> 1) as u16 % 3,
+            param: freecut_timeline::model::ColorMaskParam::ALL[(v as u32 as usize >> 3) % 7],
+        },
         _ => PropPath::Text(T::GlowColor),
     }
 }
@@ -1645,6 +1733,53 @@ fn key_value(prop: PropPath, v: i32) -> PropValue {
             x: v as i16,
             y: (v >> 16) as i16,
         },
+        K::MaskPoint => PropValue::MaskPoint(freecut_timeline::model::MaskPoint::new(
+            v % 50_000,
+            v.rotate_left(7) % 50_000,
+        )),
+    }
+}
+
+/// A colour-mask edit from the bits of `v` (K6): mostly additions, so
+/// stacks hold masks for the other edits to find.
+fn color_mask_edit(v: i32) -> freecut_timeline::edit::ColorEdit {
+    use freecut_timeline::edit::ColorEdit as E;
+    use freecut_timeline::model::{ColorMask, Mask, MaskCombine, MaskPoint, MaskShapeKind};
+    let kind = MaskShapeKind::ALL[(v as u32 as usize >> 3) % 4];
+    let id = 1 + (v as u32 >> 5) as u16 % 3;
+    match v.rem_euclid(8) {
+        0..=2 => E::AddMask(Mask::new(kind)),
+        3 => E::RemoveMask(id),
+        4 => E::ReorderMask {
+            id,
+            to: (v as u32 as usize >> 7) % 4,
+        },
+        5 => E::SetMaskMode {
+            id,
+            mode: MaskCombine::ALL[(v as u32 as usize >> 7) % 3],
+        },
+        6 => E::SetMaskParam {
+            id,
+            param: freecut_timeline::model::ColorMaskParam::ALL[(v as u32 as usize >> 7) % 7],
+            value: key_value(
+                PropPath::ColorMask {
+                    id,
+                    param: freecut_timeline::model::ColorMaskParam::ALL
+                        [(v as u32 as usize >> 7) % 7],
+                },
+                v >> 3,
+            ),
+        },
+        _ => E::SetMask(ColorMask {
+            mask: Mask {
+                center: MaskPoint::new(v >> 12, v >> 16),
+                feather: freecut_timeline::model::PerMille::new((v >> 9) as u16),
+                invert: v % 3 == 0,
+                ..Mask::new(kind)
+            },
+            expand: (v >> 4) as i16,
+            ..ColorMask::new(id, Mask::new(kind))
+        }),
     }
 }
 
@@ -1665,7 +1800,18 @@ fn check_plan(fx: &Fixture, frame: i64) -> Result<(), TestCaseError> {
         &ctx,
     );
     let plan = plan.map_err(|e| TestCaseError::fail(format!("{e:?}")))?;
-    for PlanNode::Layer(l) in &plan.nodes {
+    for node in &plan.nodes {
+        let l = match node {
+            PlanNode::Layer(l) => l,
+            PlanNode::Adjust(a) => {
+                prop_assert!(
+                    a.color.is_valid() && !a.color.is_identity(),
+                    "adjustment {:?}",
+                    a.color
+                );
+                continue;
+            }
+        };
         prop_assert!((0.0..=1.0).contains(&l.opacity), "opacity {}", l.opacity);
         prop_assert!(l.layer_to_canvas.is_finite());
         if let Some(c) = &l.color {

@@ -267,6 +267,43 @@ impl AnimContext<'static> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlanNode {
     Layer(LayerPlan),
+    /// An adjustment clip (CL-006, README C52): everything drawn below it
+    /// so far, the canvas background included, is graded by its stack in
+    /// canvas space at output resolution. Its transform and opacity are
+    /// not used; Mix is the stack's Amount.
+    Adjust(AdjustPlan),
+}
+
+impl PlanNode {
+    /// The layer, unless this is an adjustment.
+    pub fn layer(&self) -> Option<&LayerPlan> {
+        match self {
+            PlanNode::Layer(l) => Some(l),
+            PlanNode::Adjust(_) => None,
+        }
+    }
+
+    /// The clip the node comes from.
+    pub fn clip(&self) -> ClipId {
+        match self {
+            PlanNode::Layer(l) => l.clip,
+            PlanNode::Adjust(a) => a.clip,
+        }
+    }
+}
+
+/// An adjustment clip at this frame (CL-006).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdjustPlan {
+    pub clip: ClipId,
+    pub track: TrackId,
+    /// The clip's stack at this time, keyed values evaluated (CL-028); never
+    /// an identity or bypassed stack (the clip is left out of the plan then,
+    /// so a blank adjustment clip renders nothing).
+    pub color: Arc<ColorStack>,
+    /// The frame's index on the sequence grid (seeds random stages such as
+    /// grain, CL-011).
+    pub frame_index: i64,
 }
 
 /// Everything needed to render one output frame.
@@ -341,6 +378,23 @@ pub fn frame_plan_with(
         // Content time anchors keys (TR-027); an overflow there falls back
         // to clip-local time.
         let content_t = clip.content_time_at(t).unwrap_or(local);
+        if let ClipContent::Generated {
+            kind: GeneratedKind::Adjustment,
+        } = clip.content
+        {
+            if let Some(color) = clip
+                .color_at(content_t)
+                .filter(|stack| !stack.is_identity())
+            {
+                nodes.push(PlanNode::Adjust(AdjustPlan {
+                    clip: clip.id,
+                    track: track.id,
+                    color,
+                    frame_index: settings.frame_rate.frame_index(t),
+                }));
+            }
+            continue;
+        }
         let picture = |asset: MediaId, live: LayerSource| {
             let source = if inputs.offline.contains(&asset) {
                 LayerSource::Slate { asset }

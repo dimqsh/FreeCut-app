@@ -19,6 +19,7 @@
 
 pub mod lens;
 mod look;
+pub(crate) mod masks;
 pub mod motion;
 mod sound;
 
@@ -138,6 +139,39 @@ pub struct InspectorOutput {
     /// The LUT section's Import LUT… was picked (CL-016): the app opens the
     /// file dialog and runs the import.
     pub import_luts: bool,
+    /// **Save look…** was clicked (CL-026): the app opens the sheet.
+    pub save_look: Option<SaveLookRequest>,
+    /// The Auto or Match section asks for an analysis or its end (CL-019,
+    /// CL-020): the app runs it on the pool.
+    pub color: Option<ColorRequest>,
+}
+
+/// What the Look lens's Auto and Match sections ask the app (CL-019,
+/// CL-020).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColorRequest {
+    /// Measure `clip` for an auto correction.
+    Auto {
+        clip: ClipId,
+        style: freecut_timeline::model::AutoStyle,
+        source: freecut_timeline::model::AutoSource,
+    },
+    /// Match `clip` to `reference`.
+    Match {
+        clip: ClipId,
+        reference: freecut_timeline::model::MatchRef,
+    },
+    /// Stop the running analysis; nothing is committed.
+    CancelJob,
+}
+
+/// What **Save look…** saves: the first selected clip's grade at the
+/// playhead.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SaveLookRequest {
+    pub stack: freecut_timeline::model::ColorStack,
+    /// The clip has colour keyframes (they aren't saved, CL-026).
+    pub keyed: bool,
 }
 
 /// The debug timer of ui-concept §16.3's budget (an inspector build for a
@@ -1808,6 +1842,199 @@ mod tests {
     }
 
     #[test]
+    fn the_masks_page_adds_picks_shapes_deletes_and_reset_all_asks_first() {
+        use eframe::egui::{Event, Vec2};
+        use freecut_timeline::model::{ColorPage, MaskCombine, MaskShapeKind};
+
+        use crate::ui::drag::tests::button;
+
+        let (mut project, clip) = project_with_a_video();
+        let seq = project.doc().root();
+        project
+            .apply(
+                &freecut_timeline::edit::EditRequest::EditColor {
+                    seq,
+                    clips: vec![clip],
+                    edit: freecut_timeline::edit::ColorEdit::SetParam(
+                        freecut_timeline::model::ColorParamId::Exposure,
+                        30,
+                    ),
+                },
+                freecut_timeline::history::Coalesce::Never,
+            )
+            .unwrap();
+        let mut state = InspectorState::default();
+        state.workspace.set_lens(SelectionKind::Video, Lens::Look);
+        state
+            .workspace
+            .set_look_page(SelectionKind::Video, ColorPage::Masks);
+        let mut frames = Frames::sized(800.0, 900.0);
+        let frame = |frames: &mut Frames,
+                     project: &mut Project,
+                     state: &mut InspectorState,
+                     events: Vec<Event>| {
+            let mut status = None;
+            project.mask_focus = None;
+            frames.run(events, |ui| {
+                let view = CanvasView {
+                    canvas: (1920, 1080),
+                    layers: &[],
+                };
+                status = show(ui, project, state, &fonts(), &view).status;
+            });
+            let down = frames.ctx.input(|i| i.pointer.any_down());
+            assert_eq!(state.settle(Some(project), down), None);
+            status
+        };
+        let click = |frames: &mut Frames,
+                     project: &mut Project,
+                     state: &mut InspectorState,
+                     id: egui::Id|
+         -> Option<String> {
+            let at = frames
+                .ctx
+                .read_response(id)
+                .unwrap_or_else(|| panic!("{id:?} is drawn"))
+                .rect
+                .center();
+            frame(
+                frames,
+                project,
+                state,
+                vec![Event::PointerMoved(at), button(at, true)],
+            );
+            let said = frame(frames, project, state, vec![button(at, false)]);
+            frame(frames, project, state, Vec::new());
+            said
+        };
+        let id = |row: &str| widget_id(SelectionKind::Video, CardId::Masks, row);
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        assert_eq!(project.mask_focus, None, "no mask yet");
+
+        // Add mask › Ellipse: one entry; the new mask is chosen and the
+        // Stage is told to show it.
+        click(&mut frames, &mut project, &mut state, id("add-mask"));
+        let entries = project.editor.history().len();
+        click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            id("add-mask").with("ellipse"),
+        );
+        assert_eq!(project.editor.history().len(), entries + 1);
+        let s = stack_of(&project, clip);
+        assert_eq!(s.masks.len(), 1);
+        assert_eq!(s.masks[0].mask.kind(), MaskShapeKind::Ellipse);
+        assert_eq!(
+            project.mask_focus,
+            Some(crate::session::MaskFocus { clip, id: 1 })
+        );
+
+        // The shape picker turns it into a rectangle, one entry.
+        let entries = project.editor.history().len();
+        click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            id("mask-shapes").with("rectangle"),
+        );
+        assert_eq!(project.editor.history().len(), entries + 1);
+        assert_eq!(
+            stack_of(&project, clip).masks[0].mask.kind(),
+            MaskShapeKind::Rectangle
+        );
+
+        // A second mask (a band) is chosen; the first chip chooses the
+        // first again.
+        click(&mut frames, &mut project, &mut state, id("add-mask"));
+        click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            id("add-mask").with("band"),
+        );
+        assert_eq!(project.mask_focus.map(|f| f.id), Some(2));
+        click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            id("mask-chip").with(1u16),
+        );
+        assert_eq!(project.mask_focus.map(|f| f.id), Some(1));
+
+        // Dragging the Feather field is one entry; Esc would revert it.
+        let key = id("mask-feather").with("field");
+        let field = crate::widgets::field::NumberField::field_id(&frames.ctx, key)
+            .expect("the Feather field");
+        let rect = frames.ctx.read_response(field).unwrap().rect;
+        let start = rect.center();
+        let entries = project.editor.history().len();
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![Event::PointerMoved(start), button(start, true)],
+        );
+        for step in 1..=4 {
+            let to = start + Vec2::new(10.0 * step as f32, 0.0);
+            frame(
+                &mut frames,
+                &mut project,
+                &mut state,
+                vec![Event::PointerMoved(to)],
+            );
+        }
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![button(start + Vec2::new(40.0, 0.0), false)],
+        );
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let feather = stack_of(&project, clip).mask(1).unwrap().mask.feather;
+        assert!(feather.get() > 0, "feather {feather:?}");
+        assert_eq!(project.editor.history().len(), entries + 1, "one entry");
+
+        // Delete mask removes the chosen one; the band stays, chosen.
+        let entries = project.editor.history().len();
+        click(&mut frames, &mut project, &mut state, id("mask-delete"));
+        assert_eq!(project.editor.history().len(), entries + 1);
+        let s = stack_of(&project, clip);
+        assert_eq!(s.masks.len(), 1);
+        assert_eq!(s.masks[0].mode, MaskCombine::Add);
+        assert_eq!(project.mask_focus.map(|f| f.id), Some(2));
+
+        // Reset all asks first and names the masks; Cancel keeps them.
+        let grade = |row: &str| widget_id(SelectionKind::Video, CardId::Grade, row);
+        let entries = project.editor.history().len();
+        click(&mut frames, &mut project, &mut state, grade("reset-all"));
+        assert_eq!(project.editor.history().len(), entries, "it asked first");
+        click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            grade("reset-all-cancel"),
+        );
+        assert_eq!(stack_of(&project, clip).masks.len(), 1);
+        click(&mut frames, &mut project, &mut state, grade("reset-all"));
+        let said = click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            grade("reset-all-sure"),
+        );
+        assert_eq!(
+            said.as_deref(),
+            Some("Reset all colour removed 1 mask. Undo brings them back")
+        );
+        assert_eq!(project.doc().clip(clip).unwrap().color, None);
+        assert_eq!(project.editor.history().len(), entries + 1);
+        project.undo().unwrap();
+        assert_eq!(stack_of(&project, clip).masks.len(), 1);
+    }
+
+    #[test]
     fn wheel_drags_and_curve_clicks_are_one_entry_each() {
         use eframe::egui::{Event, Vec2};
         use freecut_timeline::model::{ColorPage, CurveChannel, PropPath, PropValue, WheelId};
@@ -2001,12 +2228,19 @@ mod tests {
         state
             .workspace
             .set_look_page(SelectionKind::Video, ColorPage::Basic);
-        // Light and Color folded, so the LUT section fits in the test
-        // window.
-        for card in [CardId::Light, CardId::ColorBalance] {
+        // Auto, Match, Light and Color folded, so the LUT section fits in
+        // the test window.
+        for card in [
+            CardId::Auto,
+            CardId::Match,
+            CardId::Light,
+            CardId::ColorBalance,
+        ] {
             state.workspace.card(SelectionKind::Video, card).open = false;
         }
-        let mut frames = Frames::new();
+        // Taller than the default window: the Color section opens under
+        // the folded Auto, Match and Light headers.
+        let mut frames = Frames::sized(800.0, 760.0);
         let frame = |frames: &mut Frames,
                      project: &mut Project,
                      state: &mut InspectorState,
@@ -2116,6 +2350,297 @@ mod tests {
         );
         assert!(out.import_luts, "Import LUT… asks the app to import");
         assert_eq!(stack_of(&project, clip).lut.map(|l| l.lut), Some(first));
+    }
+
+    #[test]
+    fn auto_and_match_ask_the_app_and_apply_to_sliders_is_one_entry() {
+        use eframe::egui::Event;
+        use freecut_timeline::edit::{ColorEdit, EditRequest};
+        use freecut_timeline::history::Coalesce;
+        use freecut_timeline::model::{
+            AutoCorrection, AutoOffsets, AutoSource, AutoStyle, ColorPage, MatchRef,
+        };
+
+        use crate::session::{ColorJob, MatchPick};
+        use crate::ui::drag::tests::button;
+
+        let (mut project, clip) = project_with_a_video();
+        let mut state = InspectorState::default();
+        state.workspace.set_lens(SelectionKind::Video, Lens::Look);
+        state
+            .workspace
+            .set_look_page(SelectionKind::Video, ColorPage::Basic);
+        for card in [CardId::Light, CardId::ColorBalance, CardId::Lut] {
+            state.workspace.card(SelectionKind::Video, card).open = false;
+        }
+        let mut frames = Frames::new();
+        let frame = |frames: &mut Frames,
+                     project: &mut Project,
+                     state: &mut InspectorState,
+                     events: Vec<Event>| {
+            let mut out = InspectorOutput::default();
+            frames.run(events, |ui| {
+                let view = CanvasView {
+                    canvas: (1920, 1080),
+                    layers: &[],
+                };
+                out = show(ui, project, state, &fonts(), &view);
+            });
+            let down = frames.ctx.input(|i| i.pointer.any_down());
+            assert_eq!(state.settle(Some(project), down), None);
+            out
+        };
+        let settle = |frames: &mut Frames, project: &mut Project, state: &mut InspectorState| {
+            frame(frames, project, state, Vec::new());
+            frame(frames, project, state, Vec::new());
+        };
+        // A click on the widget `row` of `card`: what the release frame
+        // asked.
+        let click = |frames: &mut Frames,
+                     project: &mut Project,
+                     state: &mut InspectorState,
+                     card: CardId,
+                     row: &str| {
+            let id = widget_id(SelectionKind::Video, card, row);
+            let at = frames
+                .ctx
+                .read_response(id)
+                .unwrap_or_else(|| panic!("{row} is shown"))
+                .rect
+                .center();
+            frame(
+                frames,
+                project,
+                state,
+                vec![Event::PointerMoved(at), button(at, true)],
+            );
+            let out = frame(frames, project, state, vec![button(at, false)]);
+            frame(frames, project, state, Vec::new());
+            out
+        };
+        settle(&mut frames, &mut project, &mut state);
+
+        // Auto asks the app, with the remembered source and style.
+        let out = click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            CardId::Auto,
+            "auto_run",
+        );
+        assert_eq!(
+            out.color,
+            Some(ColorRequest::Auto {
+                clip,
+                style: AutoStyle::Natural,
+                source: AutoSource::WholeClip,
+            })
+        );
+        // While it runs the section shows Cancel, which asks to stop.
+        project.color_job = Some(ColorJob {
+            id: 1,
+            clip,
+            auto: true,
+            cancel: std::sync::Arc::default(),
+        });
+        settle(&mut frames, &mut project, &mut state);
+        let out = click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            CardId::Auto,
+            "cancel_job",
+        );
+        assert_eq!(out.color, Some(ColorRequest::CancelJob));
+        project.color_job = None;
+
+        // A stored correction: Apply to sliders is one entry.
+        project
+            .apply(
+                &EditRequest::EditColor {
+                    seq: project.doc().root(),
+                    clips: vec![clip],
+                    edit: ColorEdit::SetAuto(Some(AutoCorrection::new(
+                        AutoOffsets {
+                            exposure: 12,
+                            temperature: -8,
+                            ..AutoOffsets::default()
+                        },
+                        AutoStyle::Natural,
+                        AutoSource::WholeClip,
+                    ))),
+                },
+                Coalesce::Never,
+            )
+            .unwrap();
+        settle(&mut frames, &mut project, &mut state);
+        let entries = project.editor.history().len();
+        click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            CardId::Auto,
+            "auto_apply",
+        );
+        let s = stack_of(&project, clip);
+        assert_eq!(
+            (s.auto, s.basic.exposure, s.basic.temperature),
+            (None, 12, -8)
+        );
+        assert_eq!(project.editor.history().len(), entries + 1);
+
+        // Match color… enters pick mode; Cancel leaves it.
+        settle(&mut frames, &mut project, &mut state);
+        click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            CardId::Match,
+            "match_pick",
+        );
+        assert_eq!(
+            project.match_pick,
+            Some(MatchPick {
+                target: clip,
+                graded: true
+            })
+        );
+        settle(&mut frames, &mut project, &mut state);
+        click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            CardId::Match,
+            "cancel_pick",
+        );
+        assert_eq!(project.match_pick, None);
+        // Use frame at playhead with no other clip there: the clip itself.
+        settle(&mut frames, &mut project, &mut state);
+        click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            CardId::Match,
+            "match_pick",
+        );
+        settle(&mut frames, &mut project, &mut state);
+        let out = click(
+            &mut frames,
+            &mut project,
+            &mut state,
+            CardId::Match,
+            "match_playhead",
+        );
+        let at = project
+            .doc()
+            .clip(clip)
+            .unwrap()
+            .content_time_at(project.playhead)
+            .unwrap();
+        assert_eq!(
+            out.color,
+            Some(ColorRequest::Match {
+                clip,
+                reference: MatchRef::Clip {
+                    clip,
+                    at,
+                    graded: true
+                },
+            })
+        );
+        assert_eq!(project.match_pick, None, "the pick is done");
+    }
+
+    #[test]
+    fn the_presets_select_applies_a_saved_look_as_one_entry() {
+        use eframe::egui::{Event, Key, Modifiers};
+        use freecut_timeline::model::{
+            ColorPage, ColorParamId, ColorStack, Section, SectionMask, SectionSnapshot,
+        };
+
+        use crate::looks::{SavedLook, SavedLooks};
+        use crate::ui::drag::tests::{button, key};
+
+        let (mut project, clip) = project_with_a_video();
+        let look = ColorStack::default()
+            .with(ColorParamId::Exposure, 25)
+            .with(ColorParamId::Vibrance, 30);
+        project.looks = std::sync::Arc::new(SavedLooks {
+            looks: vec![SavedLook {
+                id: "a".into(),
+                name: "Bright".into(),
+                snapshot: std::sync::Arc::new(SectionSnapshot::new(
+                    &look,
+                    SectionMask::of(&[Section::Light, Section::Color]),
+                )),
+                lut: None,
+            }],
+            unavailable: Vec::new(),
+            loading: false,
+        });
+        let mut state = InspectorState::default();
+        state.workspace.set_lens(SelectionKind::Video, Lens::Look);
+        state
+            .workspace
+            .set_look_page(SelectionKind::Video, ColorPage::Basic);
+        let mut frames = Frames::new();
+        let frame = |frames: &mut Frames,
+                     project: &mut Project,
+                     state: &mut InspectorState,
+                     events: Vec<Event>| {
+            let mut out = InspectorOutput::default();
+            frames.run(events, |ui| {
+                let view = CanvasView {
+                    canvas: (1920, 1080),
+                    layers: &[],
+                };
+                out = show(ui, project, state, &fonts(), &view);
+            });
+            let down = frames.ctx.input(|i| i.pointer.any_down());
+            assert_eq!(state.settle(Some(project), down), None);
+            out
+        };
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let select = widget_id(SelectionKind::Video, CardId::Grade, "presets").with("select");
+        let at = frames
+            .ctx
+            .read_response(select)
+            .expect("the Presets select is shown")
+            .rect
+            .center();
+        let entries = project.editor.history().len();
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![Event::PointerMoved(at), button(at, true)],
+        );
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![button(at, false)],
+        );
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![key(Key::ArrowDown, Modifiers::NONE)],
+        );
+        frame(
+            &mut frames,
+            &mut project,
+            &mut state,
+            vec![key(Key::Enter, Modifiers::NONE)],
+        );
+        frame(&mut frames, &mut project, &mut state, Vec::new());
+        let s = stack_of(&project, clip);
+        assert_eq!((s.basic.exposure, s.basic.vibrance), (25, 30));
+        assert_eq!(project.editor.history().len(), entries + 1, "one entry");
+        project.undo().unwrap();
+        assert_eq!(stack_of(&project, clip), ColorStack::default());
     }
 
     /// Applies one text style edit to `clip`.

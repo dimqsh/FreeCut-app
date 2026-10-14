@@ -1,6 +1,6 @@
 {
   "format": "freecut-project",
-  "format_version": 12,
+  "format_version": 14,
   "app": "freecut 0.1.0",
   "ids_next": 100,
   "document": {
@@ -473,6 +473,31 @@
                       ]
                     },
                     {
+                      "prop": "color.auto.strength",
+                      "keys": [
+                        {
+                          "at": 258978720,
+                          "value": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 729849120,
+                          "value": 100,
+                          "interp": "hold"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.match.intensity",
+                      "keys": [
+                        {
+                          "at": 588588000,
+                          "value": 45,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
                       "prop": "color.wheels.midtones.puck",
                       "keys": [
                         {
@@ -490,6 +515,62 @@
                             "y": 700
                           },
                           "interp": "hold"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.masks.1.center",
+                      "keys": [
+                        {
+                          "at": 329609280,
+                          "value": {
+                            "x": -3000,
+                            "y": 500
+                          },
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 1035914880,
+                          "value": {
+                            "x": 2500,
+                            "y": -700
+                          },
+                          "interp": "ease-out-quad"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.masks.1.expand",
+                      "keys": [
+                        {
+                          "at": 376696320,
+                          "value": 35,
+                          "interp": "hold"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.masks.2.band_width",
+                      "keys": [
+                        {
+                          "at": 423783360,
+                          "value": 300,
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 659218560,
+                          "value": 1900,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.masks.3.rotation",
+                      "keys": [
+                        {
+                          "at": 517957440,
+                          "value": -12345,
+                          "interp": "linear"
                         }
                       ]
                     }
@@ -532,8 +613,40 @@
                   }
                 ],
                 "color": {
+                  "auto": {
+                    "offsets": {
+                      "exposure": 12,
+                      "contrast": -5,
+                      "blacks": -100,
+                      "temperature": -8,
+                      "vibrance": 20,
+                      "saturation": 5
+                    },
+                    "style": "vivid",
+                    "source": "playhead",
+                    "strength": 70
+                  },
+                  "match": {
+                    "gain": [
+                      12345,
+                      9000,
+                      20000
+                    ],
+                    "offset": [
+                      -1234,
+                      56,
+                      -10000
+                    ],
+                    "intensity": 80,
+                    "reference": {
+                      "clip": 42,
+                      "at": 705600000,
+                      "ungraded": true
+                    }
+                  },
                   "amount": 80,
                   "off": [
+                    "match",
                     "detail",
                     "curves"
                   ],
@@ -621,6 +734,47 @@
                       "amount": 40
                     }
                   },
+                  "masks": [
+                    {
+                      "id": 1,
+                      "shape": "ellipse",
+                      "center": [
+                        1200,
+                        -800
+                      ],
+                      "size": [
+                        7000,
+                        4500
+                      ],
+                      "linked": false,
+                      "rotation": 1550,
+                      "feather": 350,
+                      "expand": -20
+                    },
+                    {
+                      "id": 3,
+                      "shape": "rectangle",
+                      "invert": true,
+                      "roundness": 400,
+                      "mode": "subtract"
+                    },
+                    {
+                      "id": 2,
+                      "shape": "band",
+                      "linked": true,
+                      "rotation": -9000,
+                      "width": 800,
+                      "mode": "intersect"
+                    },
+                    {
+                      "id": 4,
+                      "shape": "linear",
+                      "center": [
+                        0,
+                        2500
+                      ]
+                    }
+                  ],
                   "x_lut": {
                     "hash": "00",
                     "intensity": 60
@@ -648,6 +802,22 @@
                   "type": "none"
                 },
                 "color": {
+                  "match": {
+                    "gain": [
+                      10000,
+                      10500,
+                      9500
+                    ],
+                    "offset": [
+                      300,
+                      -20,
+                      40
+                    ],
+                    "reference": {
+                      "media": 12,
+                      "at": 0
+                    }
+                  },
                   "bypass": true,
                   "color": {
                     "hue": 60
@@ -1412,11 +1582,18 @@
                 "color": {
                   "amount": 45,
                   "off": [
-                    "color"
+                    "color",
+                    "masks"
                   ],
                   "color": {
                     "tint": -12
-                  }
+                  },
+                  "masks": [
+                    {
+                      "id": 1,
+                      "shape": "ellipse"
+                    }
+                  ]
                 }
               }
             ]

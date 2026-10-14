@@ -215,6 +215,10 @@ pub enum CardId {
     Keyframes,
     /// Look lens header: the master switch and Amount (CL-023, CL-035).
     Grade,
+    /// Look lens, Basic page: Auto (CL-019).
+    Auto,
+    /// Look lens, Basic page: Match (CL-020).
+    Match,
     /// Look lens, Basic page: Light (CL-007).
     Light,
     /// Look lens, Basic page: Color (CL-008).
@@ -227,6 +231,8 @@ pub enum CardId {
     Curves,
     /// Look lens, Wheels page (CL-015).
     Wheels,
+    /// Look lens, Masks page (CL-031).
+    Masks,
 }
 
 impl CardId {
@@ -358,12 +364,15 @@ keys!(CardId {
     Animation => "animation",
     Keyframes => "keyframes",
     Grade => "grade",
+    Auto => "auto",
+    Match => "match",
     Light => "light",
     ColorBalance => "color_balance",
     Lut => "lut",
     Hsl => "hsl",
     Curves => "curves",
     Wheels => "wheels",
+    Masks => "masks",
 });
 
 /// The name a Look page is written as in `workspace.json`.

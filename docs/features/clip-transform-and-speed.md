@@ -729,6 +729,9 @@ round 1 builds the core in `freecut_timeline::model::mask` and
 `freecut_render::shape::mask` (Linear, Band, Ellipse, Rectangle, feather, invert,
 combine modes, on-canvas handles), with fixed-point fields keyed through
 `ClipKeys` like every other property; clip masks extend it, Heart and Star included.
+*As built (K6, 2026-10-14):* the core holds the four shapes in ten-thousandths of
+the item's shorter side (the band's width too); see color-and-filters.md › CL-001 ›
+*K6 as built*.
 
 ### TR-018 Mask feather, invert and shape parameters — v1
 

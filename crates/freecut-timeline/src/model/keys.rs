@@ -19,7 +19,8 @@ use std::sync::Arc;
 
 use super::animate::{Animatable, Interpolate, Keyframe, Progress};
 use super::clip::{Clip, ClipContent};
-use super::color::{ColorParamId, ColorStack, Section, WheelId};
+use super::color::{ColorMaskParam, ColorParamId, ColorStack, Section, WheelId};
+use super::mask::{MaskParam, MaskPoint};
 use super::text::{
     DeciDegrees, Fill, RefPx, Rgba8, SignedPerMille, TailTip, TextCard, TextClipData, TextPropPath,
     card_props,
@@ -75,6 +76,16 @@ pub enum PropPath {
     /// A colour wheel's puck (CL-015, CL-028): `color.wheels.<wheel>.puck`,
     /// valued [`PropValue::Puck`] on the disk.
     ColorPuck(WheelId),
+    // K6
+    /// A value of the colour mask named `id` (CL-031, TR-018):
+    /// `color.masks.<id>.<param>`. Centre and size are
+    /// [`PropValue::MaskPoint`]s, rotation an [`PropValue::Angle`], feather,
+    /// roundness and band width [`PropValue::Ratio`]s, Expand a
+    /// [`PropValue::Level`].
+    ColorMask {
+        id: u16,
+        param: ColorMaskParam,
+    },
 }
 
 /// The value type of a keyable property.
@@ -93,6 +104,8 @@ pub enum ValueKind {
     Level,
     /// A colour wheel's puck (CL-015).
     Puck,
+    /// A mask's centre or size (TR-017, CL-031).
+    MaskPoint,
 }
 
 /// A keyframe value. Its variant must match its property's [`ValueKind`].
@@ -114,6 +127,8 @@ pub enum PropValue {
         x: i16,
         y: i16,
     },
+    /// A mask's centre or size, in mask units (TR-017, CL-031).
+    MaskPoint(MaskPoint),
 }
 
 impl PropValue {
@@ -130,6 +145,7 @@ impl PropValue {
             PropValue::TailTip(_) => ValueKind::TailTip,
             PropValue::Level(_) => ValueKind::Level,
             PropValue::Puck { .. } => ValueKind::Puck,
+            PropValue::MaskPoint(_) => ValueKind::MaskPoint,
         }
     }
 }
@@ -158,6 +174,10 @@ impl Interpolate for PropValue {
                 x: lerp_level(*ax, *bx, p),
                 y: lerp_level(*ay, *by, p),
             },
+            // Per coordinate: a mask's centre travels in a straight line.
+            (V::MaskPoint(a), V::MaskPoint(b)) => {
+                V::MaskPoint(MaskPoint::new(lerp_i32(a.x, b.x, p), lerp_i32(a.y, b.y, p)))
+            }
             _ => {
                 if p.is_past_half() {
                     *b
@@ -178,6 +198,12 @@ fn lerp_level(a: i16, b: i16, p: Progress) -> i16 {
     let v = (a + (b - a) * p.as_f64()).round();
     // Saturated into i16 first, so the cast is exact.
     v.clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16
+}
+
+/// Between two `i32` keys, saturated at the `i32` range.
+fn lerp_i32(a: i32, b: i32, p: Progress) -> i32 {
+    let v = super::animate::lerp_i64(i64::from(a), i64::from(b), p);
+    i32::try_from(v).unwrap_or(if v < 0 { i32::MIN } else { i32::MAX })
 }
 
 /// A set of properties keyed together: a text card's **Key this card**
@@ -216,6 +242,9 @@ impl PropGroup {
                     .collect();
                 if section == Section::Wheels {
                     out.extend(WheelId::ALL.map(PropPath::ColorPuck));
+                }
+                if section == Section::Masks {
+                    out.extend(mask_props(clip));
                 }
                 out
             }
@@ -263,6 +292,14 @@ impl PropPath {
             PropPath::Reveal => K::Ratio,
             PropPath::Color(_) => K::Level,
             PropPath::ColorPuck(_) => K::Puck,
+            PropPath::ColorMask { param, .. } => match param {
+                ColorMaskParam::Shape(MaskParam::Center | MaskParam::Size) => K::MaskPoint,
+                ColorMaskParam::Shape(MaskParam::Rotation) => K::Angle,
+                ColorMaskParam::Shape(
+                    MaskParam::Feather | MaskParam::Roundness | MaskParam::BandWidth,
+                ) => K::Ratio,
+                ColorMaskParam::Expand => K::Level,
+            },
             PropPath::Text(p) => match p {
                 T::Size => K::Length,
                 T::FillColor
@@ -307,6 +344,7 @@ impl PropPath {
             PropPath::Reveal => None,
             PropPath::Color(p) => p.section().map(PropGroup::Color),
             PropPath::ColorPuck(_) => Some(PropGroup::Color(Section::Wheels)),
+            PropPath::ColorMask { .. } => Some(PropGroup::Color(Section::Masks)),
         }
     }
 
@@ -319,6 +357,7 @@ impl PropPath {
             PropPath::Reveal => "text.reveal".to_string(),
             PropPath::Color(p) => format!("color.{}", p.as_str()),
             PropPath::ColorPuck(w) => format!("color.wheels.{}.puck", w.as_str()),
+            PropPath::ColorMask { id, param } => format!("color.masks.{id}.{}", param.as_str()),
         }
     }
 
@@ -333,6 +372,16 @@ impl PropPath {
                 .and_then(|rest| rest.strip_suffix(".puck"))
             {
                 return WheelId::parse(wheel).map(PropPath::ColorPuck);
+            }
+            if let Some(rest) = name.strip_prefix("masks.") {
+                let (digits, param) = rest.split_once('.')?;
+                let id: u16 = digits.parse().ok()?;
+                // Only the canonical decimal form of a nonzero id.
+                if id == 0 || id.to_string() != digits {
+                    return None;
+                }
+                let param = ColorMaskParam::parse(param)?;
+                return Some(PropPath::ColorMask { id, param });
             }
             return ColorParamId::parse(name).map(PropPath::Color);
         }
@@ -369,8 +418,9 @@ impl PropPath {
                     return None;
                 }
                 let stack = ColorStack::of(clip.color.as_ref());
-                // The LUT section's sliders exist only while there is a LUT.
-                if p.section() == Some(Section::Lut) && stack.lut.is_none() {
+                // The LUT section's sliders exist only while there is a LUT,
+                // Auto's Strength and Match's Intensity only with a result.
+                if !stack.has_param(p) {
                     return None;
                 }
                 Some(PropValue::Level(stack.get(p)))
@@ -379,6 +429,13 @@ impl PropPath {
                 let (x, y) = ColorStack::of(clip.color.as_ref()).puck(w);
                 PropValue::Puck { x, y }
             }),
+            // Only while the stack has the mask and the mask the value.
+            PropPath::ColorMask { id, param } => {
+                if !clip.content.takes_color() {
+                    return None;
+                }
+                clip.color.as_ref()?.mask_param(id, param)
+            }
             _ => text_value(clip.content.text()?, self),
         }
     }
@@ -410,6 +467,12 @@ impl PropPath {
                 };
                 clip.color =
                     ColorStack::stored(ColorStack::of(clip.color.as_ref()).with_puck(w, x, y));
+                true
+            }
+            PropPath::ColorMask { id, param } => {
+                clip.color = ColorStack::stored(
+                    ColorStack::of(clip.color.as_ref()).with_mask_param(id, param, value),
+                );
                 true
             }
             _ => {
@@ -448,6 +511,24 @@ impl core::fmt::Display for PropPath {
     }
 }
 
+/// The keyable values of every colour mask of `clip`, mask by mask in
+/// list order (the Masks section's **Key this card**).
+fn mask_props(clip: &Clip) -> Vec<PropPath> {
+    let Some(stack) = clip.color.as_ref() else {
+        return Vec::new();
+    };
+    stack
+        .masks
+        .iter()
+        .flat_map(|m| {
+            ColorMaskParam::ALL
+                .into_iter()
+                .filter(|p| m.get(*p).is_some())
+                .map(|param| PropPath::ColorMask { id: m.id, param })
+        })
+        .collect()
+}
+
 fn transform_value(t: &Transform, p: TransformProp) -> PropValue {
     match p {
         TransformProp::Position => PropValue::Position(t.position),
@@ -476,7 +557,10 @@ fn text_value(d: &TextClipData, prop: PropPath) -> Option<PropValue> {
         PropPath::FillStopColor(i) => {
             V::Color(s.fill.stops()?.as_slice().get(usize::from(i))?.color)
         }
-        PropPath::Transform(_) | PropPath::Color(_) | PropPath::ColorPuck(_) => return None,
+        PropPath::Transform(_)
+        | PropPath::Color(_)
+        | PropPath::ColorPuck(_)
+        | PropPath::ColorMask { .. } => return None,
         PropPath::Text(p) => match p {
             T::Size => V::Length(s.size),
             T::FillColor => V::Color(s.fill.solid()?),
@@ -811,7 +895,12 @@ impl Clip {
             .keys
             .tracks()
             .iter()
-            .filter(|t| matches!(t.prop, PropPath::Color(_) | PropPath::ColorPuck(_)))
+            .filter(|t| {
+                matches!(
+                    t.prop,
+                    PropPath::Color(_) | PropPath::ColorPuck(_) | PropPath::ColorMask { .. }
+                )
+            })
             .peekable();
         if tracks.peek().is_none() || !self.content.takes_color() {
             return self.color.clone();
@@ -832,6 +921,13 @@ impl Clip {
                         Animatable::from_shared(PropValue::Puck { x, y }, Arc::clone(&track.keys));
                     if let PropValue::Puck { x, y } = a.value_at(at) {
                         out = out.with_puck(w, x, y);
+                    }
+                }
+                // A key of a mask the stack no longer has is ignored.
+                PropPath::ColorMask { id, param } => {
+                    if let Some(rest) = out.mask_param(id, param) {
+                        let a = Animatable::from_shared(rest, Arc::clone(&track.keys));
+                        out = out.with_mask_param(id, param, a.value_at(at));
                     }
                 }
                 _ => {}

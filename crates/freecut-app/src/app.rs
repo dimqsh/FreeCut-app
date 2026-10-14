@@ -113,6 +113,14 @@ enum Done {
     LutLibrary(Result<freecut_project::luts::LutLibrary, String>),
     /// A LUT import finished (CL-016).
     LutsImported(Box<crate::jobs::luts::ImportReport>),
+    /// The saved looks were read, at startup or after a delete (CL-026).
+    Looks(Result<freecut_project::look::LookLibrary, String>),
+    /// A look was deleted: the library without it (CL-026).
+    LookDeleted(Result<freecut_project::look::LookLibrary, String>),
+    /// A look was saved: the library with it and its name (CL-026).
+    LookSaved(Result<(freecut_project::look::LookLibrary, String), String>),
+    /// An Auto or Match analysis finished (CL-019, CL-020).
+    ColorAnalysed(Box<crate::jobs::color::Finished>),
 }
 
 /// A media tile's poster (PM-050), made for item `id` of the project whose
@@ -253,6 +261,14 @@ pub struct FreeCutApp {
     /// What the Look lens's LUT select offers; handed to the project
     /// every frame.
     lut_choices: Arc<crate::luts::LutChoices>,
+    /// The saved looks (CL-026); handed to the project every frame.
+    looks: Arc<crate::looks::SavedLooks>,
+    /// The open Save look sheet (CL-026, UI-064).
+    save_look: Option<ui::save_look::SaveLookDialog>,
+    /// A saved look waiting for its delete to be confirmed: `(id, name)`.
+    delete_look: Option<(String, String)>,
+    /// The last Auto or Match job's number (CL-019, CL-020).
+    color_jobs: u64,
 }
 
 impl std::fmt::Debug for FreeCutApp {
@@ -300,14 +316,19 @@ impl FreeCutApp {
         }
         // Recordings of unsaved projects go to app data (PM-041).
         app.app_data = settings::settings_path().and_then(|p| p.parent().map(PathBuf::from));
-        // The LUT library's index (CL-016), read on the pool.
+        // The LUT library's index (CL-016) and the saved looks (CL-026),
+        // read on the pool.
         if let Some(data) = app.app_data.clone() {
+            let looks = data.clone();
             app.jobs.spawn(move || {
                 Done::LutLibrary(
                     freecut_project::luts::LutLibrary::in_app_data(&data)
                         .map_err(|e| e.to_string()),
                 )
             });
+            app.looks = Arc::new(crate::looks::SavedLooks::default());
+            app.jobs
+                .spawn(move || Done::Looks(crate::looks::load(&looks)));
         }
         // Home's cards (PM-017): read on the pool, never here.
         app.covers_dir = crate::recent::covers_dir();
@@ -409,6 +430,10 @@ impl FreeCutApp {
             luts,
             missing_luts: BTreeSet::new(),
             lut_choices,
+            looks: Arc::new(crate::looks::SavedLooks::none()),
+            save_look: None,
+            delete_look: None,
+            color_jobs: 0,
         }
     }
 
@@ -445,6 +470,118 @@ impl FreeCutApp {
         self.jobs.spawn(move || {
             Done::LutsImported(Box::new(crate::jobs::luts::import(&paths, &dir, now)))
         });
+    }
+
+    /// Runs what the Look lens's Auto or Match section asked (CL-019,
+    /// CL-020): the frames are chosen here from the document, decoded and
+    /// measured on the pool.
+    fn color_request(&mut self, request: ui::inspector::ColorRequest) {
+        use crate::jobs::color::{self, Analysis};
+        use ui::inspector::ColorRequest as R;
+        let Some(p) = self.project.as_mut() else {
+            return;
+        };
+        let (clip, analysis) = match request {
+            R::CancelJob => {
+                if let Some(job) = p.color_job.take() {
+                    job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                return;
+            }
+            R::Auto {
+                clip,
+                style,
+                source,
+            } => (clip, Analysis::Auto { style, source }),
+            R::Match { clip, reference } => (clip, Analysis::Match { reference }),
+        };
+        if p.color_job.is_some() {
+            self.say("Another analysis is running; wait for it or cancel it");
+            return;
+        }
+        self.color_jobs += 1;
+        let planned = color::plan(
+            p.doc(),
+            &p.media_paths,
+            &p.offline,
+            clip,
+            analysis,
+            p.playhead,
+            self.color_jobs,
+        );
+        let request = match planned {
+            Ok(r) => r,
+            Err(e) => {
+                self.say(e);
+                return;
+            }
+        };
+        p.color_job = Some(crate::session::ColorJob {
+            id: request.id,
+            clip,
+            auto: request.analysis.is_auto(),
+            cancel: Arc::clone(&request.cancel),
+        });
+        let luts: Arc<dyn freecut_render::color::LutSource> = self.luts.clone();
+        self.jobs
+            .spawn(move || Done::ColorAnalysed(Box::new(crate::jobs::color::run(request, luts))));
+    }
+
+    /// A clip picked on the timeline in Match's pick mode (CL-020): the
+    /// frame under the pointer becomes the reference.
+    fn match_picked(&mut self, reference: ClipId, at: Tick) {
+        let Some(p) = self.project.as_mut() else {
+            return;
+        };
+        let Some(pick) = p.match_pick.take() else {
+            return;
+        };
+        let Some(content) = p
+            .doc()
+            .clip(reference)
+            .and_then(|c| c.content_time_at(at.clamp(c.start(), c.end())))
+        else {
+            return;
+        };
+        self.color_request(ui::inspector::ColorRequest::Match {
+            clip: pick.target,
+            reference: freecut_timeline::model::MatchRef::Clip {
+                clip: reference,
+                at: content,
+                graded: pick.graded,
+            },
+        });
+    }
+
+    /// An analysis finished: committed as one undo entry unless it was
+    /// cancelled or the clip changed meanwhile (CL-019, CL-020).
+    fn color_analysed(&mut self, finished: crate::jobs::color::Finished) {
+        let Some(p) = self.project.as_mut() else {
+            return;
+        };
+        // A cancelled or superseded job (another project, an older run).
+        if p.color_job.as_ref().is_none_or(|j| j.id != finished.id) {
+            return;
+        }
+        p.color_job = None;
+        let request = match crate::jobs::color::edit_for(p.doc(), &finished) {
+            Ok(r) => r,
+            Err(e) => {
+                self.say(e);
+                return;
+            }
+        };
+        let said = match &finished.result {
+            Ok(crate::jobs::color::Outcome::Match { limited: true, .. }) => {
+                "Matched. The reference is very different, so the match is limited"
+            }
+            Ok(crate::jobs::color::Outcome::Match { .. }) => "Matched",
+            _ => "Auto color applied under your sliders",
+        };
+        match p.apply(&request, Coalesce::Never) {
+            Ok(_) => self.say(said),
+            Err(e) => self.say(e),
+        }
     }
 
     /// Tells the user something in a toast (UI-040).
@@ -553,6 +690,38 @@ impl FreeCutApp {
                 Done::LutLibrary(Err(e)) => {
                     self.say(format!("The LUT library couldn't be read: {e}"));
                 }
+                Done::Looks(Ok(library)) => {
+                    self.looks = Arc::new(crate::looks::SavedLooks::of(&library));
+                }
+                Done::Looks(Err(e)) => {
+                    self.looks = Arc::new(crate::looks::SavedLooks::none());
+                    self.say(format!("Your saved looks couldn't be read: {e}"));
+                }
+                Done::LookDeleted(Ok(library)) => {
+                    self.looks = Arc::new(crate::looks::SavedLooks::of(&library));
+                    self.say("Look deleted");
+                }
+                Done::LookDeleted(Err(e)) => {
+                    self.say_as(
+                        ToastKind::Error,
+                        format!("The look couldn't be deleted: {e}"),
+                        Vec::new(),
+                    );
+                }
+                Done::LookSaved(Ok((library, name))) => {
+                    self.looks = Arc::new(crate::looks::SavedLooks::of(&library));
+                    self.assets.tab = ui::assets::AssetTab::Adjust;
+                    self.assets.adjust.filter = ui::adjust::AdjustFilter::Saved;
+                    self.say(format!("Saved \u{201c}{name}\u{201d} to Saved looks"));
+                }
+                Done::LookSaved(Err(e)) => {
+                    self.say_as(
+                        ToastKind::Error,
+                        format!("The look couldn't be saved: {e}"),
+                        Vec::new(),
+                    );
+                }
+                Done::ColorAnalysed(finished) => self.color_analysed(*finished),
                 Done::LutsImported(report) => {
                     let summary = report.summary();
                     if let Some(library) = report.library {
@@ -1427,6 +1596,93 @@ impl FreeCutApp {
         }
     }
 
+    /// Opens the Save look sheet for `request` (CL-026).
+    fn open_save_look(&mut self, request: ui::inspector::SaveLookRequest) {
+        if self.app_data.is_none() {
+            self.say("Looks can't be saved: FreeCut has no app-data folder here");
+            return;
+        }
+        let name = ui::save_look::suggested_name(self.looks.looks.len());
+        self.save_look = Some(ui::save_look::SaveLookDialog::new(
+            request.stack,
+            request.keyed,
+            name,
+        ));
+    }
+
+    /// The Save look sheet; *Save* writes the file on the pool.
+    fn save_look_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.save_look else {
+            return;
+        };
+        let Some(answer) = dialog.show(ctx) else {
+            return;
+        };
+        self.save_look = None;
+        let ui::save_look::SaveLookAnswer::Save {
+            name,
+            stack,
+            sections,
+        } = answer
+        else {
+            return;
+        };
+        let Some(data) = self.app_data.clone() else {
+            return;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let look = freecut_project::look::LookFile::new(&name, &stack, sections, now.as_secs());
+        // The clock varies the file's random id.
+        let seed = now.as_nanos() as u64;
+        self.jobs
+            .spawn(move || Done::LookSaved(crate::looks::save(&data, look, seed)));
+    }
+
+    /// Deleting a saved look asks first: FreeCut has no trash of its own,
+    /// so the file goes for good (CL-026).
+    fn delete_look_dialog(&mut self, ctx: &egui::Context) {
+        let Some((id, name)) = self.delete_look.clone() else {
+            return;
+        };
+        let mut choice = None;
+        let title = format!("Delete \u{201c}{name}\u{201d}?");
+        let modal = Sheet::new(Id::new("delete-look"), &title)
+            .width(460.0)
+            .show(ctx, |s| {
+                s.body(|ui| {
+                    body_text(
+                        ui,
+                        "The look's file is deleted for good: FreeCut has no trash of its \
+                         own. Clips you applied it to keep their grade.",
+                    );
+                });
+                s.footer(|ui| {
+                    if sheet_button(ui, ButtonKind::Danger, "Delete look").clicked() {
+                        choice = Some(true);
+                    }
+                    if sheet_button(ui, ButtonKind::Secondary, "Cancel").clicked() {
+                        choice = Some(false);
+                    }
+                });
+            });
+        if modal.close && choice.is_none() {
+            choice = Some(false);
+        }
+        match choice {
+            Some(true) => {
+                self.delete_look = None;
+                if let Some(data) = self.app_data.clone() {
+                    self.jobs
+                        .spawn(move || Done::LookDeleted(crate::looks::delete(&data, &id)));
+                }
+            }
+            Some(false) => self.delete_look = None,
+            None => {}
+        }
+    }
+
     /// The Text tab's tile (TX-001): a text clip at the playhead, selected,
     /// with its content field focused and all selected. Playback pauses
     /// first, so the clip lands at the paused time.
@@ -1585,6 +1841,8 @@ impl FreeCutApp {
     /// change what it is asking about.
     fn modal_open(&self) -> bool {
         self.restore_confirm.is_some()
+            || self.save_look.is_some()
+            || self.delete_look.is_some()
             || self.pending.is_some()
             || self.new_dialog.is_some()
             || self.show_about
@@ -2512,6 +2770,7 @@ impl FreeCutApp {
         let mut command = None;
         let mut tool = None;
         let mut edit_text = false;
+        let mut match_reference = None;
         let mut skim_input = crate::skim::SkimInput {
             playing: self.playback.is_some(),
             ..crate::skim::SkimInput::default()
@@ -2548,6 +2807,7 @@ impl FreeCutApp {
                     skim_input.pointer = out.pointer_time;
                     skim_input.blade = out.blade_time;
                     skim_input.dragging = out.dragging;
+                    match_reference = out.match_reference;
                     status = status.take().or(out.status);
                 })
                 .response
@@ -2596,6 +2856,8 @@ impl FreeCutApp {
 
         let mut import = None;
         let mut add_text = false;
+        let mut import_luts = false;
+        let mut delete_look = None;
         let left = Sides {
             left: Beyond::Window,
             right: Beyond::Panel,
@@ -2627,6 +2889,8 @@ impl FreeCutApp {
                     );
                     import = out.import;
                     add_text = out.add_text;
+                    import_luts = out.import_luts;
+                    delete_look = out.delete_look;
                     status = status.take().or(out.status);
                 })
                 .response
@@ -2655,6 +2919,9 @@ impl FreeCutApp {
             ..left
         };
         let inspector_room = room.width() - media.response.rect.width();
+        // The inspector names the colour mask its Masks page edits each
+        // frame it shows it (CL-031); the Stage reads it after.
+        project.mask_focus = None;
         let inspector_panel = Panel::right("inspector")
             .resizable(true)
             .default_size((room.width() * 0.24).round())
@@ -2806,8 +3073,27 @@ impl FreeCutApp {
         if inspector.split {
             self.split();
         }
-        if inspector.import_luts {
+        if inspector.import_luts || import_luts {
             self.import_luts_dialog();
+        }
+        if let Some(request) = inspector.save_look.take() {
+            self.open_save_look(request);
+        }
+        if let Some(request) = inspector.color.take() {
+            self.color_request(request);
+        }
+        if let Some((clip, at)) = match_reference {
+            self.match_picked(clip, at);
+        }
+        // Pick mode ends when its clip is no longer the one selected.
+        if let Some(p) = self.project.as_mut()
+            && p.match_pick
+                .is_some_and(|m| p.selection.first() != Some(&m.target))
+        {
+            p.match_pick = None;
+        }
+        if delete_look.is_some() {
+            self.delete_look = delete_look;
         }
         if inspector.delete {
             self.delete_clips(false);
@@ -3339,6 +3625,11 @@ impl eframe::App for FreeCutApp {
         {
             p.luts = Arc::clone(&self.lut_choices);
         }
+        if let Some(p) = &mut self.project
+            && !Arc::ptr_eq(&p.looks, &self.looks)
+        {
+            p.looks = Arc::clone(&self.looks);
+        }
 
         // Files dropped from the OS: projects open, LUTs and media import.
         let dropped: Vec<PathBuf> = ctx.input(|i| {
@@ -3413,6 +3704,8 @@ impl eframe::App for FreeCutApp {
         self.new_project_dialog(&ctx);
         self.unsaved_dialog(&ctx);
         self.restore_dialog(&ctx);
+        self.save_look_dialog(&ctx);
+        self.delete_look_dialog(&ctx);
         self.export_dialog(&ctx);
         self.quit_export_dialog(&ctx);
         self.preferences_window(&ctx);
@@ -3561,6 +3854,32 @@ impl FreeCutApp {
             Open::About => self.show_about = true,
             Open::Unsaved => self.pending = Some(Pending::New),
         }
+    }
+
+    /// Sets the saved looks the Adjust tab and the Presets select list.
+    pub(crate) fn set_looks_for_tests(&mut self, looks: crate::looks::SavedLooks) {
+        self.looks = Arc::new(looks);
+    }
+
+    /// Selects `clips` in the open project.
+    pub(crate) fn select_for_tests(&mut self, clips: Vec<ClipId>) {
+        if let Some(p) = &mut self.project {
+            p.selection = clips;
+        }
+    }
+
+    /// Opens the Save look sheet for `stack`, as the lens's footer does.
+    pub(crate) fn open_save_look_for_tests(
+        &mut self,
+        stack: freecut_timeline::model::ColorStack,
+        keyed: bool,
+    ) {
+        // The sheet only asks for an app-data folder to write into.
+        self.save_look = Some(ui::save_look::SaveLookDialog::new(
+            stack,
+            keyed,
+            ui::save_look::suggested_name(self.looks.looks.len()),
+        ));
     }
 
     /// The recorder panel (AU-027).

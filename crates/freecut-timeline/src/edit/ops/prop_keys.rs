@@ -86,7 +86,7 @@ pub(crate) fn edit_keys(
     let transform = matches!(group, Some(PropGroup::Transform))
         || (group.is_none() && matches!(prop, PropPath::Transform(_)));
     let color = matches!(group, Some(PropGroup::Color(_)))
-        || (group.is_none() && matches!(prop, PropPath::Color(_) | PropPath::ColorPuck(_)));
+        || (group.is_none() && crate::edit::ops::color::is_color_prop(prop));
     let none = if transform {
         EditError::NoVisualClip
     } else if color {

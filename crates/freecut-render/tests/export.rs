@@ -337,10 +337,8 @@ mod media {
             .plan_at(Tick::ZERO)
             .nodes
             .iter()
-            .map(|n| {
-                let freecut_timeline::plan::PlanNode::Layer(l) = n;
-                l.clip
-            })
+            .filter_map(freecut_timeline::plan::PlanNode::layer)
+            .map(|l| l.clip)
             .next()
             .unwrap();
         let make = || {

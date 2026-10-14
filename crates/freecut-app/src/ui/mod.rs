@@ -1,6 +1,7 @@
 //! The editor's panels. Each panel draws itself from the open project and
 //! reports what the user asked for; the app turns that into edits and jobs.
 
+pub mod adjust;
 pub mod assets;
 pub mod audio;
 pub mod box_cards;
@@ -17,6 +18,7 @@ pub mod preferences;
 pub mod props;
 pub mod recorder_panel;
 pub mod rows;
+pub mod save_look;
 pub mod shell;
 pub mod stage;
 pub mod style_cards;

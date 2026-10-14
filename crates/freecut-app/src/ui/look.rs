@@ -1,11 +1,12 @@
-//! The Look lens's words (CL-007, CL-008, CL-013 to CL-017, CL-030,
-//! CL-043):
+//! The Look lens's words (CL-007, CL-008, CL-013 to CL-017, CL-019,
+//! CL-020, CL-030, CL-043):
 //! slider and section labels, tooltips, folded-section summaries and the
 //! pages' empty states. FreeCut's own wording. Pure, so it is tested
 //! without a window; the lens itself is `ui::inspector::look`.
 
 use freecut_timeline::model::{
-    ColorPage, ColorParamId, ColorStack, CurveChannel, HslChannel, HueBand, LutInterp, LutRef,
+    AutoCorrection, AutoSource, AutoStyle, ColorMaskParam, ColorPage, ColorParamId, ColorStack,
+    CurveChannel, HslChannel, HueBand, LutInterp, LutRef, MaskCombine, MaskParam, MaskShapeKind,
     Section, SkinScope, WheelId,
 };
 
@@ -89,8 +90,9 @@ pub fn row_label(id: ColorParamId) -> &'static str {
             HslChannel::Lightness => "Lightness",
         },
         ColorParamId::WheelLuma(_) => "Luminance",
-        ColorParamId::LutIntensity => "Intensity",
+        ColorParamId::LutIntensity | ColorParamId::MatchIntensity => "Intensity",
         ColorParamId::SkinAmount(_) => "Amount",
+        ColorParamId::AutoStrength => "Strength",
         other => param_label(other),
     }
 }
@@ -124,6 +126,8 @@ pub fn param_label(id: ColorParamId) -> &'static str {
         ColorParamId::LutIntensity => "LUT intensity",
         ColorParamId::SkinAmount(SkinScope::Color) => "Skin protection",
         ColorParamId::SkinAmount(SkinScope::Lut) => "LUT skin protection",
+        ColorParamId::AutoStrength => "Auto strength",
+        ColorParamId::MatchIntensity => "Match intensity",
     }
 }
 
@@ -165,6 +169,100 @@ pub fn param_hint(id: ColorParamId) -> &'static str {
         ColorParamId::WheelStrength => "How much of all four wheels shows",
         ColorParamId::LutIntensity => "How much of the LUT shows; 0 keeps the LUT but hides it",
         ColorParamId::SkinAmount(_) => SKIN_HINT,
+        ColorParamId::AutoStrength => {
+            "How much of the automatic correction shows; your own sliders keep their values"
+        }
+        ColorParamId::MatchIntensity => "How much of the match shows; 0 keeps it but hides it",
+    }
+}
+
+/// The Auto button (CL-019); Re-run once there is a correction.
+pub const AUTO_BUTTON: &str = "Auto";
+pub const RERUN: &str = "Re-run";
+pub const APPLY_TO_SLIDERS: &str = "Apply to sliders";
+/// What the Auto button does, for its tooltip.
+pub const AUTO_HINT: &str = "Measures the footage and sets a neutral, well-exposed starting point \
+     under your own sliders. Footage meant to look warm or dark may be corrected too: lower \
+     Strength or switch Auto off";
+/// What Apply to sliders does.
+pub const APPLY_HINT: &str = "Adds the correction at its Strength into the Light and Color \
+     sliders and removes it, so you edit plain values";
+/// Why Auto and Match can't run on an adjustment clip.
+pub const NO_FOOTAGE: &str = "Auto and Match measure a clip's own footage; adjustment clips \
+     have none";
+/// Why Auto and Match run on one clip at a time in this build.
+pub const ONE_AT_A_TIME: &str = "Select one clip: Auto and Match measure one clip at a time";
+
+/// What Auto analyses, for its select.
+pub fn auto_source_label(source: AutoSource) -> &'static str {
+    match source {
+        AutoSource::WholeClip => "Whole clip",
+        AutoSource::Playhead => "Frame at playhead",
+    }
+}
+
+pub fn auto_source_hint(source: AutoSource) -> &'static str {
+    match source {
+        AutoSource::WholeClip => {
+            "Five frames spread over the clip, so one odd frame doesn't decide"
+        }
+        AutoSource::Playhead => "Only the frame under the playhead",
+    }
+}
+
+/// Auto's style, for its select.
+pub fn auto_style_label(style: AutoStyle) -> &'static str {
+    match style {
+        AutoStyle::Natural => "Natural",
+        AutoStyle::Vivid => "Vivid",
+    }
+}
+
+pub fn auto_style_hint(style: AutoStyle) -> &'static str {
+    match style {
+        AutoStyle::Natural => "Corrects only",
+        AutoStyle::Vivid => "Corrects, then adds Vibrance +20 and Saturation +5",
+    }
+}
+
+/// One read-only row of a correction (CL-019): the slider's name and the
+/// offset at Strength 100, e.g. ("Exposure", "+12").
+pub fn auto_rows(auto: &AutoCorrection) -> Vec<(ColorParamId, &'static str, String)> {
+    freecut_timeline::model::AutoOffsets::PARAMS
+        .into_iter()
+        .filter(|id| auto.offsets.get(*id) != 0)
+        .map(|id| (id, param_label(id), signed(auto.offsets.get(id))))
+        .collect()
+}
+
+/// Whether the correction wants more than slider `id`'s range allows on
+/// top of `manual` (CL-019's "limited" hint).
+pub fn auto_limited(auto: &AutoCorrection, id: ColorParamId, manual: i16) -> bool {
+    let wanted = i32::from(manual) + i32::from(auto.added(id));
+    let spec = id.spec();
+    wanted < i32::from(spec.min) || wanted > i32::from(spec.max)
+}
+
+/// The Match section's button before a match (CL-020).
+pub const MATCH_BUTTON: &str = "Match color…";
+pub const REMATCH: &str = "Re-match";
+pub const CHANGE_REFERENCE: &str = "Change reference…";
+pub const MATCH_HINT: &str = "Makes this clip's colours resemble a frame of another clip: \
+     pick the frame on the timeline";
+/// The pick bar's sentence (CL-020's pick mode).
+pub const PICK_SENTENCE: &str = "Click a frame of another clip on the timeline to match to";
+pub const USE_PLAYHEAD: &str = "Use frame at playhead";
+pub const USE_PLAYHEAD_HINT: &str = "Matches to the topmost other clip under the playhead";
+pub const UNGRADED: &str = "Use ungraded source";
+pub const UNGRADED_HINT: &str = "Measure the reference without its own colour settings";
+
+/// What an analysis that found nothing to do says (CL-019, CL-020).
+pub fn analysis_failure(error: &freecut_render::color::stats::ColorStatsError) -> &'static str {
+    use freecut_render::color::stats::ColorStatsError as E;
+    match error {
+        E::NoPixels => "Nothing to measure: the frames are fully transparent",
+        E::NothingToCorrect => "Nothing to correct: the frames are almost one colour",
+        E::NotEnoughDetail => "Not enough detail to match: a frame is black or one colour",
     }
 }
 
@@ -236,17 +334,105 @@ pub fn page_label(page: ColorPage) -> &'static str {
     }
 }
 
-/// The empty state of a page this build doesn't edit yet: its title and
-/// sentence.
-pub fn page_empty_state(page: ColorPage) -> Option<(&'static str, &'static str)> {
-    match page {
-        ColorPage::Basic => None,
-        ColorPage::Hsl | ColorPage::Curves | ColorPage::Wheels => None,
-        ColorPage::Masks => Some((
-            "Masks are coming in this build",
-            "Shapes that limit the grade to part of the picture will be listed here.",
-        )),
+/// A mask shape's name (CL-031, TR-017): the chip, the picker and the
+/// Add mask menu.
+pub fn mask_shape_label(kind: MaskShapeKind) -> &'static str {
+    match kind {
+        MaskShapeKind::Linear => "Linear",
+        MaskShapeKind::Band => "Band",
+        MaskShapeKind::Ellipse => "Ellipse",
+        MaskShapeKind::Rectangle => "Rectangle",
     }
+}
+
+/// What a mask shape keeps, for its tooltip.
+pub fn mask_shape_hint(kind: MaskShapeKind) -> &'static str {
+    match kind {
+        MaskShapeKind::Linear => "One straight edge: the grade applies on one side of it",
+        MaskShapeKind::Band => "A strip between two parallel edges",
+        MaskShapeKind::Ellipse => "An oval or a circle",
+        MaskShapeKind::Rectangle => "A box, with corners as round as you like",
+    }
+}
+
+/// A mask chip's label: its place in the list and its shape, "1 · Ellipse".
+pub fn mask_chip_label(index: usize, kind: MaskShapeKind) -> String {
+    format!("{} · {}", index + 1, mask_shape_label(kind))
+}
+
+/// A combine mode's name (TR-020).
+pub fn mask_mode_label(mode: MaskCombine) -> &'static str {
+    match mode {
+        MaskCombine::Add => "Add",
+        MaskCombine::Subtract => "Subtract",
+        MaskCombine::Intersect => "Intersect",
+    }
+}
+
+/// What a combine mode does with the masks above it in the list.
+pub fn mask_mode_hint(mode: MaskCombine) -> &'static str {
+    match mode {
+        MaskCombine::Add => "Grades this area as well as the masks before it",
+        MaskCombine::Subtract => "Cuts this area out of the masks before it",
+        MaskCombine::Intersect => "Keeps only where this area and the masks before it overlap",
+    }
+}
+
+/// A mask value's row label.
+pub fn mask_param_label(param: ColorMaskParam) -> &'static str {
+    match param {
+        ColorMaskParam::Shape(MaskParam::Center) => "Position",
+        ColorMaskParam::Shape(MaskParam::Size) => "Size",
+        ColorMaskParam::Shape(MaskParam::Rotation) => "Rotation",
+        ColorMaskParam::Shape(MaskParam::Feather) => "Feather",
+        ColorMaskParam::Shape(MaskParam::Roundness) => "Roundness",
+        ColorMaskParam::Shape(MaskParam::BandWidth) => "Band width",
+        ColorMaskParam::Expand => "Expand",
+    }
+}
+
+/// A mask value's tooltip.
+pub fn mask_param_hint(param: ColorMaskParam) -> &'static str {
+    match param {
+        ColorMaskParam::Shape(MaskParam::Center) => {
+            "Where the mask sits, from the picture's centre, in % of its shorter side"
+        }
+        ColorMaskParam::Shape(MaskParam::Size) => "Width and height, in % of the shorter side",
+        ColorMaskParam::Shape(MaskParam::Rotation) => "Turns the mask clockwise",
+        ColorMaskParam::Shape(MaskParam::Feather) => {
+            "Softens the edge: 100 % fades over a quarter of the shorter side"
+        }
+        ColorMaskParam::Shape(MaskParam::Roundness) => "Rounds the corners",
+        ColorMaskParam::Shape(MaskParam::BandWidth) => {
+            "How wide the strip is, in % of the shorter side"
+        }
+        ColorMaskParam::Expand => "Grows or shrinks the edge without moving the mask",
+    }
+}
+
+/// The Masks page with no mask yet: its sentence (CL-031).
+pub const NO_MASKS: &str =
+    "No masks: the grade covers the whole picture. Add a mask to grade only part of it.";
+
+/// Why Add mask is greyed out at the cap (CL-031).
+pub const MASKS_FULL: &str = "A clip holds at most 8 masks";
+
+/// Why the Masks page edits one clip at a time.
+pub const ONE_CLIP_FOR_MASKS: &str = "Select one clip to edit its masks";
+
+/// "1 mask", "3 masks".
+pub fn masks_count(n: usize) -> String {
+    if n == 1 {
+        "1 mask".to_owned()
+    } else {
+        format!("{n} masks")
+    }
+}
+
+/// What Reset all asks before it removes masks (CL-024, CL-031): short
+/// enough for the footer's row.
+pub fn reset_all_masks_question(masks: usize) -> String {
+    format!("Also removes {}?", masks_count(masks))
 }
 
 /// A slider value as the summary writes it: "+12", "−5" (a true minus).
@@ -297,6 +483,30 @@ pub fn section_summary(stack: &ColorStack, section: Section) -> String {
                     .chain((l.intensity != 100).then(|| format!("{} %", l.intensity)))
                     .chain(l.skin.on.then(|| SKIN_LABEL.to_owned()))
             })
+            .collect(),
+        // The offsets at Strength 100: "Exposure +12 · Temperature −8".
+        Section::Auto => stack
+            .auto
+            .iter()
+            .flat_map(|a| {
+                auto_rows(a)
+                    .into_iter()
+                    .map(|(_, name, v)| format!("{name} {v}"))
+                    .chain((a.strength != 100).then(|| format!("{} %", a.strength)))
+            })
+            .collect(),
+        Section::Match => stack
+            .match_xf
+            .iter()
+            .flat_map(|m| {
+                std::iter::once("Matched".to_owned())
+                    .chain((m.intensity != 100).then(|| format!("{} %", m.intensity)))
+            })
+            .collect(),
+        // How many masks, while there are any: "2 masks".
+        Section::Masks => (!stack.masks.is_empty())
+            .then(|| masks_count(stack.masks.len()))
+            .into_iter()
             .collect(),
         Section::Color => ColorParamId::COLOR
             .iter()
@@ -367,7 +577,6 @@ mod tests {
         }
         for page in ColorPage::ALL {
             assert!(!page_label(page).is_empty());
-            assert_eq!(page_empty_state(page).is_none(), page != ColorPage::Masks);
         }
         for s in Section::ALL {
             assert!(!section_label(s).is_empty());

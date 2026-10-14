@@ -20,7 +20,7 @@ use freecut_timeline::model::{
     PropValue, RefPx, Rgba8, TextCard, TextClipData, TextPropPath, TrackFlags, TrackHeader,
     TransformProp,
 };
-use freecut_timeline::plan::{LayerPlan, PlanInputs, PlanNode, frame_plan};
+use freecut_timeline::plan::{LayerPlan, PlanInputs, frame_plan};
 use freecut_timeline::time::Tick;
 use pretty_assertions::assert_eq;
 
@@ -84,8 +84,7 @@ fn layer(fx: &Fixture, frame: i64) -> LayerPlan {
         &PlanInputs { offline: &none },
     )
     .unwrap();
-    let PlanNode::Layer(l) = plan.nodes.last().unwrap().clone();
-    l
+    plan.nodes.last().unwrap().layer().unwrap().clone()
 }
 
 #[test]

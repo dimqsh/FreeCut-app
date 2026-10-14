@@ -1,9 +1,11 @@
 //! The reference evaluator of the per-pixel colour stages (CL-001's stage
-//! table, CL-007, CL-008, CL-013 to CL-015, CL-017, CL-030, CL-035;
-//! render-compositor.md §17): one function per stage, in the stack's order
-//! (white balance, exposure, tone, wheels, curves, HSL,
-//! hue/saturation/vibrance, the user LUT, Amount), with skin protection
-//! blending stages 5, 11–12 and 13 back toward their inputs.
+//! table, CL-007, CL-008, CL-013 to CL-015, CL-017, CL-019, CL-020,
+//! CL-030, CL-035; render-compositor.md §17): one function per stage, in
+//! the stack's order (the colour match, white balance, exposure, tone,
+//! wheels, curves, HSL, hue/saturation/vibrance, the user LUT, Amount),
+//! with skin protection blending stages 5, 11–12 and 13 back toward their
+//! inputs. The Light and Color sliders are read with Auto's offsets
+//! already added (`ColorStack::effective_basic`).
 //! It is the oracle of the baked lattice and, later, of the GPU path.
 //!
 //! **Working space.** Display-referred Rec.709 code values, 0–1, as
@@ -33,6 +35,7 @@ use freecut_timeline::model::{ColorStack, Section, SkinScope};
 use super::curve::CurvesStage;
 use super::hsl::HslStage;
 use super::lut::{LutSource, LutStage, active_slot};
+use super::matching::MatchStage;
 use super::skin::skin_mask;
 use super::wheels::WheelStage;
 
@@ -182,6 +185,8 @@ impl Contrast {
 /// bake evaluates thousands of pixels with one of these.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Evaluator {
+    /// Stage 4, the colour match (CL-020).
+    matcher: Option<MatchStage>,
     /// Stages 5 and 6: per-channel gains in linear light.
     gains: Option<[f32; 3]>,
     /// Stage 5 alone and stage 6 alone, for when skin protection blends
@@ -232,15 +237,14 @@ impl Evaluator {
 
     /// The evaluator of `stack` with `table` as its LUT slot's table.
     pub fn with_table(stack: &ColorStack, table: Option<Arc<Lut>>) -> Evaluator {
-        let b = &stack.basic;
-        let light = stack.sections_enabled.is_on(Section::Light);
+        // Auto's offsets added, switched-off sections at their defaults.
+        let b = &stack.effective_basic();
         let color = stack.sections_enabled.is_on(Section::Color);
-        let on = |section_on: bool, v: i16| if section_on { v } else { 0 };
 
         // Stage 5, white balance: warm raises red and lowers blue, positive
         // tint lowers green (toward magenta); the gains keep the luminance
         // of greys (Rec.709 weights in linear light).
-        let (t, g) = (level(on(color, b.temperature)), level(on(color, b.tint)));
+        let (t, g) = (level(b.temperature), level(b.tint));
         let wb = (t != 0.0 || g != 0.0).then(|| {
             let r = libm::exp2f(WB_STOPS * t);
             let bl = libm::exp2f(-WB_STOPS * t);
@@ -249,7 +253,7 @@ impl Evaluator {
             [r / y, gr / y, bl / y]
         });
         // Stage 6, exposure.
-        let ev = level(on(light, b.exposure)) * EXPOSURE_EV;
+        let ev = level(b.exposure) * EXPOSURE_EV;
         let exposure = (ev != 0.0).then(|| libm::exp2f(ev));
         let gains = match (wb, exposure) {
             (None, None) => None,
@@ -261,15 +265,15 @@ impl Evaluator {
         };
 
         // Stage 7, tone.
-        let (blacks, whites) = (level(on(light, b.blacks)), level(on(light, b.whites)));
+        let (blacks, whites) = (level(b.blacks), level(b.whites));
         let ends = (blacks != 0.0 || whites != 0.0)
             .then_some((RANGE_ENDS * blacks, 1.0 + RANGE_ENDS * whites));
-        let shadows = level(on(light, b.shadows)) * TONE_RANGE;
-        let highlights = level(on(light, b.highlights)) * TONE_RANGE;
+        let shadows = level(b.shadows) * TONE_RANGE;
+        let highlights = level(b.highlights) * TONE_RANGE;
         // Tone lift (CL-007): positive brightens shadows and midtones and
         // flattens the highlights; negative does the reverse.
-        let tone_lift = level(on(light, b.tone_lift)) * TONE_LIFT;
-        let bright = level(on(light, b.brightness));
+        let tone_lift = level(b.tone_lift) * TONE_LIFT;
+        let bright = level(b.brightness);
         let brightness = (bright != 0.0).then(|| Rational {
             a: if bright > 0.0 {
                 BRIGHT_UP * bright
@@ -278,14 +282,14 @@ impl Evaluator {
             },
             lift: bright > 0.0,
         });
-        let c = level(on(light, b.contrast));
+        let c = level(b.contrast);
         let contrast = (c != 0.0).then(|| Contrast {
             pivot: PIVOT + PIVOT_RANGE * level(b.contrast_pivot),
             k: libm::exp2f(c),
         });
 
         // Stage 12: hue rotation, saturation, vibrance.
-        let h = on(color, b.hue);
+        let h = b.hue;
         let hue = (h != 0).then(|| {
             // ±100 is the same half turn either way (CL-008): normalized
             // into (−180°, 180°] so both give the same bits.
@@ -296,9 +300,9 @@ impl Evaluator {
             let (s, c) = libm::sincosf(deg.to_radians());
             (c, s)
         });
-        let sat = on(color, b.saturation);
+        let sat = b.saturation;
         let saturation = (sat != 0).then(|| 1.0 + level(sat));
-        let vib = on(color, b.vibrance);
+        let vib = b.vibrance;
         let vibrance = (vib != 0).then(|| level(vib));
 
         let sections = stack.sections_enabled;
@@ -329,6 +333,7 @@ impl Evaluator {
         let lut = table.and_then(|t| LutStage::new(stack, t));
 
         Evaluator {
+            matcher: MatchStage::new(stack),
             gains,
             wb,
             exposure,
@@ -360,7 +365,7 @@ impl Evaluator {
     /// skin protection blends white balance back by a mask of the whole
     /// pixel.
     pub(crate) fn balance_is_per_channel(&self) -> bool {
-        !(self.skin_color.is_some() && self.wb.is_some())
+        self.matcher.is_none() && !(self.skin_color.is_some() && self.wb.is_some())
     }
 
     /// Whether the evaluator has a LUT stage.
@@ -380,8 +385,18 @@ impl Evaluator {
 
     /// The stack's per-pixel stages on one pixel of code values.
     pub fn eval(&self, input: [f32; 3]) -> [f32; 3] {
-        let (balanced, m) = self.balanced(input);
+        let x = self.matched(input);
+        let (balanced, m) = self.balanced(x);
         self.eval_rest(input, balanced, m)
+    }
+
+    /// Stage 4 on `input` (the pixel itself without an active match): the
+    /// stack input the sliders and the skin mask see.
+    fn matched(&self, input: [f32; 3]) -> [f32; 3] {
+        match &self.matcher {
+            Some(stage) => stage.apply(input),
+            None => input,
+        }
     }
 
     /// Stages 5–6 on `input`, and its skin mask (0 when nothing needs it).
@@ -429,7 +444,8 @@ impl Evaluator {
         self.eval_rest(input, balanced, m)
     }
 
-    /// Stages 7–13 and the Amount blend, with `m` the pixel's skin mask.
+    /// Stages 7–13 and the Amount blend toward `input` (the stage-3b
+    /// output, before the match), with `m` the pixel's skin mask.
     fn eval_rest(&self, input: [f32; 3], balanced: [f32; 3], m: f32) -> [f32; 3] {
         let before = self.before_hsl(balanced);
         let c = match &self.hsl {
@@ -466,7 +482,7 @@ impl Evaluator {
     /// The pixel as it enters the HSL stage (stage 11): what CL-013's
     /// eyedropper samples.
     pub fn hsl_input(&self, input: [f32; 3]) -> [f32; 3] {
-        self.before_hsl(self.balanced(input).0)
+        self.before_hsl(self.balanced(self.matched(input)).0)
     }
 
     /// The steepest slope of the active curve tables (0 without curves):

@@ -28,8 +28,9 @@ fn layers(fx: &Fixture, frame: i64) -> Vec<LayerPlan> {
     .unwrap();
     plan.nodes
         .into_iter()
-        .map(|n| match n {
-            PlanNode::Layer(l) => l,
+        .filter_map(|n| match n {
+            PlanNode::Layer(l) => Some(l),
+            PlanNode::Adjust(_) => None,
         })
         .collect()
 }
@@ -88,8 +89,9 @@ fn sources(
     let plan = frame_plan(fx.doc(), fx.seq_id(), f(frame), &PlanInputs { offline }).unwrap();
     plan.nodes
         .into_iter()
-        .map(|n| match n {
-            PlanNode::Layer(l) => l.source,
+        .filter_map(|n| match n {
+            PlanNode::Layer(l) => Some(l.source),
+            PlanNode::Adjust(_) => None,
         })
         .collect()
 }
@@ -166,7 +168,7 @@ fn generated_items_carry_clip_local_time_and_fill_the_canvas() {
     .unwrap();
     let none = BTreeSet::new();
     let plan = frame_plan(fx.doc(), fx.seq_id(), f(12), &PlanInputs { offline: &none }).unwrap();
-    let PlanNode::Layer(layer) = &plan.nodes[0];
+    let layer = plan.nodes[0].layer().unwrap();
     assert_eq!(
         layer.source,
         LayerSource::Generated {

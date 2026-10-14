@@ -40,8 +40,9 @@ use freecut_timeline::model::{
     Markers, MediaOrigin, PaletteColor,
 };
 use freecut_timeline::model::{
-    ColorParamId, ColorStack, Curve, CurveChannel, CurvePoint, HslChannel, HueBand, LutInterp,
-    LutRef, LutSlot, Section, SectionMask, SkinProtect, SkinScope, WheelId,
+    AutoCorrection, AutoOffsets, AutoSource, AutoStyle, ColorParamId, ColorStack, Curve,
+    CurveChannel, CurvePoint, HslChannel, HueBand, LutInterp, LutRef, LutSlot, MatchRef,
+    MatchTransform, Section, SectionMask, SkinProtect, SkinScope, WheelId,
 };
 use freecut_timeline::time::{
     FrameRate, MarkRange, Rational, SampleRate, TICKS_PER_SECOND, Tick, TimeRange,
@@ -211,7 +212,124 @@ pub fn kitchen_intro_color() -> ColorStack {
         sections_enabled: s.sections_enabled.with(Section::Detail, false),
         ..s
     };
-    kitchen_k3(kitchen_k2(s))
+    kitchen_k6(kitchen_k5(kitchen_k3(kitchen_k2(s))))
+}
+
+/// Format 14's parts of the intro's stack: four colour masks out of id
+/// order, one of each shape, with every value and mode changed somewhere
+/// (a turned, unlinked, feathered, shrunk ellipse; an inverted, rounded
+/// rectangle cut out; a linked band kept where it crosses; a line moved
+/// down).
+pub fn kitchen_k6(s: ColorStack) -> ColorStack {
+    use freecut_timeline::model::{
+        ColorMask, Mask, MaskCombine, MaskPoint, MaskShape, MaskShapeKind,
+    };
+    let ellipse = ColorMask {
+        mask: Mask {
+            center: MaskPoint::new(1_200, -800),
+            size: MaskPoint::new(7_000, 4_500),
+            linked: false,
+            rotation: Angle::from_hundredths(1_550),
+            feather: PerMille::new(350),
+            ..Mask::new(MaskShapeKind::Ellipse)
+        },
+        expand: -20,
+        ..ColorMask::new(1, Mask::new(MaskShapeKind::Ellipse))
+    };
+    let rect = ColorMask {
+        mask: Mask {
+            shape: MaskShape::Rectangle {
+                roundness: PerMille::new(400),
+            },
+            invert: true,
+            ..Mask::new(MaskShapeKind::Rectangle)
+        },
+        mode: MaskCombine::Subtract,
+        ..ColorMask::new(3, Mask::new(MaskShapeKind::Rectangle))
+    };
+    let band = ColorMask {
+        mask: Mask {
+            shape: MaskShape::Band {
+                width: PerMille::new(800),
+            },
+            rotation: Angle::from_hundredths(-9_000),
+            linked: true,
+            ..Mask::new(MaskShapeKind::Band)
+        },
+        mode: MaskCombine::Intersect,
+        ..ColorMask::new(2, Mask::new(MaskShapeKind::Band))
+    };
+    let line = ColorMask::new(
+        4,
+        Mask {
+            center: MaskPoint::new(0, 2_500),
+            ..Mask::new(MaskShapeKind::Linear)
+        },
+    );
+    ColorStack {
+        masks: vec![ellipse, rect, band, line],
+        ..s
+    }
+}
+
+/// Format 13's parts of the intro's stack: a Vivid auto correction from
+/// the playhead at Strength 70 (one offset held at its limit), and a match
+/// to the overlay (42) measured ungraded at Intensity 80, with the Match
+/// section switched off.
+pub fn kitchen_k5(s: ColorStack) -> ColorStack {
+    let s = s
+        .with_auto(Some(AutoCorrection {
+            strength: 70,
+            ..AutoCorrection::new(
+                AutoOffsets {
+                    exposure: 12,
+                    contrast: -5,
+                    blacks: -100,
+                    temperature: -8,
+                    vibrance: 20,
+                    saturation: 5,
+                    ..AutoOffsets::default()
+                },
+                AutoStyle::Vivid,
+                AutoSource::Playhead,
+            )
+        }))
+        .with_match(Some(
+            MatchTransform::new(
+                [12_345, 9_000, 20_000],
+                [-1_234, 56, -10_000],
+                MatchRef::Clip {
+                    clip: ClipId::from_raw(nz(42)),
+                    at: Tick::from_raw(705_600_000),
+                    graded: false,
+                },
+            )
+            .with_intensity(80),
+        ));
+    ColorStack {
+        sections_enabled: s.sections_enabled.with(Section::Match, false),
+        ..s
+    }
+}
+
+/// The still's match (format 13): to a library image, at Intensity 100.
+pub fn kitchen_still_match() -> MatchTransform {
+    MatchTransform::new(
+        [10_000, 10_500, 9_500],
+        [300, -20, 40],
+        MatchRef::Media {
+            media: MediaId::from_raw(nz(12)),
+            at: Tick::ZERO,
+        },
+    )
+}
+
+/// The key path of the intro's mask `id`'s value `param`.
+pub fn kitchen_mask_key(id: u16, param: &str) -> PropPath {
+    PropPath::ColorMask {
+        id,
+        param: freecut_timeline::model::ColorMaskParam::parse(param).unwrap(),
+    }
 }
 
 /// The LUT file the kitchen sink names (a made-up hash).
@@ -544,6 +662,61 @@ pub fn kitchen_sink_with_title(title_text: TextClipData) -> (Document, NonZeroU6
                     key_of(fr(35), PropValue::Level(90), Interp::Linear),
                 ],
             ),
+            // Format 13: a keyed Auto Strength and Match Intensity.
+            (
+                PropPath::Color(ColorParamId::AutoStrength),
+                vec![
+                    key_of(fr(11), PropValue::Level(0), Interp::Linear),
+                    key_of(fr(31), PropValue::Level(100), Interp::Hold),
+                ],
+            ),
+            (
+                PropPath::Color(ColorParamId::MatchIntensity),
+                vec![key_of(fr(25), PropValue::Level(45), Interp::Linear)],
+            ),
+            // Format 14: a moving ellipse with a keyed Expand, a keyed band
+            // width and a keyed rectangle rotation.
+            (
+                kitchen_mask_key(1, "center"),
+                vec![
+                    key_of(
+                        fr(14),
+                        PropValue::MaskPoint(freecut_timeline::model::MaskPoint::new(-3_000, 500)),
+                        Interp::Linear,
+                    ),
+                    key_of(
+                        fr(44),
+                        PropValue::MaskPoint(freecut_timeline::model::MaskPoint::new(2_500, -700)),
+                        Interp::Ease {
+                            curve: EaseCurve::Quad,
+                            dir: EaseDir::Out,
+                        },
+                    ),
+                ],
+            ),
+            (
+                kitchen_mask_key(1, "expand"),
+                vec![key_of(fr(16), PropValue::Level(35), Interp::Hold)],
+            ),
+            (
+                kitchen_mask_key(2, "band_width"),
+                vec![
+                    key_of(fr(18), PropValue::Ratio(PerMille::new(300)), Interp::Linear),
+                    key_of(
+                        fr(28),
+                        PropValue::Ratio(PerMille::new(1_900)),
+                        Interp::Linear,
+                    ),
+                ],
+            ),
+            (
+                kitchen_mask_key(3, "rotation"),
+                vec![key_of(
+                    fr(22),
+                    PropValue::Angle(Angle::from_hundredths(-12_345)),
+                    Interp::Linear,
+                )],
+            ),
         ],
     )
     .unwrap();
@@ -559,7 +732,9 @@ pub fn kitchen_sink_with_title(title_text: TextClipData) -> (Document, NonZeroU6
     still.enabled = false;
     still.color = Some(Arc::new(ColorStack {
         bypass: true,
-        ..ColorStack::default().with(ColorParamId::Hue, 60)
+        ..ColorStack::default()
+            .with(ColorParamId::Hue, 60)
+            .with_match(Some(kitchen_still_match()))
     }));
     let mut overlay = media_clip(42, fr(200), 10, MediaKind::Video, Tick::ZERO, fr(30));
     overlay.audio = EmbeddedAudio::Active(ClipAudio::with_gain(GainDb::SILENT));
@@ -592,8 +767,15 @@ pub fn kitchen_sink_with_title(title_text: TextClipData) -> (Document, NonZeroU6
     let mut effect = generated(45, fr(10), fr(20), GeneratedKind::Effect);
     effect.enabled = false;
     let mut adjust = generated(46, fr(0), fr(150), GeneratedKind::Adjustment);
+    // Format 14: a canvas-space mask, with the Masks section switched off.
     adjust.color = Some(Arc::new(ColorStack {
-        sections_enabled: SectionMask::ALL_ON.with(Section::Color, false),
+        sections_enabled: SectionMask::ALL_ON
+            .with(Section::Color, false)
+            .with(Section::Masks, false),
+        masks: vec![freecut_timeline::model::ColorMask::new(
+            1,
+            freecut_timeline::model::Mask::new(freecut_timeline::model::MaskShapeKind::Ellipse),
+        )],
         ..ColorStack::default()
             .with(ColorParamId::Amount, 45)
             .with(ColorParamId::Tint, -12)
@@ -1387,6 +1569,21 @@ pub enum Op {
         a: i16,
         b: i16,
     },
+    // Edits added with format 13: auto corrections, matches, Apply to
+    // sliders and the Strength and Intensity keys.
+    ColorK5 {
+        pick: u16,
+        edit: u8,
+        a: i16,
+        b: i16,
+    },
+    // Edits added with format 14: colour masks and their keys.
+    ColorK6 {
+        pick: u16,
+        edit: u8,
+        a: i16,
+        b: i16,
+    },
 }
 
 /// Probe-like data for one random media item.
@@ -1624,8 +1821,38 @@ fn op_v11() -> impl Strategy<Value = Op> {
     ]
 }
 
-/// Every edit, including format 12's LUT slot and skin protection; as
+/// Edits that existed in format 12: colour stacks without Auto and Match;
+/// as shallow as [`op_v11`].
+fn op_v12() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        95 => op_v9(),
+        2 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::Color { pick, edit, a, b }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b, c)| Op::ColorK2 { pick, edit, a, b, c }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::ColorK3 { pick, edit, a, b }),
+    ]
+}
+
+/// Edits that existed in format 13: colour stacks without masks; as
 /// shallow as [`op_v11`].
+fn op_v13() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        95 => op_v9(),
+        2 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::Color { pick, edit, a, b }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b, c)| Op::ColorK2 { pick, edit, a, b, c }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::ColorK3 { pick, edit, a, b }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::ColorK5 { pick, edit, a, b }),
+    ]
+}
+
+/// Every edit, including format 14's colour masks; as shallow as
+/// [`op_v11`].
 fn op() -> impl Strategy<Value = Op> {
     prop_oneof![
         95 => op_v9(),
@@ -1635,6 +1862,10 @@ fn op() -> impl Strategy<Value = Op> {
             .prop_map(|(pick, edit, a, b, c)| Op::ColorK2 { pick, edit, a, b, c }),
         3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
             .prop_map(|(pick, edit, a, b)| Op::ColorK3 { pick, edit, a, b }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::ColorK5 { pick, edit, a, b }),
+        3 => (any::<u16>(), any::<u8>(), any::<i16>(), any::<i16>())
+            .prop_map(|(pick, edit, a, b)| Op::ColorK6 { pick, edit, a, b }),
     ]
 }
 
@@ -1692,6 +1923,16 @@ fn plan_of(ops: impl Strategy<Value = Op>) -> impl Strategy<Value = DocPlan> {
             media,
             ops,
         })
+}
+
+/// Like [`doc_plan`] with format-13 edits only.
+pub fn doc_plan_v13() -> impl Strategy<Value = DocPlan> {
+    plan_of(op_v13())
+}
+
+/// Like [`doc_plan`] with format-12 edits only.
+pub fn doc_plan_v12() -> impl Strategy<Value = DocPlan> {
+    plan_of(op_v12())
 }
 
 /// Like [`doc_plan`] with format-11 edits only.
@@ -2647,7 +2888,7 @@ fn request(editor: &Editor, op: &Op) -> Option<EditRequest> {
             // (the LUT's only while the clip has a LUT).
             let has_lut = clip.color.as_ref().is_some_and(|c| c.lut.is_some());
             let k3 = if has_lut {
-                &ColorParamId::ALL[44..]
+                &ColorParamId::ALL[44..47]
             } else {
                 &ColorParamId::ALL[45..46]
             };
@@ -2696,6 +2937,173 @@ fn request(editor: &Editor, op: &Op) -> Option<EditRequest> {
                 },
             }
         }
+        Op::ColorK5 { pick, edit, a, b } => {
+            use freecut_timeline::edit::ColorEdit as E;
+            // Slider edits and keys go to a clip with a result when there
+            // is one.
+            let with_result = pick_where(*pick, &|c| {
+                c.color
+                    .as_ref()
+                    .is_some_and(|s| s.auto.is_some() || s.match_xf.is_some())
+            });
+            let id = match with_result {
+                Some(id) if edit % 8 >= 6 => id,
+                _ => pick_where(*pick, &|c| c.content.takes_color())?,
+            };
+            let clip = doc.clip(id)?;
+            let request = |edit| EditRequest::EditColor {
+                seq,
+                clips: vec![id],
+                edit,
+            };
+            // Format 13's sliders, each only while the clip has its result.
+            let stack = ColorStack::of(clip.color.as_ref());
+            // The slider of a result the clip has, when it has one.
+            let param = if stack.auto.is_some() && (a % 2 == 0 || stack.match_xf.is_none()) {
+                ColorParamId::AutoStrength
+            } else {
+                ColorParamId::MatchIntensity
+            };
+            let level = |v: i16| v % 101;
+            match edit % 8 {
+                0 | 1 => request(E::SetAuto(Some(AutoCorrection {
+                    strength: (b.unsigned_abs() % 101) as u8,
+                    ..AutoCorrection::new(
+                        AutoOffsets {
+                            exposure: level(*a),
+                            temperature: level(*b),
+                            blacks: level(a.wrapping_mul(3)),
+                            vibrance: level(b.wrapping_mul(7)),
+                            ..AutoOffsets::default()
+                        },
+                        AutoStyle::ALL[usize::from(a.unsigned_abs()) % 2],
+                        AutoSource::ALL[usize::from(b.unsigned_abs()) % 2],
+                    )
+                }))),
+                2 => request(if a % 2 == 0 {
+                    E::ApplyAutoToSliders
+                } else {
+                    E::SetAuto(None)
+                }),
+                3 | 4 => {
+                    let at = Tick::from_raw(i64::from(*b) * 1_000);
+                    let reference = if a % 3 == 0 {
+                        MatchRef::Media {
+                            media: MediaId::from_raw(nz(u64::from(a.unsigned_abs()) + 1)),
+                            at,
+                        }
+                    } else {
+                        MatchRef::Clip {
+                            clip: id,
+                            at,
+                            graded: b % 2 == 0,
+                        }
+                    };
+                    request(E::SetMatch(Some(
+                        MatchTransform::new(
+                            [i32::from(*a) + 10_000, i32::from(*b) / 2 + 10_000, 10_000],
+                            [i32::from(*b) / 4, i32::from(*a) / 8, -i32::from(*b) / 16],
+                            reference,
+                        )
+                        .with_intensity((a.unsigned_abs() % 101) as u8),
+                    )))
+                }
+                5 => request(E::SetMatch(None)),
+                6 if a % 3 == 0 => request(E::SetParam(param, b % 160)),
+                _ if stack.has_param(param) => EditRequest::EditKeys {
+                    seq,
+                    clips: vec![id],
+                    prop: PropPath::Color(param),
+                    edit: KeyEdit::Add {
+                        at: Tick::from_raw(
+                            clip.start().raw()
+                                + clip.duration().raw() * i64::from(b.unsigned_abs() % 256) / 256,
+                        ),
+                        value: Some(PropValue::Level(b % 160)),
+                    },
+                },
+                _ => request(E::SetSectionEnabled(
+                    [Section::Auto, Section::Match][usize::from(b.unsigned_abs()) % 2],
+                    a % 2 == 0,
+                )),
+            }
+        }
+        Op::ColorK6 { pick, edit, a, b } => {
+            use freecut_timeline::edit::ColorEdit as E;
+            use freecut_timeline::model::{
+                ColorMask, ColorMaskParam, Mask, MaskCombine, MaskPoint, MaskShapeKind,
+            };
+            // Edits of a mask go to a clip with masks when there is one.
+            let masked = pick_where(*pick, &|c| {
+                c.color.as_ref().is_some_and(|s| !s.masks.is_empty())
+            });
+            let id = match masked {
+                Some(id) if edit % 8 > 1 => id,
+                _ => pick_where(*pick, &|c| c.content.takes_color())?,
+            };
+            let clip = doc.clip(id)?;
+            let request = |edit| EditRequest::EditColor {
+                seq,
+                clips: vec![id],
+                edit,
+            };
+            let stack = ColorStack::of(clip.color.as_ref());
+            let kind = MaskShapeKind::ALL[usize::from(a.unsigned_abs()) % 4];
+            // One of the clip's masks, when it has any.
+            let existing = (!stack.masks.is_empty())
+                .then(|| stack.masks[usize::from(b.unsigned_abs()) % stack.masks.len()]);
+            match (edit % 8, existing) {
+                (0 | 1, _) | (_, None) => request(E::AddMask(Mask {
+                    center: MaskPoint::new(i32::from(*a) * 2, i32::from(*b)),
+                    feather: PerMille::new(b.unsigned_abs() % 1_200),
+                    invert: a % 5 == 0,
+                    ..Mask::new(kind)
+                })),
+                (2, Some(m)) => request(E::RemoveMask(m.id)),
+                (3, Some(m)) => request(E::ReorderMask {
+                    id: m.id,
+                    to: usize::from(a.unsigned_abs()) % 9,
+                }),
+                (4, Some(m)) => request(E::SetMaskMode {
+                    id: m.id,
+                    mode: MaskCombine::ALL[usize::from(a.unsigned_abs()) % 3],
+                }),
+                (5, Some(m)) => request(E::SetMask(ColorMask {
+                    mask: Mask {
+                        size: MaskPoint::new(i32::from(*a) * 3, i32::from(*b) * 3),
+                        rotation: Angle::from_hundredths(i32::from(*b) * 7),
+                        linked: b % 2 == 0,
+                        ..m.mask.with_kind(kind)
+                    },
+                    expand: a % 150,
+                    ..m
+                })),
+                (6, Some(_)) => request(E::SetSectionEnabled(Section::Masks, a % 2 == 0)),
+                (_, Some(m)) => {
+                    let param = ColorMaskParam::ALL[usize::from(a.unsigned_abs()) % 7];
+                    let prop = PropPath::ColorMask { id: m.id, param };
+                    if prop.get(clip).is_none() {
+                        return Some(request(E::SetMaskMode {
+                            id: m.id,
+                            mode: MaskCombine::ALL[usize::from(b.unsigned_abs()) % 3],
+                        }));
+                    }
+                    EditRequest::EditKeys {
+                        seq,
+                        clips: vec![id],
+                        prop,
+                        edit: KeyEdit::Add {
+                            at: Tick::from_raw(
+                                clip.start().raw()
+                                    + clip.duration().raw() * i64::from(b.unsigned_abs() % 256)
+                                        / 256,
+                            ),
+                            value: key_value(prop, i32::from(*a) * 37, i32::from(*b) * 53),
+                        },
+                    }
+                }
+            }
+        }
     })
 }
 
@@ -2728,6 +3136,10 @@ fn key_value(prop: PropPath, a: i32, b: i32) -> Option<PropValue> {
             x: (a % 1_500) as i16,
             y: (b % 1_500) as i16,
         },
+        ValueKind::MaskPoint => PropValue::MaskPoint(freecut_timeline::model::MaskPoint::new(
+            a % 50_000,
+            b % 50_000,
+        )),
     })
 }
 
@@ -3006,6 +3418,103 @@ fn clips_mut(v: &mut Value) -> impl Iterator<Item = &mut serde_json::Map<String,
         .map(|clip| clip.as_object_mut().unwrap())
 }
 
+/// Whether a keyframe path is one format 13 added (Auto's Strength and
+/// Match's Intensity).
+pub fn is_k5_key(prop: &str) -> bool {
+    prop.starts_with("color.auto.") || prop.starts_with("color.match.")
+}
+
+/// `v`, a current file, as format 12 wrote it: format 13 added `auto` and
+/// `match` inside `color`, and keyframes of Auto's Strength and Match's
+/// Intensity. Only faithful for documents without them.
+/// Whether a keyframe path is one format 14 added (a colour mask's).
+pub fn is_k6_key(prop: &str) -> bool {
+    prop.starts_with("color.masks.")
+}
+
+/// `v`, a current file, as format 13 wrote it: format 14 added `masks`
+/// inside `color` and keyframes of mask values. Only faithful for
+/// documents without them.
+pub fn to_v13(v: &Value) -> Value {
+    let mut v = v.clone();
+    v["format_version"] = Value::from(13);
+    for clip in clips_mut(&mut v) {
+        if let Some(color) = clip.get("color") {
+            assert!(color.get("masks").is_none(), "format 13 had no masks");
+        }
+        if let Some(tracks) = clip.get("keys").and_then(|k| k["tracks"].as_array()) {
+            for t in tracks {
+                assert!(
+                    !is_k6_key(t["prop"].as_str().unwrap()),
+                    "format 13 had no K6 keys"
+                );
+            }
+        }
+    }
+    v
+}
+
+/// The kitchen sink's file without what format 14 added: no `masks`, no
+/// Masks switch and no mask keyframes.
+pub fn strip_k6(v: &mut Value) {
+    for clip in clips_mut(v) {
+        if let Some(Value::Object(color)) = clip.get_mut("color") {
+            color.remove("masks");
+            if let Some(Value::Array(off)) = color.get_mut("off") {
+                off.retain(|s| s != "masks");
+                if off.is_empty() {
+                    color.remove("off");
+                }
+            }
+        }
+        let keys = clip.get_mut("keys").and_then(|k| k.get_mut("tracks"));
+        if let Some(Value::Array(tracks)) = keys {
+            tracks.retain(|t| !is_k6_key(t["prop"].as_str().unwrap_or("")));
+        }
+    }
+}
+
+pub fn to_v12(v: &Value) -> Value {
+    let mut v = to_v13(v);
+    v["format_version"] = Value::from(12);
+    for clip in clips_mut(&mut v) {
+        if let Some(color) = clip.get("color") {
+            assert!(color.get("auto").is_none(), "format 12 had no Auto");
+            assert!(color.get("match").is_none(), "format 12 had no Match");
+        }
+        if let Some(tracks) = clip.get("keys").and_then(|k| k["tracks"].as_array()) {
+            for t in tracks {
+                assert!(
+                    !is_k5_key(t["prop"].as_str().unwrap()),
+                    "format 12 had no K5 keys"
+                );
+            }
+        }
+    }
+    v
+}
+
+/// The kitchen sink's file without what format 13 added: no `auto` or
+/// `match`, no Match switch and no Strength or Intensity keyframes.
+pub fn strip_k5(v: &mut Value) {
+    for clip in clips_mut(v) {
+        if let Some(Value::Object(color)) = clip.get_mut("color") {
+            color.remove("auto");
+            color.remove("match");
+            if let Some(Value::Array(off)) = color.get_mut("off") {
+                off.retain(|s| s != "auto" && s != "match");
+                if off.is_empty() {
+                    color.remove("off");
+                }
+            }
+        }
+        let keys = clip.get_mut("keys").and_then(|k| k.get_mut("tracks"));
+        if let Some(Value::Array(tracks)) = keys {
+            tracks.retain(|t| !is_k5_key(t["prop"].as_str().unwrap_or("")));
+        }
+    }
+}
+
 /// Whether a keyframe path is one format 12 added (the LUT's Intensity
 /// and the skin Amounts).
 pub fn is_k3_key(prop: &str) -> bool {
@@ -3017,7 +3526,7 @@ pub fn is_k3_key(prop: &str) -> bool {
 /// Intensity and the skin Amounts. Only faithful for documents without
 /// them.
 pub fn to_v11(v: &Value) -> Value {
-    let mut v = v.clone();
+    let mut v = to_v12(v);
     v["format_version"] = Value::from(11);
     for clip in clips_mut(&mut v) {
         if let Some(color) = clip.get("color") {

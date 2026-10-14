@@ -718,7 +718,7 @@ fn random_plans_reach_the_format_5_style() {
     );
     let factory = TextStyle::default();
     let (mut gradients, mut bubbles, mut boxes, mut kept, mut layouts) = (0, 0, 0, 0, 0);
-    for _ in 0..128 {
+    for _ in 0..192 {
         let plan = doc_plan().new_tree(&mut runner).unwrap().current();
         let (doc, _) = build(&plan);
         for clip in doc

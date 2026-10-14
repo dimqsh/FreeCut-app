@@ -450,7 +450,9 @@ fn check_motion(clip: &Clip, out: &mut Vec<InvariantViolation>) {
         let fits = match t.prop() {
             PropPath::Transform(_) => clip.content.is_visual(),
             PropPath::Text(_) | PropPath::FillStopColor(_) | PropPath::Reveal => text,
-            PropPath::Color(_) | PropPath::ColorPuck(_) => clip.content.takes_color(),
+            PropPath::Color(_) | PropPath::ColorPuck(_) | PropPath::ColorMask { .. } => {
+                clip.content.takes_color()
+            }
         };
         let kind = t.prop().kind();
         fits && !t.keys().is_empty()

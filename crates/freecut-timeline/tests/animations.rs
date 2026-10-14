@@ -25,9 +25,7 @@ use freecut_timeline::motion::{
     Channel, ChannelProp, ChannelUnit, Curve, CurvePoint, ParamDefaults, Pivot, PresetKind,
     PresetManifest, PresetTable, pace_duration, samples,
 };
-use freecut_timeline::plan::{
-    AnimContext, LayerPlan, LayerSource, PlanInputs, PlanNode, frame_plan_with,
-};
+use freecut_timeline::plan::{AnimContext, LayerPlan, LayerSource, PlanInputs, frame_plan_with};
 use freecut_timeline::time::{TICKS_PER_SECOND, Tick};
 use pretty_assertions::assert_eq;
 
@@ -425,8 +423,7 @@ fn layer(fx: &Fixture, frame: i64, ctx: &AnimContext<'_>) -> LayerPlan {
         ctx,
     )
     .unwrap();
-    let PlanNode::Layer(l) = plan.nodes.last().unwrap().clone();
-    l
+    plan.nodes.last().unwrap().layer().unwrap().clone()
 }
 
 /// A point through a possibly projective matrix.
@@ -668,8 +665,7 @@ fn layer_at(fx: &Fixture, t: Tick, ctx: &AnimContext<'_>) -> LayerPlan {
         ctx,
     )
     .unwrap();
-    let PlanNode::Layer(l) = plan.nodes.last().unwrap().clone();
-    l
+    plan.nodes.last().unwrap().layer().unwrap().clone()
 }
 
 /// A whole-text float: up and down 0.3 em, sine, 1.2 s cycle.

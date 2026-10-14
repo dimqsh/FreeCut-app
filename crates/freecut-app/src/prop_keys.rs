@@ -188,6 +188,13 @@ pub fn color_prop(edit: &ColorEdit) -> Option<(PropPath, PropValue)> {
             PropPath::ColorPuck(*wheel),
             PropValue::Puck { x: *x, y: *y },
         )),
+        ColorEdit::SetMaskParam { id, param, value } => Some((
+            PropPath::ColorMask {
+                id: *id,
+                param: *param,
+            },
+            *value,
+        )),
         _ => None,
     }
 }
@@ -204,6 +211,12 @@ pub fn prop_label(prop: PropPath) -> String {
         PropPath::Reveal => "Reveal",
         PropPath::Color(id) => crate::ui::look::param_label(id),
         PropPath::ColorPuck(w) => crate::ui::look::puck_label(w),
+        PropPath::ColorMask { id, param } => {
+            return format!(
+                "Mask {id} {}",
+                crate::ui::look::mask_param_label(param).to_lowercase()
+            );
+        }
         PropPath::Text(p) => match p {
             P::Size => "Size",
             P::FillColor => "Fill colour",
@@ -259,6 +272,12 @@ pub fn value_label(value: PropValue) -> String {
             "{:+.0} % · {:+.0} %",
             f64::from(x) / 10.0,
             f64::from(y) / 10.0
+        ),
+        // In shorter sides of the item: shown as percentages of it.
+        PropValue::MaskPoint(p) => format!(
+            "{:.1} % · {:.1} %",
+            f64::from(p.x) / 100.0,
+            f64::from(p.y) / 100.0
         ),
     }
 }

@@ -1,0 +1,1729 @@
+{
+  "format": "freecut-project",
+  "format_version": 12,
+  "app": "freecut 0.1.0",
+  "ids_next": 100,
+  "document": {
+    "root": 1,
+    "settings": {
+      "canvas": {
+        "width": 1080,
+        "height": 1920
+      },
+      "frame_rate": {
+        "num": 30000,
+        "den": 1001,
+        "x_rate": 1
+      },
+      "sample_rate": 44100,
+      "match_first_clip": true
+    },
+    "library": [
+      {
+        "id": 10,
+        "source": {
+          "type": "file"
+        },
+        "path": {
+          "absolute": "/Users/me/Movies/Beach Day/IMG_0412.MOV",
+          "relative": "../Movies/Beach Day/IMG_0412.MOV"
+        },
+        "info": {
+          "container": "mov,mp4,m4a,3gp,3g2,mj2",
+          "default_video": 0,
+          "duration": 2354352000,
+          "video": [
+            {
+              "index": 0,
+              "codec": "h264",
+              "width": 1440,
+              "height": 1080,
+              "sar": {
+                "num": 4,
+                "den": 3
+              },
+              "rotation": "none",
+              "mirrored": true,
+              "rate": {
+                "num": 30000,
+                "den": 1001
+              },
+              "variable_rate": false,
+              "has_alpha": true,
+              "bit_depth": 10,
+              "start": 0,
+              "duration": 2354352000
+            },
+            {
+              "index": 1,
+              "codec": "h264",
+              "width": 1920,
+              "height": 1080,
+              "sar": {
+                "num": 1,
+                "den": 1
+              },
+              "rotation": "cw90",
+              "mirrored": false,
+              "rate": null,
+              "variable_rate": true,
+              "has_alpha": false,
+              "bit_depth": 8,
+              "start": -1000,
+              "duration": 2354352000,
+              "x_stream": "rotated"
+            },
+            {
+              "index": 2,
+              "codec": "hevc",
+              "width": 1920,
+              "height": 1080,
+              "sar": {
+                "num": 1,
+                "den": 1
+              },
+              "rotation": "cw180",
+              "mirrored": false,
+              "rate": {
+                "num": 24,
+                "den": 1
+              },
+              "variable_rate": false,
+              "has_alpha": false,
+              "bit_depth": 8,
+              "start": 0,
+              "duration": 2354352000
+            },
+            {
+              "index": 3,
+              "codec": "h264",
+              "width": 1920,
+              "height": 1080,
+              "sar": {
+                "num": 1,
+                "den": 1
+              },
+              "rotation": "cw270",
+              "mirrored": false,
+              "rate": {
+                "num": 30000,
+                "den": 1001
+              },
+              "variable_rate": false,
+              "has_alpha": false,
+              "bit_depth": 8,
+              "start": 0,
+              "duration": 2354352000
+            }
+          ],
+          "audio": [
+            {
+              "index": 4,
+              "codec": "aac",
+              "sample_rate": 48000,
+              "channels": 2,
+              "start": -14700,
+              "duration": 2354352000,
+              "duration_exact": false,
+              "default": false,
+              "language": "eng",
+              "title": "Camera \"mic\" ✂",
+              "layout": "stereo"
+            },
+            {
+              "index": 5,
+              "codec": "pcm_s24le",
+              "sample_rate": 96000,
+              "channels": 6,
+              "start": 0,
+              "duration": 2354352000,
+              "duration_exact": true,
+              "default": true,
+              "language": null,
+              "title": null,
+              "layout": "5.1(side)"
+            }
+          ],
+          "still": null
+        },
+        "fingerprint": {
+          "size": 734003200,
+          "head_tail": "fedcba9876543210",
+          "duration": 2354352000
+        },
+        "display_name": "Beach · day 1 \"wide\"\t🎬",
+        "x_media": {
+          "proxy": "none"
+        }
+      },
+      {
+        "id": 11,
+        "source": {
+          "type": "file"
+        },
+        "path": {
+          "absolute": "C:\\Users\\me\\Music\\song.mp3",
+          "relative": null
+        },
+        "info": {
+          "container": "mp3",
+          "default_video": null,
+          "duration": 3000000000,
+          "video": [],
+          "audio": [
+            {
+              "index": 0,
+              "codec": "mp3",
+              "sample_rate": 44100,
+              "channels": 2,
+              "start": 0,
+              "duration": 3000000000,
+              "duration_exact": true,
+              "default": false,
+              "language": null,
+              "title": null,
+              "layout": null
+            }
+          ],
+          "still": null
+        },
+        "fingerprint": null,
+        "display_name": null
+      },
+      {
+        "id": 12,
+        "source": {
+          "type": "file"
+        },
+        "path": {
+          "absolute": "/Users/me/Pictures/sunset.png",
+          "relative": "../Pictures/sunset.png"
+        },
+        "info": {
+          "container": "png_pipe",
+          "default_video": null,
+          "duration": 0,
+          "video": [],
+          "audio": [],
+          "still": {
+            "width": 4000,
+            "height": 3000
+          }
+        },
+        "fingerprint": {
+          "size": 12345,
+          "head_tail": "0000000000000007",
+          "duration": 0
+        },
+        "display_name": ""
+      },
+      {
+        "id": 13,
+        "source": {
+          "type": "audio-of",
+          "media": 10,
+          "stream": 5,
+          "x_source": "left channel"
+        },
+        "path": {
+          "absolute": "/Users/me/Movies/Beach Day/IMG_0412.MOV",
+          "relative": "../Movies/Beach Day/IMG_0412.MOV"
+        },
+        "info": {
+          "container": "mov,mp4,m4a,3gp,3g2,mj2",
+          "default_video": null,
+          "duration": 2354352000,
+          "video": [],
+          "audio": [
+            {
+              "index": 5,
+              "codec": "pcm_s24le",
+              "sample_rate": 96000,
+              "channels": 6,
+              "start": 0,
+              "duration": 2354352000,
+              "duration_exact": true,
+              "default": true,
+              "language": null,
+              "title": null,
+              "layout": "5.1(side)"
+            }
+          ],
+          "still": null
+        },
+        "fingerprint": {
+          "size": 734003200,
+          "head_tail": "fedcba9876543210",
+          "duration": 2354352000
+        },
+        "display_name": "Beach (audio)"
+      },
+      {
+        "id": 14,
+        "source": {
+          "type": "file"
+        },
+        "origin": {
+          "type": "generated",
+          "kind": "voiceover",
+          "x_mic": {
+            "name": "USB mic",
+            "rate": 48000
+          }
+        },
+        "path": {
+          "absolute": "/Users/me/Movies/Trip Media/Recordings/Voiceover 2026-10-12 14.32.05.wav",
+          "relative": "Trip Media/Recordings/Voiceover 2026-10-12 14.32.05.wav"
+        },
+        "info": {
+          "container": "wav",
+          "default_video": null,
+          "duration": 941740800,
+          "video": [],
+          "audio": [
+            {
+              "index": 0,
+              "codec": "pcm_s24le",
+              "sample_rate": 48000,
+              "channels": 1,
+              "start": 0,
+              "duration": 941740800,
+              "duration_exact": true,
+              "default": false,
+              "language": null,
+              "title": null,
+              "layout": "mono"
+            }
+          ],
+          "still": null
+        },
+        "fingerprint": null,
+        "display_name": null
+      },
+      {
+        "id": 15,
+        "source": {
+          "type": "file"
+        },
+        "origin": {
+          "type": "generated",
+          "kind": "tts"
+        },
+        "path": {
+          "absolute": "/Users/me/Movies/Trip Media/Recordings/Intro speech.wav",
+          "relative": "Trip Media/Recordings/Intro speech.wav"
+        },
+        "info": {
+          "container": "wav",
+          "default_video": null,
+          "duration": 941740800,
+          "video": [],
+          "audio": [
+            {
+              "index": 0,
+              "codec": "pcm_s24le",
+              "sample_rate": 48000,
+              "channels": 1,
+              "start": 0,
+              "duration": 941740800,
+              "duration_exact": true,
+              "default": false,
+              "language": null,
+              "title": null,
+              "layout": "mono"
+            }
+          ],
+          "still": null
+        },
+        "fingerprint": null,
+        "display_name": "Intro speech"
+      }
+    ],
+    "sequences": [
+      {
+        "id": 1,
+        "flags": {
+          "main_magnet": true,
+          "follow_main": true,
+          "follow_kinds": [
+            "video-overlay",
+            "text",
+            "sticker",
+            "adjustment",
+            "music",
+            "sound-effect",
+            "speech",
+            "other-audio"
+          ],
+          "x_follow": "beta"
+        },
+        "markers": [
+          {
+            "id": 60,
+            "at": {
+              "start": 0,
+              "duration": 0
+            },
+            "name": "Marker 1",
+            "note": "",
+            "color": "blue",
+            "origin": "user"
+          },
+          {
+            "id": 61,
+            "at": {
+              "start": 706305600,
+              "duration": 353152800,
+              "x_unit": "frames"
+            },
+            "name": "Chorus \"B\" \\ ✂",
+            "note": "line one\nline two\ttabbed 🎵",
+            "color": "teal",
+            "origin": "scene",
+            "x_marker": [
+              "lane 2"
+            ]
+          }
+        ],
+        "visual": [
+          {
+            "id": 20,
+            "kind": "video",
+            "header": {
+              "name": "Main",
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "mix": {
+              "gain": "-inf",
+              "pan": 100
+            },
+            "clips": [
+              {
+                "id": 40,
+                "range": {
+                  "start": 0,
+                  "duration": 2118916800
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 10,
+                  "kind": "video",
+                  "source": {
+                    "start": 235435200,
+                    "duration": 2118916800,
+                    "x_src": 7
+                  },
+                  "stream": {
+                    "type": "index",
+                    "index": 5
+                  }
+                },
+                "enabled": true,
+                "name": "Intro \"take\" 1 \\ ✂",
+                "group": 90,
+                "link": 91,
+                "audio": {
+                  "type": "detached",
+                  "link": 91,
+                  "x_detached": "resync later"
+                },
+                "keys": {
+                  "origin": 0,
+                  "tracks": [
+                    {
+                      "prop": "color.exposure",
+                      "keys": [
+                        {
+                          "at": 235435200,
+                          "value": -20,
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 941740800,
+                          "value": 35,
+                          "interp": "ease-in-out-quad"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.hsl.green.saturation",
+                      "keys": [
+                        {
+                          "at": 470870400,
+                          "value": -55,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.lut.intensity",
+                      "keys": [
+                        {
+                          "at": 353152800,
+                          "value": 20,
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 824023200,
+                          "value": 90,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "color.wheels.midtones.puck",
+                      "keys": [
+                        {
+                          "at": 282522240,
+                          "value": {
+                            "x": -600,
+                            "y": 0
+                          },
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 706305600,
+                          "value": {
+                            "x": 300,
+                            "y": 700
+                          },
+                          "interp": "hold"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "markers": [
+                  {
+                    "id": 64,
+                    "at": {
+                      "start": 117717600,
+                      "duration": 0
+                    },
+                    "name": "",
+                    "note": "",
+                    "color": "orange",
+                    "origin": "user"
+                  },
+                  {
+                    "id": 62,
+                    "at": {
+                      "start": 706305600,
+                      "duration": 0
+                    },
+                    "name": "",
+                    "note": "",
+                    "color": "green",
+                    "origin": "detected-beat",
+                    "x_bpm": 120
+                  },
+                  {
+                    "id": 63,
+                    "at": {
+                      "start": 941740800,
+                      "duration": 117717600
+                    },
+                    "name": "Marker 2",
+                    "note": "",
+                    "color": "yellow",
+                    "origin": "beat"
+                  }
+                ],
+                "color": {
+                  "amount": 80,
+                  "off": [
+                    "detail",
+                    "curves"
+                  ],
+                  "light": {
+                    "brightness": 12,
+                    "contrast": -15,
+                    "contrast_pivot": 30,
+                    "tone_lift": 100,
+                    "x_dehaze": 5
+                  },
+                  "color": {
+                    "temperature": 40,
+                    "saturation": -100,
+                    "skin": {
+                      "on": true
+                    },
+                    "x_skin": true
+                  },
+                  "hsl": {
+                    "red": {
+                      "saturation": -40
+                    },
+                    "orange": {
+                      "hue": 25
+                    },
+                    "blue": {
+                      "lightness": -100
+                    },
+                    "magenta": {
+                      "hue": 100
+                    }
+                  },
+                  "curves": {
+                    "luma": [
+                      [
+                        0,
+                        0
+                      ],
+                      [
+                        2500,
+                        2000
+                      ],
+                      [
+                        7500,
+                        8200
+                      ],
+                      [
+                        10000,
+                        10000
+                      ]
+                    ],
+                    "blue": [
+                      [
+                        1000,
+                        500
+                      ],
+                      [
+                        9000,
+                        10000
+                      ]
+                    ]
+                  },
+                  "wheels": {
+                    "strength": 80,
+                    "shadows": {
+                      "x": 120,
+                      "y": -340,
+                      "luma": 15
+                    },
+                    "highlights": {
+                      "luma": -20
+                    },
+                    "offset": {
+                      "x": -707,
+                      "y": 707
+                    }
+                  },
+                  "lut": {
+                    "hash": "0123456789abcdeffedcba9876543210",
+                    "file": "Teal \"night\" ✂.cube",
+                    "intensity": 60,
+                    "interp": "trilinear",
+                    "skin": {
+                      "on": true,
+                      "amount": 40
+                    }
+                  },
+                  "x_lut": {
+                    "hash": "00",
+                    "intensity": 60
+                  }
+                },
+                "x_clip": {
+                  "keyframes": []
+                }
+              },
+              {
+                "id": 41,
+                "range": {
+                  "start": 2118916800,
+                  "duration": 1412611200
+                },
+                "content": {
+                  "type": "image",
+                  "asset": 12
+                },
+                "enabled": false,
+                "name": null,
+                "group": 90,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                },
+                "color": {
+                  "bypass": true,
+                  "color": {
+                    "hue": 60
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": 21,
+            "kind": "video",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": true,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 42,
+                "range": {
+                  "start": 4708704000,
+                  "duration": 706305600
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 10,
+                  "kind": "video",
+                  "source": {
+                    "start": 0,
+                    "duration": 706305600
+                  },
+                  "stream": {
+                    "type": "all-mixed",
+                    "x_label": "both mics"
+                  }
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "active",
+                  "gain": "-inf",
+                  "gain_keys": [],
+                  "muted": false,
+                  "fade_in": 0,
+                  "fade_in_curve": "linear",
+                  "fade_out": 0,
+                  "fade_out_curve": "linear"
+                },
+                "transform": {
+                  "position": {
+                    "x": 250000,
+                    "y": -125000,
+                    "x_unit": "canvas"
+                  },
+                  "scale": 5000,
+                  "rotation": -4550,
+                  "flip_h": true,
+                  "flip_v": false,
+                  "opacity": 750,
+                  "x_anchor": [
+                    0,
+                    0
+                  ]
+                },
+                "animations": {
+                  "entrance": {
+                    "preset": "fc.in.slide",
+                    "duration": 353152800,
+                    "easing": null,
+                    "direction": "up",
+                    "unit": "block",
+                    "overlap": 500,
+                    "order": "forward",
+                    "seed": 0,
+                    "pace": null,
+                    "intensity": 500,
+                    "travel": "from-edge",
+                    "phase": 0
+                  },
+                  "exit": null,
+                  "continuous": null
+                }
+              }
+            ]
+          },
+          {
+            "id": 22,
+            "kind": "text",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": true
+            },
+            "clips": [
+              {
+                "id": 43,
+                "range": {
+                  "start": 0,
+                  "duration": 1059458400
+                },
+                "content": {
+                  "type": "text",
+                  "text": "Beach day\n\"Sunset\" ☀️ \\ tab\there",
+                  "style": {
+                    "font": {
+                      "family": "DejaVu Serif",
+                      "x_weight": 700
+                    },
+                    "size": 9650,
+                    "fill": {
+                      "type": "linear-gradient",
+                      "angle": 1355,
+                      "stops": [
+                        {
+                          "at": 0,
+                          "color": "#FF8000C0"
+                        },
+                        {
+                          "at": 400,
+                          "color": "#FFFFFFFF",
+                          "x_mid": 50
+                        },
+                        {
+                          "at": 400,
+                          "color": "#0040FFFF"
+                        },
+                        {
+                          "at": 1000,
+                          "color": "#0A141E00"
+                        }
+                      ],
+                      "extent": "line",
+                      "x_space": "oklab"
+                    },
+                    "bold": false,
+                    "italic": true,
+                    "underline": true,
+                    "strike": true,
+                    "case": "title",
+                    "letter_spacing": -150,
+                    "outline": {
+                      "on": true,
+                      "color": "#000000FF",
+                      "width": 120,
+                      "opacity": 800,
+                      "position": "center"
+                    },
+                    "shadow": {
+                      "on": true,
+                      "color": "#140028FF",
+                      "opacity": 650,
+                      "blur": 200,
+                      "distance": 150,
+                      "angle": 1355,
+                      "include_box": true
+                    },
+                    "glow": {
+                      "on": true,
+                      "color": "#00FFC8FF",
+                      "intensity": 900,
+                      "radius": 400,
+                      "offset": 50,
+                      "angle": 2700,
+                      "direction": "both",
+                      "x_blend": "screen"
+                    },
+                    "background": {
+                      "on": false,
+                      "color": "#FFE600FF",
+                      "opacity": 550,
+                      "shape": "per-char",
+                      "pad_x": 100,
+                      "pad_y": 50,
+                      "roundness": 1000,
+                      "height": "lower-half",
+                      "border": {
+                        "on": true,
+                        "color": "#FF00FFFF",
+                        "width": 20,
+                        "x_dash": [
+                          4,
+                          2
+                        ]
+                      }
+                    },
+                    "bubble": {
+                      "on": true,
+                      "kind": {
+                        "type": "arrow-tag",
+                        "point": "left",
+                        "x_notch": 1
+                      },
+                      "tail": {
+                        "on": false,
+                        "tip": {
+                          "x": -12345,
+                          "y": 25000,
+                          "x_track": "speaker 1"
+                        },
+                        "base": 300,
+                        "bend": -450
+                      },
+                      "color": "#1E1E24E6",
+                      "opacity": 900,
+                      "pad_x": 500,
+                      "pad_y": 350,
+                      "roundness": 600,
+                      "border": {
+                        "on": false,
+                        "color": "#FF0000FF",
+                        "width": 80
+                      },
+                      "spikes": 20,
+                      "spike_depth": 250,
+                      "jitter": 700,
+                      "seed": 4000000000,
+                      "lobe": 300,
+                      "trail": 4
+                    },
+                    "curve": {
+                      "on": true,
+                      "amount": -350
+                    },
+                    "x_outline": {
+                      "width": 300
+                    }
+                  },
+                  "layout": {
+                    "align": "right",
+                    "justify": true,
+                    "box_width": 72000,
+                    "line_spacing": 1250,
+                    "v_anchor": "bottom",
+                    "x_anchor": "top"
+                  },
+                  "origin": "manual",
+                  "x_spans": []
+                },
+                "enabled": true,
+                "name": "Title",
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                },
+                "transform": {
+                  "position": {
+                    "x": 0,
+                    "y": -350000
+                  },
+                  "scale": 10000,
+                  "rotation": 37000,
+                  "flip_h": false,
+                  "flip_v": false,
+                  "opacity": 1000
+                },
+                "keys": {
+                  "origin": 117717600,
+                  "tracks": [
+                    {
+                      "prop": "transform.position",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": {
+                            "x": 0,
+                            "y": -350000
+                          },
+                          "interp": "ease-in-out-cubic"
+                        },
+                        {
+                          "at": 470870400,
+                          "value": {
+                            "x": 120000,
+                            "y": -300000,
+                            "x_unit": "canvas"
+                          },
+                          "interp": "bounce-out",
+                          "x_handles": [
+                            [
+                              1,
+                              2
+                            ],
+                            [
+                              3,
+                              4
+                            ]
+                          ]
+                        },
+                        {
+                          "at": 941740800,
+                          "value": {
+                            "x": -80000,
+                            "y": -350000
+                          },
+                          "interp": "linear"
+                        }
+                      ],
+                      "x_label": "path 1"
+                    },
+                    {
+                      "prop": "transform.scale",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": 8000,
+                          "interp": "overshoot-out"
+                        },
+                        {
+                          "at": 353152800,
+                          "value": 10000,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "transform.rotation",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": -1500,
+                          "interp": "hold"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "transform.opacity",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": 0,
+                          "interp": "ease-out-sine"
+                        },
+                        {
+                          "at": 235435200,
+                          "value": 1000,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "text.size",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": 6000,
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 164804640,
+                          "value": 6500,
+                          "interp": "ease-in-quad"
+                        },
+                        {
+                          "at": 211891680,
+                          "value": 7000,
+                          "interp": "ease-out-quad"
+                        },
+                        {
+                          "at": 258978720,
+                          "value": 7500,
+                          "interp": "ease-in-out-quad"
+                        },
+                        {
+                          "at": 306065760,
+                          "value": 8000,
+                          "interp": "hold"
+                        },
+                        {
+                          "at": 353152800,
+                          "value": 8500,
+                          "interp": "ease-in-sine"
+                        },
+                        {
+                          "at": 400239840,
+                          "value": 9000,
+                          "interp": "ease-out-sine"
+                        },
+                        {
+                          "at": 447326880,
+                          "value": 9500,
+                          "interp": "ease-in-out-sine"
+                        },
+                        {
+                          "at": 494413920,
+                          "value": 10000,
+                          "interp": "ease-in-cubic"
+                        },
+                        {
+                          "at": 541500960,
+                          "value": 10500,
+                          "interp": "ease-out-cubic"
+                        },
+                        {
+                          "at": 588588000,
+                          "value": 11000,
+                          "interp": "ease-in-out-cubic"
+                        },
+                        {
+                          "at": 635675040,
+                          "value": 11500,
+                          "interp": "ease-in-expo"
+                        },
+                        {
+                          "at": 682762080,
+                          "value": 12000,
+                          "interp": "ease-out-expo"
+                        },
+                        {
+                          "at": 729849120,
+                          "value": 12500,
+                          "interp": "ease-in-out-expo"
+                        },
+                        {
+                          "at": 776936160,
+                          "value": 13000,
+                          "interp": "overshoot-out"
+                        },
+                        {
+                          "at": 824023200,
+                          "value": 13500,
+                          "interp": "overshoot-in"
+                        },
+                        {
+                          "at": 871110240,
+                          "value": 14000,
+                          "interp": "elastic-out"
+                        },
+                        {
+                          "at": 918197280,
+                          "value": 14500,
+                          "interp": "bounce-out"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "text.letter_spacing",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": -50,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "text.outline.color",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": "#000000FF",
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 706305600,
+                          "value": "#FF0080C8",
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "text.shadow.angle",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": 1350,
+                          "interp": "linear"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "text.bubble.tail.tip",
+                      "keys": [
+                        {
+                          "at": 235435200,
+                          "value": {
+                            "x": -4000,
+                            "y": 9000
+                          },
+                          "interp": "elastic-out"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "text.fill.stops.1.color",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": "#102040FF",
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 588588000,
+                          "value": "#FAFA0AFF",
+                          "interp": "overshoot-in"
+                        }
+                      ]
+                    },
+                    {
+                      "prop": "text.reveal",
+                      "keys": [
+                        {
+                          "at": 117717600,
+                          "value": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "at": 588588000,
+                          "value": 1000,
+                          "interp": "linear"
+                        }
+                      ]
+                    }
+                  ],
+                  "x_space": "content"
+                },
+                "animations": {
+                  "entrance": {
+                    "preset": "fc.in.typewriter",
+                    "duration": 282522240,
+                    "easing": "ease-in-expo",
+                    "direction": null,
+                    "unit": "letter",
+                    "overlap": 0,
+                    "order": "random",
+                    "seed": 3735928559,
+                    "pace": 35280000,
+                    "intensity": 750,
+                    "travel": "short",
+                    "phase": 0,
+                    "x_caret": true
+                  },
+                  "exit": {
+                    "preset": "fc.out.slide",
+                    "duration": 211891680,
+                    "easing": null,
+                    "direction": "right",
+                    "unit": "word",
+                    "overlap": 500,
+                    "order": "edges-in",
+                    "seed": 0,
+                    "pace": null,
+                    "intensity": 500,
+                    "travel": "from-edge",
+                    "phase": 0
+                  },
+                  "continuous": {
+                    "preset": "fc.loop.wave",
+                    "duration": 847566720,
+                    "easing": null,
+                    "direction": "counter-clockwise",
+                    "unit": "line",
+                    "overlap": 250,
+                    "order": "center-out",
+                    "seed": 0,
+                    "pace": null,
+                    "intensity": 1000,
+                    "travel": "from-edge",
+                    "phase": 164804640
+                  },
+                  "x_mode": "auto"
+                },
+                "markers": [
+                  {
+                    "id": 65,
+                    "at": {
+                      "start": 235435200,
+                      "duration": 47087040
+                    },
+                    "name": "",
+                    "note": "fade the title here",
+                    "color": "red",
+                    "origin": "user"
+                  }
+                ],
+                "attach": {
+                  "owner": 40,
+                  "owner_source_time": 235435200,
+                  "x_lock": true
+                }
+              },
+              {
+                "id": 51,
+                "range": {
+                  "start": 1412611200,
+                  "duration": 706305600
+                },
+                "content": {
+                  "type": "text",
+                  "text": "Your text",
+                  "style": {
+                    "font": {
+                      "family": "Noto Sans"
+                    },
+                    "size": 6400,
+                    "fill": {
+                      "type": "solid",
+                      "color": "#FFFFFFFF"
+                    },
+                    "bold": true,
+                    "italic": false,
+                    "underline": false,
+                    "strike": false,
+                    "case": "as-typed",
+                    "letter_spacing": 0,
+                    "outline": {
+                      "on": false,
+                      "color": "#000000FF",
+                      "width": 60,
+                      "opacity": 1000,
+                      "position": "outside",
+                      "x_dash": true
+                    }
+                  },
+                  "layout": {
+                    "align": "center",
+                    "justify": false,
+                    "box_width": null,
+                    "line_spacing": 1000,
+                    "v_anchor": "middle"
+                  },
+                  "origin": "manual"
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                }
+              }
+            ]
+          },
+          {
+            "id": 23,
+            "kind": "sticker",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 44,
+                "range": {
+                  "start": 117717600,
+                  "duration": 470870400
+                },
+                "content": {
+                  "type": "generated",
+                  "kind": "sticker"
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                },
+                "transform": {
+                  "position": {
+                    "x": 0,
+                    "y": 0
+                  },
+                  "scale": 10000,
+                  "rotation": 0,
+                  "flip_h": false,
+                  "flip_v": true,
+                  "opacity": 1000
+                },
+                "animations": {
+                  "entrance": null,
+                  "exit": null,
+                  "continuous": {
+                    "preset": "fc.loop.spin",
+                    "duration": 1412611200,
+                    "easing": null,
+                    "direction": "clockwise",
+                    "unit": null,
+                    "overlap": 500,
+                    "order": "backward",
+                    "seed": 7,
+                    "pace": null,
+                    "intensity": 500,
+                    "travel": "from-edge",
+                    "phase": 0
+                  }
+                },
+                "attach": {
+                  "owner": 40,
+                  "owner_source_time": 353152800
+                }
+              }
+            ]
+          },
+          {
+            "id": 24,
+            "kind": "effect",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 45,
+                "range": {
+                  "start": 235435200,
+                  "duration": 470870400
+                },
+                "content": {
+                  "type": "generated",
+                  "kind": "effect"
+                },
+                "enabled": false,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                }
+              }
+            ]
+          },
+          {
+            "id": 25,
+            "kind": "adjustment",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 46,
+                "range": {
+                  "start": 0,
+                  "duration": 3531528000
+                },
+                "content": {
+                  "type": "generated",
+                  "kind": "adjustment"
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "none"
+                },
+                "attach": {
+                  "owner": 40,
+                  "owner_source_time": 235435200
+                },
+                "color": {
+                  "amount": 45,
+                  "off": [
+                    "color"
+                  ],
+                  "color": {
+                    "tint": -12
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "audio": [
+          {
+            "id": 26,
+            "kind": "audio",
+            "header": {
+              "name": null,
+              "muted": true,
+              "hidden": false,
+              "locked": false
+            },
+            "mix": {
+              "gain": -300,
+              "pan": -40,
+              "x_meter": "peak"
+            },
+            "clips": [
+              {
+                "id": 47,
+                "range": {
+                  "start": 0,
+                  "duration": 2118916800
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 10,
+                  "kind": "audio",
+                  "source": {
+                    "start": 235435200,
+                    "duration": 2118916800
+                  },
+                  "stream": null
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": 91,
+                "audio": {
+                  "type": "active",
+                  "gain": 350,
+                  "gain_keys": [
+                    {
+                      "at": 235435200,
+                      "gain": 350,
+                      "interp": "linear"
+                    },
+                    {
+                      "at": 470870400,
+                      "gain": "-inf",
+                      "interp": "hold",
+                      "x_ease": "in"
+                    },
+                    {
+                      "at": 941740800,
+                      "gain": -600,
+                      "interp": "linear"
+                    },
+                    {
+                      "at": 4708704000,
+                      "gain": 2000,
+                      "interp": "linear"
+                    }
+                  ],
+                  "muted": false,
+                  "fade_in": 117717600,
+                  "fade_in_curve": "smooth",
+                  "fade_out": 0,
+                  "fade_out_curve": "linear"
+                },
+                "attach": {
+                  "owner": 40,
+                  "owner_source_time": 235435200
+                }
+              }
+            ]
+          },
+          {
+            "id": 27,
+            "kind": "audio",
+            "header": {
+              "name": "Música 🎵",
+              "muted": false,
+              "hidden": false,
+              "locked": false,
+              "x_header": true
+            },
+            "mix": {
+              "gain": 1200,
+              "pan": -100
+            },
+            "clips": [
+              {
+                "id": 48,
+                "range": {
+                  "start": 706305600,
+                  "duration": 2825222400
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 11,
+                  "kind": "audio",
+                  "source": {
+                    "start": 0,
+                    "duration": 2825222400
+                  },
+                  "stream": null
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "active",
+                  "gain": -1250,
+                  "gain_keys": [],
+                  "muted": true,
+                  "fade_in": 706305600,
+                  "fade_in_curve": "fast",
+                  "fade_out": 4708704000,
+                  "fade_out_curve": "slow",
+                  "x_pan": -30
+                },
+                "attach": {
+                  "owner": 40,
+                  "owner_source_time": 941740800
+                }
+              },
+              {
+                "id": 50,
+                "range": {
+                  "start": 3766963200,
+                  "duration": 941740800
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 13,
+                  "kind": "audio",
+                  "source": {
+                    "start": 470870400,
+                    "duration": 941740800
+                  },
+                  "stream": null
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "active",
+                  "gain": -6000,
+                  "gain_keys": [],
+                  "muted": false,
+                  "fade_in": 0,
+                  "fade_in_curve": "linear",
+                  "fade_out": 0,
+                  "fade_out_curve": "linear"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "flags": {
+          "main_magnet": false,
+          "follow_main": false,
+          "follow_kinds": [
+            "effect",
+            "sound-effect"
+          ]
+        },
+        "markers": [
+          {
+            "id": 66,
+            "at": {
+              "start": 23543520,
+              "duration": 70630560
+            },
+            "name": "",
+            "note": "",
+            "color": "pink",
+            "origin": "user"
+          },
+          {
+            "id": 67,
+            "at": {
+              "start": 23543520,
+              "duration": 0
+            },
+            "name": "Same start, later id",
+            "note": "",
+            "color": "purple",
+            "origin": "user"
+          }
+        ],
+        "visual": [
+          {
+            "id": 30,
+            "kind": "video",
+            "header": {
+              "name": null,
+              "muted": false,
+              "hidden": false,
+              "locked": false
+            },
+            "clips": [
+              {
+                "id": 49,
+                "range": {
+                  "start": 353152800,
+                  "duration": 470870400
+                },
+                "content": {
+                  "type": "media",
+                  "asset": 10,
+                  "kind": "video",
+                  "source": {
+                    "start": 117717600,
+                    "duration": 470870400
+                  },
+                  "stream": {
+                    "type": "index",
+                    "index": 4
+                  }
+                },
+                "enabled": true,
+                "name": null,
+                "group": null,
+                "link": null,
+                "audio": {
+                  "type": "detached",
+                  "link": 92
+                },
+                "markers": [
+                  {
+                    "id": 68,
+                    "at": {
+                      "start": 141261120,
+                      "duration": 0
+                    },
+                    "name": "",
+                    "note": "",
+                    "color": "blue",
+                    "origin": "scene"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "audio": []
+      }
+    ],
+    "x_doc": "document level"
+  },
+  "export": {
+    "file": {
+      "name": "Trip \"final\" / v2 ✂",
+      "folder": "C:\\Users\\me\\Videos\\Exports"
+    },
+    "video": {
+      "size": {
+        "type": "preset",
+        "short_side": 720,
+        "x_fit": "fill"
+      },
+      "frame_rate": {
+        "type": "fixed",
+        "rate": {
+          "num": 25,
+          "den": 1
+        }
+      },
+      "codec": "h264",
+      "container": "mp4",
+      "quality": {
+        "type": "tier",
+        "tier": "higher"
+      }
+    },
+    "audio": {
+      "include": false,
+      "kbps": 256,
+      "sample_rate": 44100,
+      "x_channels": 2
+    },
+    "x_preset": null
+  },
+  "ui": {
+    "solo": [
+      20,
+      27
+    ],
+    "x_zoom": 3
+  },
+  "x_future_root": {
+    "n": -5,
+    "nested": [
+      1,
+      "two",
+      null,
+      true
+    ]
+  }
+}

@@ -14,6 +14,7 @@ mod follow;
 mod keys;
 mod library;
 mod marker;
+pub mod mask;
 mod sequence;
 mod settings;
 mod text;
@@ -36,10 +37,13 @@ pub use animate::{
 pub use audio::{ClipAudio, EmbeddedAudio, FadeCurve, GainDb, MasterAudio, Pan, TrackAudio};
 pub use clip::{Clip, ClipContent, GeneratedKind, MediaKind, StreamSel};
 pub use color::{
-    BasicAdjust, ColorPage, ColorParamId, ColorParamSpec, ColorStack, ColorWheels, Curve,
-    CurveChannel, CurveError, CurvePoint, Curves, Hsl, HslBand, HslChannel, HueBand, LutInterp,
-    LutRef, LutSlot, PUCK_RADIUS, SKIN_AMOUNT_DEFAULT, Section, SectionMask, SkinProtect,
-    SkinScope, Wheel, WheelId, color_param_spec, hash_hex, on_disk, parse_hash_hex,
+    AutoCorrection, AutoOffsets, AutoSource, AutoStyle, BasicAdjust, ColorMask, ColorMaskParam,
+    ColorPage, ColorParamId, ColorParamSpec, ColorStack, ColorWheels, Curve, CurveChannel,
+    CurveError, CurvePoint, Curves, EXPAND_LIMIT, Hsl, HslBand, HslChannel, HueBand, LutInterp,
+    LutRef, LutSlot, MATCH_GAIN_MAX, MATCH_GAIN_MIN, MATCH_OFFSET_LIMIT, MATCH_ONE,
+    MAX_COLOR_MASKS, MatchRef, MatchTransform, PUCK_RADIUS, SKIN_AMOUNT_DEFAULT, Section,
+    SectionMask, SectionSnapshot, SkinProtect, SkinScope, Wheel, WheelId, color_param_spec,
+    hash_hex, on_disk, parse_hash_hex, scaled_offset,
 };
 pub use follow::{
     Attachment, FollowKind, FollowKinds, attach_all, attachment_for, expected_start, follow_kind,
@@ -55,6 +59,11 @@ pub(crate) use marker::marker_points;
 pub use marker::{
     MAX_MARKER_NAME_CHARS, MAX_MARKER_NOTE_CHARS, Marker, MarkerOrigin, MarkerRef, MarkerScope,
     Markers, PaletteColor, next_marker, prev_marker,
+};
+pub use mask::{
+    MASK_BAND_MAX, MASK_CENTER_LIMIT, MASK_FEATHER_SPAN, MASK_RATIO_MAX, MASK_ROTATION_LIMIT,
+    MASK_SIZE_MAX, MASK_UNIT, Mask, MaskCombine, MaskParam, MaskPoint, MaskShape, MaskShapeKind,
+    MaskValue,
 };
 pub use sequence::{Lane, Sequence, SequenceFlags, TrackSlot};
 pub use settings::{MAX_CANVAS_SIDE, ProjectSettings};

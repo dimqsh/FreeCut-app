@@ -13,23 +13,26 @@ mod policy;
 mod tx;
 
 use core::num::NonZeroU64;
+use std::sync::Arc;
 
 pub(crate) use change::apply_all;
 pub use change::{Change, ChangeSet};
 pub use error::{ApplyError, EditError};
 pub use ops::{
-    AddTrackReq, AudioEdit, ColorEdit, ColorOp, Cut, DeleteReq, Edge, GainKeyEdit, InsertReq,
-    InsertTarget, KeyEdit, MarkerOwner, MarkerPatch, MarkerSelector, MoveReq, NewClip, NewMedia,
-    RecordTarget, ResetScope, SplitReq, SplitTargets, SyncOffset, TextLayoutEdit, TextStyleEdit,
-    TrackPosition, TransformEdit, TrimReq, TrimTargets, Unavailable, change_case,
-    first_free_audio_track, has_color, is_color_prop, linked_audio, recorded_start,
-    stream_doubled_by, sync_offset, sync_offsets, trim_to_playhead_available,
+    AddTrackReq, AdjustSpan, AudioEdit, ColorEdit, ColorOp, Cut, DEFAULT_ADJUSTMENT_DURATION,
+    DeleteReq, Edge, GainKeyEdit, InsertReq, InsertTarget, KeyEdit, MarkerOwner, MarkerPatch,
+    MarkerSelector, MoveReq, NewClip, NewMedia, RecordTarget, ResetScope, SplitReq, SplitTargets,
+    SyncOffset, TextLayoutEdit, TextStyleEdit, TrackPosition, TransformEdit, TrimReq, TrimTargets,
+    Unavailable, change_case, default_adjustment_duration, first_free_audio_track, has_color,
+    is_color_prop, linked_audio, recorded_start, stream_doubled_by, sync_offset, sync_offsets,
+    trim_to_playhead_available,
 };
 
 use crate::ids::{ClipId, MediaId, SeqId, TrackId};
 use crate::model::{
-    AnimationSpec, Document, Fingerprint, FollowKinds, GainDb, MarkerRef, MediaInfo, PaletteColor,
-    Pan, ProjectSettings, PropPath, RichText, Slot, StoredPath, StreamSel, TrackHeader,
+    AnimationSpec, ColorStack, Document, Fingerprint, FollowKinds, GainDb, MarkerRef, MediaInfo,
+    PaletteColor, Pan, ProjectSettings, PropPath, RichText, Slot, StoredPath, StreamSel,
+    TrackHeader,
 };
 use crate::time::Tick;
 
@@ -107,6 +110,8 @@ pub enum OpKind {
     /// Colour sliders, switches, bypass or a reset (CL-007, CL-008,
     /// CL-023, CL-024, CL-035).
     EditColor(ColorOp),
+    /// A new adjustment clip (CL-006, CL-044).
+    AddAdjustmentClip,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -413,6 +418,15 @@ pub enum EditRequest {
         clips: Vec<ClipId>,
         edit: ColorEdit,
     },
+    /// Adds an adjustment clip spanning `span`, carrying `color` (`None`:
+    /// a blank one, which renders nothing until it is graded), on the
+    /// track CL-006's placement rule picks (see [`AdjustSpan`]). The new
+    /// clip is selected afterward. One undo entry, stack included.
+    AddAdjustmentClip {
+        seq: SeqId,
+        span: AdjustSpan,
+        color: Option<Arc<ColorStack>>,
+    },
 }
 
 /// Which editor state a plan was made against.
@@ -615,5 +629,8 @@ pub(crate) fn plan(
             replace,
         } => ops::insert_recorded_clip(tx, *seq, media, *at, *handle_in, *target, *replace),
         EditRequest::EditColor { seq, clips, edit } => ops::edit_color(tx, *seq, clips, edit),
+        EditRequest::AddAdjustmentClip { seq, span, color } => {
+            ops::add_adjustment_clip(tx, *seq, span, color.as_ref())
+        }
     }
 }

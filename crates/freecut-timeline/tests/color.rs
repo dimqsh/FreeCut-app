@@ -17,10 +17,12 @@ use freecut_timeline::edit::{
 };
 use freecut_timeline::ids::ClipId;
 use freecut_timeline::model::{
-    Clip, ClipContent, ColorParamId, ColorStack, Curve, CurveChannel, CurvePoint, Document,
+    AutoCorrection, AutoOffsets, AutoSource, AutoStyle, Clip, ClipContent, ColorMask,
+    ColorMaskParam, ColorParamId, ColorStack, Curve, CurveChannel, CurvePoint, Document,
     GeneratedKind, HslChannel, HueBand, Interp, InvariantViolation, LutInterp, LutRef, LutSlot,
-    PropGroup, PropPath, PropValue, Section, Sequence, SkinProtect, SkinScope, TextClipData, Track,
-    TrackFlags, TrackHeader, ValidateCtx, WheelId,
+    MAX_COLOR_MASKS, Mask, MaskCombine, MaskParam, MaskPoint, MaskShape, MaskShapeKind, MatchRef,
+    MatchTransform, PerMille, PropGroup, PropPath, PropValue, Section, Sequence, SkinProtect,
+    SkinScope, TextClipData, Track, TrackFlags, TrackHeader, ValidateCtx, WheelId,
 };
 use freecut_timeline::plan::{PlanInputs, PlanNode, frame_plan};
 use pretty_assertions::assert_eq;
@@ -488,7 +490,10 @@ fn the_plan_carries_evaluated_grades_for_pictures_only() {
         let plan = frame_plan(fx.doc(), fx.seq_id(), f(t), &inputs).unwrap();
         plan.nodes
             .into_iter()
-            .map(|PlanNode::Layer(l)| l)
+            .filter_map(|n| match n {
+                PlanNode::Layer(l) => Some(l),
+                PlanNode::Adjust(_) => None,
+            })
             .find(|l| l.clip == clip)
             .unwrap()
             .color
@@ -502,11 +507,16 @@ fn the_plan_carries_evaluated_grades_for_pictures_only() {
     .unwrap();
     assert_eq!(plan_color(&fx, video, 2).unwrap().basic.saturation, 40);
     assert_eq!(plan_color(&fx, image, 2).unwrap().basic.saturation, 40);
-    assert_eq!(
-        plan_color(&fx, adjust, 2),
-        None,
-        "adjustment clips grade with their own node (K4)"
-    );
+    let adjust_node = frame_plan(fx.doc(), fx.seq_id(), f(2), &inputs)
+        .unwrap()
+        .nodes
+        .into_iter()
+        .find_map(|n| match n {
+            PlanNode::Adjust(a) if a.clip == adjust => Some(a),
+            _ => None,
+        })
+        .expect("adjustment clips grade with their own node (K4)");
+    assert_eq!(adjust_node.color.basic.saturation, 40);
     // Bypassed: nothing to do.
     color(&mut fx, vec![video], ColorEdit::SetBypass(true)).unwrap();
     assert_eq!(plan_color(&fx, video, 2), None);
@@ -519,10 +529,11 @@ fn the_plan_carries_evaluated_grades_for_pictures_only() {
     let offline: BTreeSet<_> = [VIDEO_100].into();
     let inputs = PlanInputs { offline: &offline };
     let plan = frame_plan(fx.doc(), fx.seq_id(), f(5), &inputs).unwrap();
-    let PlanNode::Layer(slate) = plan
+    let slate = plan
         .nodes
         .iter()
-        .find(|n| matches!(n, PlanNode::Layer(l) if l.clip == video))
+        .filter_map(PlanNode::layer)
+        .find(|l| l.clip == video)
         .unwrap();
     assert_eq!(slate.color, None);
 }
@@ -813,7 +824,10 @@ fn hsl_curves_and_wheels_reach_the_plan() {
         let plan = frame_plan(fx.doc(), fx.seq_id(), f(t), &inputs).unwrap();
         plan.nodes
             .into_iter()
-            .map(|PlanNode::Layer(l)| l)
+            .filter_map(|n| match n {
+                PlanNode::Layer(l) => Some(l),
+                PlanNode::Adjust(_) => None,
+            })
             .find(|l| l.clip == video)
             .unwrap()
             .color
@@ -1012,7 +1026,10 @@ fn the_lut_reaches_the_plan_and_intensity_0_skips_it() {
         let plan = frame_plan(fx.doc(), fx.seq_id(), f(1), &inputs).unwrap();
         plan.nodes
             .into_iter()
-            .map(|PlanNode::Layer(l)| l)
+            .filter_map(|n| match n {
+                PlanNode::Layer(l) => Some(l),
+                PlanNode::Adjust(_) => None,
+            })
             .find(|l| l.clip == video)
             .unwrap()
             .color
@@ -1064,4 +1081,687 @@ fn k3_paths_round_trip_their_names() {
         PropPath::Color(ColorParamId::SkinAmount(SkinScope::Color)).group(),
         Some(PropGroup::Color(Section::Color))
     );
+}
+
+fn auto(exposure: i16, temperature: i16) -> AutoCorrection {
+    AutoCorrection::new(
+        AutoOffsets {
+            exposure,
+            temperature,
+            blacks: -4,
+            ..AutoOffsets::default()
+        },
+        AutoStyle::Natural,
+        AutoSource::WholeClip,
+    )
+}
+
+fn matched(clip: ClipId) -> MatchTransform {
+    MatchTransform::new(
+        [12_000, 9_000, 11_000],
+        [-300, 150, -80],
+        MatchRef::Clip {
+            clip,
+            at: f(3),
+            graded: true,
+        },
+    )
+}
+
+#[test]
+fn every_k5_edit_applies_undoes_and_redoes() {
+    let mut fx = Fixture::new();
+    let (video, image, adjust, ..) = kinds(&mut fx);
+    let edits = [
+        ColorEdit::SetAuto(Some(auto(12, -8))),
+        ColorEdit::SetParam(ColorParamId::AutoStrength, 50),
+        ColorEdit::SetAuto(Some(auto(20, 4))),
+        ColorEdit::SetSectionEnabled(Section::Auto, false),
+        ColorEdit::SetSectionEnabled(Section::Auto, true),
+        ColorEdit::ApplyAutoToSliders,
+        ColorEdit::SetAuto(Some(auto(-6, 30))),
+        ColorEdit::ResetSection(Section::Auto),
+        ColorEdit::SetMatch(Some(matched(video))),
+        ColorEdit::SetParam(ColorParamId::MatchIntensity, 40),
+        ColorEdit::SetMatch(Some(MatchTransform::identity(MatchRef::Clip {
+            clip: image,
+            at: f(0),
+            graded: false,
+        }))),
+        ColorEdit::SetSectionEnabled(Section::Match, false),
+        ColorEdit::ResetSection(Section::Match),
+        ColorEdit::SetMatch(Some(matched(video))),
+        ColorEdit::SetMatch(None),
+        ColorEdit::SetAuto(Some(auto(1, 1))),
+        ColorEdit::SetAuto(None),
+    ];
+    for edit in edits {
+        let op = edit.op();
+        color(&mut fx, vec![video, image, adjust], edit.clone()).unwrap();
+        assert_eq!(label(&fx), (OpKind::EditColor(op), 3), "{edit:?}");
+        if edit == ColorEdit::SetAuto(Some(auto(20, 4))) {
+            // A re-run replaces the offsets and keeps the Strength.
+            let a = stack(&fx, video).auto.unwrap();
+            assert_eq!((a.offsets.exposure, a.strength), (20, 50));
+        }
+        if edit == ColorEdit::ApplyAutoToSliders {
+            // +20 and +4 at 50 % (rounded half away from zero), Blacks −4 → −2.
+            let s = stack(&fx, image);
+            assert_eq!(s.auto, None);
+            assert_eq!(
+                (s.basic.exposure, s.basic.temperature, s.basic.blacks),
+                (10, 2, -2)
+            );
+        }
+        if matches!(edit, ColorEdit::SetMatch(Some(ref m)) if m.is_identity()) {
+            // Re-match keeps the Intensity.
+            let m = stack(&fx, adjust).match_xf.unwrap();
+            assert!(m.is_identity());
+            assert_eq!(m.intensity, 40);
+        }
+    }
+    // Apply to sliders left plain slider values behind.
+    let s = stack(&fx, video);
+    assert_eq!((s.auto, s.match_xf), (None, None));
+    assert_eq!(s.basic.exposure, 10);
+}
+
+#[test]
+fn auto_offsets_sit_under_the_sliders() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetParams(vec![
+            (ColorParamId::Exposure, 10),
+            (ColorParamId::Temperature, 95),
+        ]),
+    )
+    .unwrap();
+    color(&mut fx, vec![video], ColorEdit::SetAuto(Some(auto(12, 10)))).unwrap();
+    let s = stack(&fx, video);
+    // The sliders keep the user's values; the renderer sees the sum,
+    // clamped into the range.
+    assert_eq!((s.basic.exposure, s.basic.temperature), (10, 95));
+    let e = s.effective_basic();
+    assert_eq!((e.exposure, e.temperature, e.blacks), (22, 100, -4));
+    // Strength scales the offsets.
+    let half = s.with(ColorParamId::AutoStrength, 50).effective_basic();
+    assert_eq!(
+        (half.exposure, half.temperature, half.blacks),
+        (16, 100, -2)
+    );
+    // Auto off leaves the manual values; Light off leaves Auto's.
+    let off = ColorStack {
+        sections_enabled: s.sections_enabled.with(Section::Auto, false),
+        ..s.clone()
+    };
+    assert_eq!(off.effective_basic().exposure, 10);
+    let light_off = ColorStack {
+        sections_enabled: s.sections_enabled.with(Section::Light, false),
+        ..s.clone()
+    };
+    assert_eq!(light_off.effective_basic().exposure, 12);
+    assert!(!s.section_is_default(Section::Auto) && !s.is_identity());
+    // Apply to sliders adds and clamps.
+    color(&mut fx, vec![video], ColorEdit::ApplyAutoToSliders).unwrap();
+    let s = stack(&fx, video);
+    assert_eq!(
+        (
+            s.auto,
+            s.basic.exposure,
+            s.basic.temperature,
+            s.basic.blacks
+        ),
+        (None, 22, 100, -4)
+    );
+    // Without a correction it changes nothing and records nothing.
+    assert!(matches!(
+        color(&mut fx, vec![video], ColorEdit::ApplyAutoToSliders),
+        Ok(Committed::NoOp) | Err(_)
+    ));
+    // A zero correction is no change for the renderer.
+    let zero = ColorStack::default().with_auto(Some(AutoCorrection::new(
+        AutoOffsets::default(),
+        AutoStyle::Vivid,
+        AutoSource::Playhead,
+    )));
+    assert!(zero.is_identity() && !zero.section_is_default(Section::Auto));
+}
+
+#[test]
+fn strength_and_intensity_keys_need_a_result_and_go_with_it() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    for id in [ColorParamId::AutoStrength, ColorParamId::MatchIntensity] {
+        assert!(
+            fx.apply(EditRequest::EditKeys {
+                seq: fx.seq_id(),
+                clips: vec![video],
+                prop: PropPath::Color(id),
+                edit: KeyEdit::Add {
+                    at: f(0),
+                    value: Some(PropValue::Level(50)),
+                },
+            })
+            .is_err(),
+            "{id:?} without a result takes no keys"
+        );
+    }
+    color(&mut fx, vec![video], ColorEdit::SetAuto(Some(auto(30, 0)))).unwrap();
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetMatch(Some(matched(video))),
+    )
+    .unwrap();
+    key(&mut fx, video, ColorParamId::AutoStrength, 0, 0);
+    key(&mut fx, video, ColorParamId::AutoStrength, 10, 100);
+    key(&mut fx, video, ColorParamId::MatchIntensity, 0, 20);
+    key(&mut fx, video, ColorParamId::Exposure, 0, 50);
+    let clip = fx.doc().clip(video).unwrap().clone();
+    let mid = clip.color_at(f(5)).unwrap();
+    assert_eq!(mid.get(ColorParamId::AutoStrength), 50);
+    assert_eq!(mid.effective_basic().exposure, 65);
+    assert_eq!(mid.match_xf.as_ref().unwrap().intensity, 20);
+    // A re-run keeps the Strength keys (CL-019).
+    color(&mut fx, vec![video], ColorEdit::SetAuto(Some(auto(40, 0)))).unwrap();
+    assert!(
+        fx.doc()
+            .clip(video)
+            .unwrap()
+            .keys
+            .is_animated(PropPath::Color(ColorParamId::AutoStrength))
+    );
+    // Apply to sliders moves the keyed Exposure by the offset at the static
+    // Strength and drops the Strength keys, in one entry.
+    color(&mut fx, vec![video], ColorEdit::ApplyAutoToSliders).unwrap();
+    let clip = fx.doc().clip(video).unwrap().clone();
+    let keys = clip.keys.keys(PropPath::Color(ColorParamId::Exposure));
+    assert_eq!(keys[0].value, PropValue::Level(90));
+    assert!(
+        !clip
+            .keys
+            .is_animated(PropPath::Color(ColorParamId::AutoStrength))
+    );
+    // Removing the match takes its Intensity keys with it.
+    color(&mut fx, vec![video], ColorEdit::SetMatch(None)).unwrap();
+    let props: Vec<PropPath> = fx
+        .doc()
+        .clip(video)
+        .unwrap()
+        .keys
+        .tracks()
+        .iter()
+        .map(|t| t.prop())
+        .collect();
+    assert_eq!(props, vec![PropPath::Color(ColorParamId::Exposure)]);
+    fx.editor.undo().unwrap();
+    assert!(
+        fx.doc()
+            .clip(video)
+            .unwrap()
+            .keys
+            .is_animated(PropPath::Color(ColorParamId::MatchIntensity))
+    );
+}
+
+#[test]
+fn auto_and_match_reach_the_plan() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    let offline = BTreeSet::new();
+    let inputs = PlanInputs { offline: &offline };
+    let plan_color = |fx: &Fixture| {
+        let plan = frame_plan(fx.doc(), fx.seq_id(), f(1), &inputs).unwrap();
+        plan.nodes
+            .into_iter()
+            .filter_map(|n| match n {
+                PlanNode::Layer(l) => Some(l),
+                PlanNode::Adjust(_) => None,
+            })
+            .find(|l| l.clip == video)
+            .unwrap()
+            .color
+    };
+    color(&mut fx, vec![video], ColorEdit::SetAuto(Some(auto(12, 3)))).unwrap();
+    assert_eq!(plan_color(&fx).unwrap().auto.unwrap().offsets.exposure, 12);
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetParam(ColorParamId::AutoStrength, 0),
+    )
+    .unwrap();
+    assert_eq!(plan_color(&fx), None, "Strength 0 changes nothing");
+    color(&mut fx, vec![video], ColorEdit::SetAuto(None)).unwrap();
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetMatch(Some(MatchTransform::identity(MatchRef::Clip {
+            clip: video,
+            at: f(0),
+            graded: true,
+        }))),
+    )
+    .unwrap();
+    assert!(fx.doc().clip(video).unwrap().color.is_some());
+    assert_eq!(plan_color(&fx), None, "a self-match is the identity");
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetMatch(Some(matched(video))),
+    )
+    .unwrap();
+    assert!(plan_color(&fx).unwrap().match_xf.is_some());
+}
+
+#[test]
+fn k5_paths_round_trip_their_names() {
+    for (id, name) in [
+        (ColorParamId::AutoStrength, "color.auto.strength"),
+        (ColorParamId::MatchIntensity, "color.match.intensity"),
+    ] {
+        let p = PropPath::Color(id);
+        assert_eq!(p.to_path_string(), name);
+        assert_eq!(PropPath::parse(name), Some(p));
+    }
+    assert_eq!(
+        PropPath::Color(ColorParamId::AutoStrength).group(),
+        Some(PropGroup::Color(Section::Auto))
+    );
+    assert_eq!(
+        PropPath::Color(ColorParamId::MatchIntensity).group(),
+        Some(PropGroup::Color(Section::Match))
+    );
+}
+
+// K6: colour masks (CL-031).
+
+fn ellipse() -> Mask {
+    Mask::new(MaskShapeKind::Ellipse)
+}
+
+fn mask_prop(id: u16, param: MaskParam) -> PropPath {
+    PropPath::ColorMask {
+        id,
+        param: ColorMaskParam::Shape(param),
+    }
+}
+
+fn mask_key(fx: &mut Fixture, clip: ClipId, prop: PropPath, at: i64, value: PropValue) {
+    fx.apply(EditRequest::EditKeys {
+        seq: fx.seq_id(),
+        clips: vec![clip],
+        prop,
+        edit: KeyEdit::Add {
+            at: f(at),
+            value: Some(value),
+        },
+    })
+    .unwrap();
+}
+
+#[test]
+fn every_k6_edit_applies_undoes_and_redoes() {
+    let mut fx = Fixture::new();
+    let (video, image, adjust, ..) = kinds(&mut fx);
+    let clips = vec![video, image, adjust];
+    color(
+        &mut fx,
+        clips.clone(),
+        ColorEdit::SetParam(ColorParamId::Exposure, 30),
+    )
+    .unwrap();
+    let moved = ColorMask {
+        mask: Mask {
+            center: MaskPoint::new(2_000, -1_000),
+            feather: PerMille::new(300),
+            ..ellipse()
+        },
+        expand: 40,
+        ..ColorMask::new(1, ellipse())
+    };
+    let edits = [
+        ColorEdit::AddMask(ellipse()),
+        ColorEdit::AddMask(Mask::new(MaskShapeKind::Rectangle)),
+        ColorEdit::AddMask(Mask::new(MaskShapeKind::Linear)),
+        ColorEdit::SetMask(moved),
+        ColorEdit::SetMaskMode {
+            id: 2,
+            mode: MaskCombine::Subtract,
+        },
+        ColorEdit::ReorderMask { id: 3, to: 0 },
+        ColorEdit::SetMaskParam {
+            id: 2,
+            param: ColorMaskParam::Shape(MaskParam::Roundness),
+            value: PropValue::Ratio(PerMille::new(450)),
+        },
+        ColorEdit::RemoveMask(2),
+        ColorEdit::SetSectionEnabled(Section::Masks, false),
+        ColorEdit::SetSectionEnabled(Section::Masks, true),
+        ColorEdit::AddMask(Mask::new(MaskShapeKind::Band)),
+    ];
+    for edit in edits {
+        let op = edit.op();
+        color(&mut fx, clips.clone(), edit.clone()).unwrap();
+        assert_eq!(label(&fx), (OpKind::EditColor(op), 3), "{edit:?}");
+    }
+    let s = stack(&fx, adjust);
+    // Ids stay with their masks; the removed id 2 is used again.
+    let ids: Vec<(u16, MaskShapeKind)> = s.masks.iter().map(|m| (m.id, m.mask.kind())).collect();
+    assert_eq!(
+        ids,
+        vec![
+            (3, MaskShapeKind::Linear),
+            (1, MaskShapeKind::Ellipse),
+            (2, MaskShapeKind::Band)
+        ]
+    );
+    assert_eq!(s.mask(1).unwrap().expand, 40);
+    assert_eq!(
+        stack(&fx, video).masks.len(),
+        3,
+        "the rectangle (2) was removed after its roundness was set"
+    );
+    assert!(s.masks_active());
+    assert_eq!(ColorEdit::AddMask(ellipse()).op(), ColorOp::Mask);
+    // The section reset removes every mask.
+    color(
+        &mut fx,
+        clips.clone(),
+        ColorEdit::ResetSection(Section::Masks),
+    )
+    .unwrap();
+    assert!(stack(&fx, video).masks.is_empty());
+}
+
+#[test]
+fn a_stack_holds_at_most_eight_masks() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    for _ in 0..MAX_COLOR_MASKS {
+        color(&mut fx, vec![video], ColorEdit::AddMask(ellipse())).unwrap();
+    }
+    assert_eq!(stack(&fx, video).masks.len(), 8);
+    assert!(matches!(
+        color(&mut fx, vec![video], ColorEdit::AddMask(ellipse())),
+        Ok(Committed::NoOp) | Err(_)
+    ));
+    assert_eq!(stack(&fx, video).masks.len(), 8);
+    // Masks alone change nothing: the stack still needs a grade to show.
+    assert!(stack(&fx, video).is_identity());
+    // A mask stack on a text clip is refused like any stack.
+    let text = add(
+        &mut fx,
+        NewClip::text(TextClipData::with_content("Hi"), f(20)),
+    );
+    assert_eq!(
+        color(&mut fx, vec![text], ColorEdit::AddMask(ellipse())),
+        Err(EditError::NoColorClip)
+    );
+}
+
+#[test]
+fn removing_a_mask_takes_its_keys_and_undo_brings_both_back() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetParam(ColorParamId::Saturation, -60),
+    )
+    .unwrap();
+    color(&mut fx, vec![video], ColorEdit::AddMask(ellipse())).unwrap();
+    color(&mut fx, vec![video], ColorEdit::AddMask(ellipse())).unwrap();
+    let center = mask_prop(1, MaskParam::Center);
+    mask_key(
+        &mut fx,
+        video,
+        center,
+        0,
+        PropValue::MaskPoint(MaskPoint::new(-4_000, 0)),
+    );
+    mask_key(
+        &mut fx,
+        video,
+        center,
+        10,
+        PropValue::MaskPoint(MaskPoint::new(4_000, 0)),
+    );
+    mask_key(
+        &mut fx,
+        video,
+        mask_prop(2, MaskParam::Feather),
+        0,
+        PropValue::Ratio(PerMille::new(200)),
+    );
+    let before = fx.doc().clip(video).unwrap().clone();
+    color(&mut fx, vec![video], ColorEdit::RemoveMask(1)).unwrap();
+    let after = fx.doc().clip(video).unwrap().clone();
+    assert!(!after.keys.is_animated(center));
+    assert!(after.keys.is_animated(mask_prop(2, MaskParam::Feather)));
+    assert_eq!(ColorStack::of(after.color.as_ref()).masks.len(), 1);
+    fx.editor.undo().unwrap();
+    assert_eq!(fx.doc().clip(video).unwrap(), &before);
+}
+
+#[test]
+fn a_keyed_ellipse_travels_and_shape_switches_drop_shape_only_keys() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetParam(ColorParamId::Exposure, 40),
+    )
+    .unwrap();
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::AddMask(Mask::new(MaskShapeKind::Rectangle)),
+    )
+    .unwrap();
+    let center = mask_prop(1, MaskParam::Center);
+    mask_key(
+        &mut fx,
+        video,
+        center,
+        0,
+        PropValue::MaskPoint(MaskPoint::new(-4_000, 1_000)),
+    );
+    mask_key(
+        &mut fx,
+        video,
+        center,
+        10,
+        PropValue::MaskPoint(MaskPoint::new(4_000, -1_000)),
+    );
+    let round = mask_prop(1, MaskParam::Roundness);
+    mask_key(
+        &mut fx,
+        video,
+        round,
+        0,
+        PropValue::Ratio(PerMille::new(100)),
+    );
+    mask_key(
+        &mut fx,
+        video,
+        round,
+        10,
+        PropValue::Ratio(PerMille::new(9_000)),
+    );
+    let expand = PropPath::ColorMask {
+        id: 1,
+        param: ColorMaskParam::Expand,
+    };
+    mask_key(&mut fx, video, expand, 0, PropValue::Level(-300));
+    let clip = fx.doc().clip(video).unwrap().clone();
+    // Keys are clamped like edits.
+    assert_eq!(
+        clip.keys.keys(round)[1].value,
+        PropValue::Ratio(PerMille::ONE)
+    );
+    assert_eq!(clip.keys.keys(expand)[0].value, PropValue::Level(-100));
+    let mid = clip.color_at(f(5)).unwrap();
+    let m = mid.mask(1).unwrap();
+    assert_eq!(m.mask.center, MaskPoint::new(0, 0));
+    assert_eq!(
+        m.mask.shape,
+        MaskShape::Rectangle {
+            roundness: PerMille::new(550)
+        }
+    );
+    assert_eq!(m.expand, -100);
+    // The plan carries the evaluated mask.
+    let offline = BTreeSet::new();
+    let inputs = PlanInputs { offline: &offline };
+    let plan = frame_plan(fx.doc(), fx.seq_id(), f(5), &inputs).unwrap();
+    let layer = plan
+        .nodes
+        .iter()
+        .find_map(|n| match n {
+            PlanNode::Layer(l) if l.clip == video => Some(l.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        layer.color.unwrap().mask(1).unwrap().mask.center,
+        MaskPoint::new(0, 0)
+    );
+    // A switch to an ellipse keeps the centre's keys and drops roundness's.
+    let s = stack(&fx, video);
+    let switched = ColorMask {
+        mask: s.mask(1).unwrap().mask.with_kind(MaskShapeKind::Ellipse),
+        ..*s.mask(1).unwrap()
+    };
+    color(&mut fx, vec![video], ColorEdit::SetMask(switched)).unwrap();
+    let clip = fx.doc().clip(video).unwrap().clone();
+    assert!(clip.keys.is_animated(center) && clip.keys.is_animated(expand));
+    assert!(!clip.keys.is_animated(round));
+    assert_eq!(round.get(&clip), None, "an ellipse has no roundness");
+    // Roundness keys can't be added to an ellipse.
+    assert!(
+        fx.apply(EditRequest::EditKeys {
+            seq: fx.seq_id(),
+            clips: vec![video],
+            prop: round,
+            edit: KeyEdit::Add {
+                at: f(0),
+                value: Some(PropValue::Ratio(PerMille::new(10))),
+            },
+        })
+        .is_err()
+    );
+    fx.editor.undo().unwrap();
+    assert!(fx.doc().clip(video).unwrap().keys.is_animated(round));
+}
+
+#[test]
+fn reset_all_and_the_masks_group_cover_mask_keys() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetParam(ColorParamId::Exposure, 40),
+    )
+    .unwrap();
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::AddMask(Mask::new(MaskShapeKind::Band)),
+    )
+    .unwrap();
+    let width = mask_prop(1, MaskParam::BandWidth);
+    mask_key(
+        &mut fx,
+        video,
+        width,
+        0,
+        PropValue::Ratio(PerMille::new(300)),
+    );
+    let clip = fx.doc().clip(video).unwrap().clone();
+    let group = PropGroup::Color(Section::Masks);
+    assert_eq!(width.group(), Some(group));
+    let props = group.props(&clip);
+    assert!(props.contains(&width) && props.contains(&mask_prop(1, MaskParam::Center)));
+    assert!(!props.contains(&mask_prop(1, MaskParam::Roundness)));
+    // Key this card on the Masks section keys every value of every mask.
+    fx.apply(EditRequest::EditKeys {
+        seq: fx.seq_id(),
+        clips: vec![video],
+        prop: width,
+        edit: KeyEdit::KeyCard {
+            card: group,
+            at: f(4),
+        },
+    })
+    .unwrap();
+    assert!(
+        fx.doc()
+            .clip(video)
+            .unwrap()
+            .keys
+            .is_animated(mask_prop(1, MaskParam::Rotation))
+    );
+    color(&mut fx, vec![video], ColorEdit::ResetAll).unwrap();
+    let clip = fx.doc().clip(video).unwrap().clone();
+    assert!(clip.keys.is_empty() && clip.color.is_none());
+}
+
+#[test]
+fn k6_paths_round_trip_their_names() {
+    for (p, name) in [
+        (mask_prop(1, MaskParam::Center), "color.masks.1.center"),
+        (
+            mask_prop(12, MaskParam::BandWidth),
+            "color.masks.12.band_width",
+        ),
+        (
+            PropPath::ColorMask {
+                id: 3,
+                param: ColorMaskParam::Expand,
+            },
+            "color.masks.3.expand",
+        ),
+    ] {
+        assert_eq!(p.to_path_string(), name);
+        assert_eq!(PropPath::parse(name), Some(p));
+        assert!(p.is_animatable());
+    }
+    for bad in [
+        "color.masks.0.center",
+        "color.masks.01.center",
+        "color.masks.x.center",
+        "color.masks.1.shape",
+        "color.masks.1",
+    ] {
+        assert_eq!(PropPath::parse(bad), None, "{bad}");
+    }
+}
+
+#[test]
+fn validate_refuses_bad_mask_lists() {
+    let e = ColorMask::new(1, ellipse());
+    let graded = ColorStack::default().with(ColorParamId::Exposure, 10);
+    let twins = ColorStack {
+        masks: vec![e, e],
+        ..graded.clone()
+    };
+    assert!(!twins.is_valid());
+    let wide = ColorStack {
+        masks: vec![ColorMask { expand: 500, ..e }],
+        ..graded.clone()
+    };
+    assert!(!wide.is_valid());
+    let c = wide.clamped();
+    assert!(c.is_valid());
+    assert_eq!(c.masks[0].expand, 100);
+    let many = ColorStack {
+        masks: (1..=9).map(|id| ColorMask::new(id, ellipse())).collect(),
+        ..graded
+    };
+    assert!(!many.is_valid());
 }

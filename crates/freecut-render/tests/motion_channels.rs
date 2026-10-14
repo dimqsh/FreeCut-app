@@ -550,10 +550,8 @@ impl Render {
 fn layers(plan: &FramePlan) -> Vec<LayerPlan> {
     plan.nodes
         .iter()
-        .map(|n| {
-            let PlanNode::Layer(l) = n;
-            l.clone()
-        })
+        .filter_map(PlanNode::layer)
+        .cloned()
         .collect()
 }
 

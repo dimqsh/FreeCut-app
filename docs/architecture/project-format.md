@@ -845,11 +845,57 @@ and skin Amounts beyond 0..=100. Refused at their path: a `hash` that isn't 32 h
 static values. Unknown keys are kept on `color.lut`, `color.lut.skin` and `color.color.skin` by
 path. Step 11 → 12 writes nothing.
 
+**Auto and Match (format 13, CL-019, CL-020, slice K5).** `color` gains `"auto": {"offsets":
+{"exposure", "contrast", "whites", "blacks", "temperature", "tint", "vibrance",
+"saturation"}, "style": "vivid", "source": "playhead", "strength": 0–100}` (each offset
+−100..=100, left out at 0; Natural, the whole clip and Strength 100 left out) and `"match":
+{"gain": [y, cb, cr], "offset": [y, cb, cr], "intensity": 0–100, "reference": {"clip": <id>,
+"at": <ticks>, "ungraded": true} | {"media": <id>, "at": <ticks>}}`. Gains (5000..=20000) and
+offsets (−10000..=10000) are ×10⁴ of Rec.709 `Y'`, `Cb` and `Cr` of code values (CL-001 ›
+*K5 as built*) and are always written; Intensity 100 and `ungraded: false` are left out. `at`
+is the reference frame's content time (source time for media). A reference may name a clip
+that no longer exists; the transform stays. Repairs counted as `ValuesClamped`: offsets,
+Strength, Intensity, gains and match offsets beyond their ranges. Refused at their path: an
+unknown `style` or `source`, and a `reference` that names neither or both of `clip` and
+`media`. The sections' switches are the existing `off` names `auto` and `match`. Keyframes:
+`color.auto.strength` and `color.match.intensity`, integers, each only while its result
+exists. Unknown keys are kept on `color.auto`, `color.auto.offsets`, `color.match` and
+`color.match.reference` by path. Step 12 → 13 writes nothing. Saved looks never hold either.
+
+**Color masks (format 14, CL-031, slice K6).** `color` gains `"masks": [{"id": 1–65535,
+"shape": "linear" | "band" | "ellipse" | "rectangle", "center": [x, y], "size": [w, h],
+"linked": bool, "rotation": <1/100 °>, "feather": 0–1000, "invert": true, "roundness":
+0–1000, "width": 0–2000, "expand": −100..=100, "mode": "add" | "subtract" | "intersect"}]` in
+combine order. Positions and sizes are ten-thousandths of the item's shorter side (CL-001 ›
+*K6 as built*); every value is left out at its shape's default (centre `[0, 0]`, size
+`[5000, 5000]` or `[6000, 4000]` for a rectangle, linked only for an ellipse, no rotation,
+feather or roundness, band width 500, not inverted, Expand 0, `add`), so a default mask is
+`{"id", "shape"}`. Repairs counted as `ValuesClamped`: centre beyond ±30000, size beyond
+0..=40000, rotation beyond ±36000, feather and roundness beyond 1000, band width beyond 2000,
+Expand beyond ±100. Refused at their path: more than 8 masks (`….color.masks[8]`), an id that
+is 0, beyond 65535 or used twice, an unknown `shape` or `mode`, and `roundness` on a shape
+other than a rectangle or `width` on one other than a band. The section's switch is the
+existing `off` name `masks`. Keyframes: `color.masks.<id>.center` and `.size` (`{x, y}`),
+`.rotation`, `.feather`, `.roundness`, `.band_width` and `.expand` (integers), clamped like the
+static values; a key of a mask the stack doesn't hold is kept as stored. Unknown keys are kept on
+`color.masks.<index>` by path. Step 13 → 14 writes nothing. Saved looks never hold masks.
+
 **Implementation note (2026-10-14): the LUT library index.** `<app data>/luts/index.json`
 (`freecut_project::luts`) is app state, not a project file: `{"version": 1, "luts": [{"hash",
 "name", "file", "kind": "cube" | "3dl", "size", "identity"?, "imported", "hidden"?}]}` in import
 order, next to one copy per file named `<hash>.<kind>`. A newer `version` or a damaged file is
 an error, never an empty library; copies and the index are written atomically.
+
+**Implementation note (2026-10-14): look files (CL-026, slice K4).** `<app data>/looks/<id>.fclook`
+(`freecut_project::look`) is app state, not a project file: `{"format": "freecut-look",
+"look_version": 1, "name", "tags": [], "created": <unix seconds>, "sections": ["light", …],
+"color": {…}, "luts": [{"hash", "file"}]}`. `color` is this format's colour object (the clip
+`color` above, defaults left out, read with the same clamping and refusals) holding only the
+listed sections; `luts` is written for other readers and not read back. Only Light, Color, LUT,
+Filter, HSL, Curves and Wheels are kept. A newer `look_version` is refused with its number and
+the file is listed as unavailable, never rewritten; files are written atomically under a
+random id, so a display name can be any text. Version 1 is the only one, so there is no
+`migrate::Chain` step yet; the first change adds one.
 
 **Implementation note (2026-10-13): preset manifest files.** FX-030's manifests are not
 project files and do not use the envelope or `migrate::Chain`: each file carries a `"schema"`

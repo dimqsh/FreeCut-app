@@ -207,13 +207,21 @@ pub(crate) mod tests {
     pub(crate) struct Frames {
         pub ctx: Context,
         time: f64,
+        size: egui::Vec2,
     }
 
     impl Frames {
+        /// An 800 × 600 window.
         pub fn new() -> Frames {
+            Frames::sized(800.0, 600.0)
+        }
+
+        /// A `width` × `height` window.
+        pub fn sized(width: f32, height: f32) -> Frames {
             Frames {
                 ctx: Context::default(),
                 time: 0.0,
+                size: egui::vec2(width, height),
             }
         }
 
@@ -237,7 +245,7 @@ pub(crate) mod tests {
         ) -> egui::FullOutput {
             self.time += 1.0 / 60.0;
             let input = RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
                 time: Some(self.time),
                 events,
                 focused: true,

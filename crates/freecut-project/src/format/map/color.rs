@@ -1,7 +1,14 @@
 //! The colour stack of a clip (format 10, CL-001; format 11 adds HSL,
-//! Curves and Wheels; format 12 the LUT slot and skin protection): read
-//! and written with every default left out. A LUT hash that isn't 32 hex
-//! digits and an unknown interpolation are refused at their path.
+//! Curves and Wheels; format 12 the LUT slot and skin protection; format
+//! 13 Auto and Match; format 14 colour masks): read and written with every
+//! default left out. A mask with an unknown shape or mode, an id that is 0,
+//! out of range or repeated, more than 8 masks, and a roundness or band
+//! width on a shape without one are refused at their path; mask values
+//! outside their ranges are clamped. A LUT
+//! hash that isn't 32 hex digits, an unknown interpolation, auto style or
+//! source, and a match reference that names neither or both of a clip and
+//! a library item are refused at their path; match gains and offsets
+//! outside their limits are clamped.
 //! Values outside a slider's range are clamped into it, curve coordinates
 //! into 0–10000 and pucks onto their disk (and counted like other clamped
 //! values); a list of points that is no curve (CL-014's rules) and a stack
@@ -9,17 +16,21 @@
 //! refused at their path; a stack that reads back to the defaults is
 //! stored as none.
 
+use freecut_timeline::ids::{ClipId, MediaId};
 use freecut_timeline::model::{
-    ClipContent, ColorParamId, ColorStack, ColorWheels, Curve, CurveChannel, CurvePoint, Curves,
-    HslBand, HslChannel, HueBand, LutInterp, LutRef, LutSlot, Section, SkinProtect, SkinScope,
-    Wheel, WheelId, hash_hex, parse_hash_hex,
+    Angle, AutoCorrection, AutoOffsets, AutoSource, AutoStyle, ClipContent, ColorMask,
+    ColorParamId, ColorStack, ColorWheels, Curve, CurveChannel, CurvePoint, Curves, HslBand,
+    HslChannel, HueBand, LutInterp, LutRef, LutSlot, MATCH_GAIN_MAX, MATCH_GAIN_MIN,
+    MATCH_OFFSET_LIMIT, MAX_COLOR_MASKS, Mask, MaskCombine, MaskPoint, MaskShape, MaskShapeKind,
+    MatchRef, MatchTransform, PerMille, Section, SkinProtect, SkinScope, Wheel, WheelId, hash_hex,
+    parse_hash_hex,
 };
 
-use super::{At, Give, fit};
+use super::{At, Give, fit, id, tick};
 use crate::extras::{Extras, Owner};
 use crate::format::dto::{
-    ColorBalanceDto, ColorDto, CurvesDto, HslBandDto, HslDto, LightDto, LutDto, SkinDto, WheelDto,
-    WheelsDto,
+    AutoDto, AutoOffsetsDto, ColorBalanceDto, ColorDto, ColorMaskDto, CurvesDto, HslBandDto,
+    HslDto, LightDto, LutDto, MatchDto, MatchRefDto, SkinDto, WheelDto, WheelsDto,
 };
 use crate::open::OpenError;
 
@@ -242,6 +253,285 @@ fn read_lut(
     Ok(())
 }
 
+fn auto_fields(dto: &mut AutoOffsetsDto) -> [(ColorParamId, &mut Option<i64>); 8] {
+    [
+        (ColorParamId::Exposure, &mut dto.exposure),
+        (ColorParamId::Contrast, &mut dto.contrast),
+        (ColorParamId::Whites, &mut dto.whites),
+        (ColorParamId::Blacks, &mut dto.blacks),
+        (ColorParamId::Temperature, &mut dto.temperature),
+        (ColorParamId::Tint, &mut dto.tint),
+        (ColorParamId::Vibrance, &mut dto.vibrance),
+        (ColorParamId::Saturation, &mut dto.saturation),
+    ]
+}
+
+/// The auto correction (CL-019) into `stack`.
+fn read_auto(
+    mut dto: AutoDto,
+    at: &At,
+    stack: &mut ColorStack,
+    owner: Owner,
+    extras: &mut Extras,
+    clamped: &mut bool,
+) -> Result<(), OpenError> {
+    let style = match dto.style.as_deref() {
+        None => AutoStyle::default(),
+        Some(name) => AutoStyle::parse(name).ok_or_else(|| {
+            at.key("style")
+                .bad(format!("`{name}` is not `natural` or `vivid`"))
+        })?,
+    };
+    let source = match dto.source.as_deref() {
+        None => AutoSource::default(),
+        Some(name) => AutoSource::parse(name).ok_or_else(|| {
+            at.key("source")
+                .bad(format!("`{name}` is not `clip` or `playhead`"))
+        })?,
+    };
+    let mut offsets = AutoOffsets::default();
+    for (id, v) in auto_fields(&mut dto.offsets) {
+        if let Some(v) = v.take() {
+            let wide = fit(v, i16::MIN, i16::MAX, clamped);
+            offsets = offsets.with(id, wide);
+            *clamped |= offsets.get(id) != wide;
+        }
+    }
+    *stack = stack.with_auto(Some(AutoCorrection::new(offsets, style, source)));
+    if let Some(v) = dto.strength {
+        let id = ColorParamId::AutoStrength;
+        *stack = stack.with(id, level(id, v, clamped));
+    }
+    extras.put(owner, part("auto.offsets"), dto.offsets.extra);
+    extras.put(owner, part("auto"), dto.extra);
+    Ok(())
+}
+
+fn write_auto(auto: &AutoCorrection, give: &Give<'_>) -> AutoDto {
+    let mut offsets = AutoOffsetsDto {
+        extra: give.at(&part("auto.offsets")),
+        ..AutoOffsetsDto::default()
+    };
+    for (id, field) in auto_fields(&mut offsets) {
+        let v = auto.offsets.get(id);
+        *field = (v != 0).then_some(i64::from(v));
+    }
+    AutoDto {
+        offsets,
+        style: (auto.style != AutoStyle::default()).then(|| auto.style.as_str().to_string()),
+        source: (auto.source != AutoSource::default()).then(|| auto.source.as_str().to_string()),
+        strength: (auto.strength != 100).then_some(i64::from(auto.strength)),
+        extra: give.at(&part("auto")),
+    }
+}
+
+/// The colour match (CL-020) into `stack`.
+fn read_match(
+    dto: MatchDto,
+    at: &At,
+    stack: &mut ColorStack,
+    owner: Owner,
+    extras: &mut Extras,
+    clamped: &mut bool,
+) -> Result<(), OpenError> {
+    let r = &dto.reference;
+    let r_at = at.key("reference");
+    let when = tick(r.at, &r_at.key("at"))?;
+    let reference = match (r.clip, r.media) {
+        (Some(clip), None) => MatchRef::Clip {
+            clip: ClipId::from_raw(id(clip, &r_at.key("clip"))?),
+            at: when,
+            graded: !r.ungraded,
+        },
+        (None, Some(media)) => MatchRef::Media {
+            media: MediaId::from_raw(id(media, &r_at.key("media"))?),
+            at: when,
+        },
+        _ => return Err(r_at.bad("a reference names exactly one of `clip` and `media`")),
+    };
+    let limit = |v: i64, lo: i32, hi: i32, clamped: &mut bool| {
+        let wide = fit(v, i32::MIN, i32::MAX, clamped);
+        let fixed = wide.clamp(lo, hi);
+        *clamped |= fixed != wide;
+        fixed
+    };
+    let gain = dto
+        .gain
+        .map(|g| limit(g, MATCH_GAIN_MIN, MATCH_GAIN_MAX, clamped));
+    let offset = dto
+        .offset
+        .map(|o| limit(o, -MATCH_OFFSET_LIMIT, MATCH_OFFSET_LIMIT, clamped));
+    *stack = stack.with_match(Some(MatchTransform::new(gain, offset, reference)));
+    if let Some(v) = dto.intensity {
+        let id = ColorParamId::MatchIntensity;
+        *stack = stack.with(id, level(id, v, clamped));
+    }
+    extras.put(owner, part("match.reference"), dto.reference.extra);
+    extras.put(owner, part("match"), dto.extra);
+    Ok(())
+}
+
+fn write_match(m: &MatchTransform, give: &Give<'_>) -> MatchDto {
+    let reference = match &m.reference {
+        MatchRef::Clip { clip, at, graded } => MatchRefDto {
+            clip: Some(clip.nonzero()),
+            media: None,
+            at: at.raw(),
+            ungraded: !graded,
+            extra: give.at(&part("match.reference")),
+        },
+        MatchRef::Media { media, at } => MatchRefDto {
+            clip: None,
+            media: Some(media.nonzero()),
+            at: at.raw(),
+            ungraded: false,
+            extra: give.at(&part("match.reference")),
+        },
+    };
+    MatchDto {
+        gain: m.gain().map(i64::from),
+        offset: m.offset().map(i64::from),
+        intensity: (m.intensity != 100).then_some(i64::from(m.intensity)),
+        reference,
+        extra: give.at(&part("match")),
+    }
+}
+
+/// The colour masks (CL-031) into `stack`.
+fn read_masks(
+    dtos: Vec<ColorMaskDto>,
+    at: &At,
+    stack: &mut ColorStack,
+    owner: Owner,
+    extras: &mut Extras,
+    clamped: &mut bool,
+) -> Result<(), OpenError> {
+    if dtos.len() > MAX_COLOR_MASKS {
+        return Err(at.index(MAX_COLOR_MASKS).bad(format!(
+            "a colour stack holds at most {MAX_COLOR_MASKS} masks"
+        )));
+    }
+    let mut masks: Vec<ColorMask> = Vec::with_capacity(dtos.len());
+    for (i, dto) in dtos.into_iter().enumerate() {
+        let m_at = at.index(i);
+        let id = u16::try_from(dto.id)
+            .ok()
+            .filter(|id| *id != 0)
+            .ok_or_else(|| m_at.key("id").bad("a mask id is 1 to 65535"))?;
+        if masks.iter().any(|m| m.id == id) {
+            return Err(m_at.key("id").bad(format!("mask id {id} is used twice")));
+        }
+        let kind = MaskShapeKind::parse(&dto.shape).ok_or_else(|| {
+            m_at.key("shape").bad(format!(
+                "`{}` is not `linear`, `band`, `ellipse` or `rectangle`",
+                dto.shape
+            ))
+        })?;
+        let mode = match dto.mode.as_deref() {
+            None => MaskCombine::default(),
+            Some(name) => MaskCombine::parse(name).ok_or_else(|| {
+                m_at.key("mode")
+                    .bad(format!("`{name}` is not `add`, `subtract` or `intersect`"))
+            })?,
+        };
+        let wide = |v: i64, clamped: &mut bool| fit(v, i32::MIN, i32::MAX, clamped);
+        let point = |p: [i64; 2], clamped: &mut bool| {
+            MaskPoint::new(wide(p[0], clamped), wide(p[1], clamped))
+        };
+        let ratio = |v: i64, clamped: &mut bool| PerMille::new(fit(v, 0, u16::MAX, clamped));
+        let mut mask = Mask::new(kind);
+        let shape_only = |name: &str| {
+            m_at.key(name)
+                .bad(format!("a `{}` mask has no `{name}`", kind.as_str()))
+        };
+        match (kind, dto.roundness, dto.width) {
+            (MaskShapeKind::Rectangle, Some(r), None) => {
+                mask.shape = MaskShape::Rectangle {
+                    roundness: ratio(r, clamped),
+                };
+            }
+            (MaskShapeKind::Band, None, Some(w)) => {
+                mask.shape = MaskShape::Band {
+                    width: ratio(w, clamped),
+                };
+            }
+            (MaskShapeKind::Rectangle, None, None) | (MaskShapeKind::Band, None, None) => {}
+            (_, Some(_), _) => return Err(shape_only("roundness")),
+            (_, _, Some(_)) => return Err(shape_only("width")),
+            _ => {}
+        }
+        if let Some(c) = dto.center {
+            mask.center = point(c, clamped);
+        }
+        if let Some(sz) = dto.size {
+            mask.size = point(sz, clamped);
+        }
+        if let Some(linked) = dto.linked {
+            mask.linked = linked;
+        }
+        if let Some(r) = dto.rotation {
+            mask.rotation = Angle::from_hundredths(wide(r, clamped));
+        }
+        if let Some(f) = dto.feather {
+            mask.feather = ratio(f, clamped);
+        }
+        mask.invert = dto.invert;
+        let raw = ColorMask {
+            id,
+            mask,
+            expand: fit(dto.expand.unwrap_or(0), i16::MIN, i16::MAX, clamped),
+            mode,
+        };
+        let fixed = raw.clamped();
+        *clamped |= fixed != raw;
+        masks.push(fixed);
+        extras.put(owner, part(&format!("masks.{i}")), dto.extra);
+    }
+    stack.masks = masks;
+    Ok(())
+}
+
+fn write_masks(masks: &[ColorMask], give: &Give<'_>) -> Vec<ColorMaskDto> {
+    masks
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let kind = m.mask.kind();
+            let plain = Mask::new(kind);
+            let pair = |p: MaskPoint| [i64::from(p.x), i64::from(p.y)];
+            let (roundness, width) = match m.mask.shape {
+                MaskShape::Rectangle { roundness } => (
+                    (roundness != PerMille::ZERO).then_some(i64::from(roundness.get())),
+                    None,
+                ),
+                MaskShape::Band { width } => {
+                    let default = MaskShape::of(MaskShapeKind::Band);
+                    let changed = MaskShape::Band { width } != default;
+                    (None, changed.then_some(i64::from(width.get())))
+                }
+                _ => (None, None),
+            };
+            ColorMaskDto {
+                id: i64::from(m.id),
+                shape: kind.as_str().to_string(),
+                center: (m.mask.center != plain.center).then(|| pair(m.mask.center)),
+                size: (m.mask.size != plain.size).then(|| pair(m.mask.size)),
+                linked: (m.mask.linked != plain.linked).then_some(m.mask.linked),
+                rotation: (m.mask.rotation != Angle::ZERO)
+                    .then_some(i64::from(m.mask.rotation.hundredths())),
+                feather: (m.mask.feather != PerMille::ZERO)
+                    .then_some(i64::from(m.mask.feather.get())),
+                invert: m.mask.invert,
+                roundness,
+                width,
+                expand: (m.expand != 0).then_some(i64::from(m.expand)),
+                mode: (m.mode != MaskCombine::default()).then(|| m.mode.as_str().to_string()),
+                extra: give.at(&part(&format!("masks.{i}"))),
+            }
+        })
+        .collect()
+}
+
 /// The DTO of a scope's skin protection, unless it is at its defaults.
 fn write_skin(skin: SkinProtect, give: &Give<'_>, path: &str) -> Option<SkinDto> {
     let dto = SkinDto {
@@ -421,6 +711,16 @@ pub(super) fn read_color(
     if let Some(lut) = dto.lut.take() {
         read_lut(lut, &at.key("lut"), &mut stack, owner, extras, clamped)?;
     }
+    if let Some(auto) = dto.auto.take() {
+        read_auto(auto, &at.key("auto"), &mut stack, owner, extras, clamped)?;
+    }
+    if let Some(m) = dto.matched.take() {
+        read_match(m, &at.key("match"), &mut stack, owner, extras, clamped)?;
+    }
+    let masks = std::mem::take(&mut dto.masks);
+    if !masks.is_empty() {
+        read_masks(masks, &at.key("masks"), &mut stack, owner, extras, clamped)?;
+    }
     extras.put(owner, "color", dto.extra);
     Ok((stack != ColorStack::default()).then_some(stack))
 }
@@ -449,6 +749,8 @@ pub(super) fn write_color(stack: Option<&ColorStack>, give: &Give<'_>) -> Option
     let light_empty = stack.section_is_default(Section::Light) && light.extra.is_empty();
     let balance_empty = stack.section_is_default(Section::Color) && balance.extra.is_empty();
     let dto = ColorDto {
+        auto: stack.auto.as_ref().map(|a| write_auto(a, give)),
+        matched: stack.match_xf.as_ref().map(|m| write_match(m, give)),
         bypass: stack.bypass,
         amount: (stack.amount != 100).then_some(i64::from(stack.amount)),
         off: Section::ALL
@@ -462,6 +764,7 @@ pub(super) fn write_color(stack: Option<&ColorStack>, give: &Give<'_>) -> Option
         curves: write_curves(&stack.curves, give),
         wheels: write_wheels(&stack.wheels, give),
         lut: stack.lut.as_ref().map(|l| write_lut(l, give)),
+        masks: write_masks(&stack.masks, give),
         extra: give.at("color"),
     };
     let empty = !dto.bypass
@@ -473,6 +776,9 @@ pub(super) fn write_color(stack: Option<&ColorStack>, give: &Give<'_>) -> Option
         && dto.curves.is_none()
         && dto.wheels.is_none()
         && dto.lut.is_none()
+        && dto.auto.is_none()
+        && dto.matched.is_none()
+        && dto.masks.is_empty()
         && dto.extra.is_empty();
     (!empty).then_some(dto)
 }

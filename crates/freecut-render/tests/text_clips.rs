@@ -15,7 +15,7 @@ use freecut_timeline::ids::ClipId;
 use freecut_timeline::model::{
     Angle, CanvasPos, Fill, PerMille, RefPx, Rgba8, Scale, TextClipData,
 };
-use freecut_timeline::plan::{LayerSource, PlanNode};
+use freecut_timeline::plan::LayerSource;
 use freecut_timeline::time::Tick;
 
 /// 480 × 270: a ref px is a quarter of a canvas pixel.
@@ -44,7 +44,7 @@ fn render(p: &Project) -> Frame {
 /// The text box size in canvas px, as the renderer lays it out.
 fn box_size(p: &Project) -> (f64, f64) {
     let plan = p.plan_at(secs(1));
-    let PlanNode::Layer(layer) = &plan.nodes[0];
+    let layer = plan.nodes[0].layer().unwrap();
     let LayerSource::Text { data, scale_px } = &layer.source else {
         panic!("not a text layer");
     };

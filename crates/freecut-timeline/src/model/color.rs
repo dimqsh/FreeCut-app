@@ -10,26 +10,38 @@
 //! default; the UI, the keyframe evaluator and the loader all read it. The
 //! pixel math lives in `freecut-render`.
 //!
-//! *Build note (K3):* the stack holds Light, Color (with skin protection),
-//! the LUT slot, HSL, Curves and Wheels.
+//! *Build note (K6):* the stack holds Auto and Match (results of analysing
+//! the footage, CL-019 and CL-020), Light, Color (with skin protection),
+//! the LUT slot, HSL, Curves, Wheels and the colour masks (CL-031, built
+//! on the shared [`super::mask`] core).
 //! The other sections of CL-043 already have their [`Section`] bit, so a
 //! switch and a reset can name them, and later slices add their values
 //! through format migrations with identity defaults.
 
+mod auto;
 mod curve;
 mod hsl;
 mod lut;
+mod masks;
 mod wheels;
 
 use std::sync::Arc;
 
+pub use auto::{
+    AutoCorrection, AutoOffsets, AutoSource, AutoStyle, MATCH_GAIN_MAX, MATCH_GAIN_MIN,
+    MATCH_OFFSET_LIMIT, MATCH_ONE, MatchRef, MatchTransform, scaled_offset,
+};
 pub use curve::{Curve, CurveChannel, CurveError, CurvePoint, Curves};
 pub use hsl::{Hsl, HslBand, HslChannel, HueBand};
 pub use lut::{
     LutInterp, LutRef, LutSlot, SKIN_AMOUNT_DEFAULT, SkinProtect, SkinScope, hash_hex,
     parse_hash_hex,
 };
+pub use masks::{ColorMask, ColorMaskParam, EXPAND_LIMIT, MAX_COLOR_MASKS};
 pub use wheels::{ColorWheels, PUCK_RADIUS, Wheel, WheelId, on_disk};
+
+use super::keys::PropValue;
+use super::mask::{Mask, MaskCombine};
 
 /// One section of the Color tab (CL-043), in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -136,6 +148,8 @@ impl Section {
             Section::Light => &ColorParamId::LIGHT,
             Section::Color => &ColorParamId::COLOR_SECTION,
             Section::Lut => &ColorParamId::LUT,
+            Section::Auto => &ColorParamId::AUTO,
+            Section::Match => &ColorParamId::MATCH,
             Section::Hsl => &ColorParamId::HSL,
             Section::Wheels => &ColorParamId::WHEELS,
             _ => &[],
@@ -151,6 +165,21 @@ pub struct SectionMask(u16);
 impl SectionMask {
     /// Every section on.
     pub const ALL_ON: SectionMask = SectionMask((1 << Section::ALL.len()) - 1);
+
+    /// No section.
+    pub const NONE: SectionMask = SectionMask(0);
+
+    /// Exactly `sections`.
+    pub fn of(sections: &[Section]) -> SectionMask {
+        sections
+            .iter()
+            .fold(SectionMask::NONE, |m, s| m.with(*s, true))
+    }
+
+    /// The sections that are on, in display order.
+    pub fn sections(self) -> impl Iterator<Item = Section> {
+        Section::ALL.into_iter().filter(move |s| self.is_on(*s))
+    }
 
     pub const fn bits(self) -> u16 {
         self.0
@@ -218,6 +247,12 @@ pub enum ColorParamId {
     LutIntensity,
     /// Skin protection's Amount (CL-030) in one scope, 0–100 %.
     SkinAmount(SkinScope),
+    /// Auto's Strength (CL-019), 0–100 %; nothing while the stack has no
+    /// auto correction.
+    AutoStrength,
+    /// Match's Intensity (CL-020), 0–100 %; nothing while the stack has no
+    /// match.
+    MatchIntensity,
 }
 
 /// The range and default of a colour control, in its stored units
@@ -246,13 +281,15 @@ impl ColorParamSpec {
 /// default.
 pub const fn color_param_spec(id: ColorParamId) -> ColorParamSpec {
     match id {
-        ColorParamId::Amount | ColorParamId::WheelStrength | ColorParamId::LutIntensity => {
-            ColorParamSpec {
-                min: 0,
-                max: 100,
-                default: 100,
-            }
-        }
+        ColorParamId::Amount
+        | ColorParamId::WheelStrength
+        | ColorParamId::LutIntensity
+        | ColorParamId::AutoStrength
+        | ColorParamId::MatchIntensity => ColorParamSpec {
+            min: 0,
+            max: 100,
+            default: 100,
+        },
         ColorParamId::SkinAmount(_) => ColorParamSpec {
             min: 0,
             max: 100,
@@ -346,6 +383,12 @@ impl ColorParamId {
         ColorParamId::SkinAmount(SkinScope::Lut),
     ];
 
+    /// The Auto section's slider: Strength.
+    pub const AUTO: [ColorParamId; 1] = [ColorParamId::AutoStrength];
+
+    /// The Match section's slider: Intensity.
+    pub const MATCH: [ColorParamId; 1] = [ColorParamId::MatchIntensity];
+
     /// The HSL section's sliders, band by band (hue, saturation,
     /// lightness).
     pub const HSL: [ColorParamId; 24] = {
@@ -376,9 +419,10 @@ impl ColorParamId {
     ];
 
     /// Every control: Light, Color, Amount, HSL, Wheels, the LUT's
-    /// Intensity and the two skin Amounts.
-    pub const ALL: [ColorParamId; 47] = {
-        let mut out = [ColorParamId::Amount; 47];
+    /// Intensity, the two skin Amounts, Auto's Strength and Match's
+    /// Intensity.
+    pub const ALL: [ColorParamId; 49] = {
+        let mut out = [ColorParamId::Amount; 49];
         let mut i = 0;
         while i < 9 {
             out[i] = ColorParamId::LIGHT[i];
@@ -403,6 +447,8 @@ impl ColorParamId {
         out[44] = ColorParamId::LutIntensity;
         out[45] = ColorParamId::SkinAmount(SkinScope::Color);
         out[46] = ColorParamId::SkinAmount(SkinScope::Lut);
+        out[47] = ColorParamId::AutoStrength;
+        out[48] = ColorParamId::MatchIntensity;
         out
     };
 
@@ -429,6 +475,8 @@ impl ColorParamId {
                 Some(Section::Lut)
             }
             ColorParamId::Amount => None,
+            ColorParamId::AutoStrength => Some(Section::Auto),
+            ColorParamId::MatchIntensity => Some(Section::Match),
             ColorParamId::Hsl { .. } => Some(Section::Hsl),
             ColorParamId::WheelLuma(_) | ColorParamId::WheelStrength => Some(Section::Wheels),
         }
@@ -463,6 +511,8 @@ impl ColorParamId {
             ColorParamId::LutIntensity => "lut.intensity",
             ColorParamId::SkinAmount(SkinScope::Color) => "skin_amount",
             ColorParamId::SkinAmount(SkinScope::Lut) => "lut.skin_amount",
+            ColorParamId::AutoStrength => "auto.strength",
+            ColorParamId::MatchIntensity => "match.intensity",
         }
     }
 
@@ -515,7 +565,9 @@ impl BasicAdjust {
             | ColorParamId::WheelLuma(_)
             | ColorParamId::WheelStrength
             | ColorParamId::LutIntensity
-            | ColorParamId::SkinAmount(_) => return None,
+            | ColorParamId::SkinAmount(_)
+            | ColorParamId::AutoStrength
+            | ColorParamId::MatchIntensity => return None,
         })
     }
 
@@ -531,6 +583,11 @@ impl BasicAdjust {
 /// without one (`Clip::color` is `None`) shows its footage as it is.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ColorStack {
+    /// The auto correction (CL-019): offsets under the Light and Color
+    /// sliders.
+    pub auto: Option<AutoCorrection>,
+    /// The colour match (CL-020), stage 4.
+    pub match_xf: Option<MatchTransform>,
     /// The per-section switches (CL-023).
     pub sections_enabled: SectionMask,
     /// The master bypass (CL-023): the whole stack is skipped.
@@ -547,11 +604,17 @@ pub struct ColorStack {
     pub wheels: ColorWheels,
     /// The user LUT (CL-017), with its skin protection (CL-030).
     pub lut: Option<LutSlot>,
+    // K6
+    /// Colour masks (CL-031), in combine order; at most
+    /// [`MAX_COLOR_MASKS`]. Empty: the grade covers the whole item.
+    pub masks: Vec<ColorMask>,
 }
 
 impl Default for ColorStack {
     fn default() -> Self {
         ColorStack {
+            auto: None,
+            match_xf: None,
             sections_enabled: SectionMask::ALL_ON,
             bypass: false,
             amount: 100,
@@ -560,6 +623,7 @@ impl Default for ColorStack {
             curves: Curves::default(),
             wheels: ColorWheels::default(),
             lut: None,
+            masks: Vec::new(),
         }
     }
 }
@@ -577,8 +641,93 @@ impl ColorStack {
                 .as_ref()
                 .map_or(id.spec().default, |l| i16::from(l.intensity)),
             ColorParamId::SkinAmount(scope) => i16::from(self.skin(scope).amount),
+            ColorParamId::AutoStrength => self
+                .auto
+                .as_ref()
+                .map_or(id.spec().default, |a| i16::from(a.strength)),
+            ColorParamId::MatchIntensity => self
+                .match_xf
+                .as_ref()
+                .map_or(id.spec().default, |m| i16::from(m.intensity)),
             _ => self.basic.get(id).unwrap_or(0),
         }
+    }
+
+    /// Whether the stack has control `id` now: the LUT's sliders only with
+    /// a LUT (CL-017), Strength only with an auto correction (CL-019),
+    /// Intensity only with a match (CL-020); every other control always.
+    pub fn has_param(&self, id: ColorParamId) -> bool {
+        match id.section() {
+            Some(Section::Lut) => self.lut.is_some(),
+            Some(Section::Auto) => self.auto.is_some(),
+            Some(Section::Match) => self.match_xf.is_some(),
+            _ => true,
+        }
+    }
+
+    /// The Light and Color sliders as the renderer sees them (CL-019): each
+    /// slider's manual value while its section is on (its default while
+    /// off), plus the auto correction's offset at its Strength while the
+    /// Auto section is on, clamped into the slider's range. Contrast's
+    /// Pivot and skin protection are the manual ones.
+    pub fn effective_basic(&self) -> BasicAdjust {
+        let on = |s: Section| self.sections_enabled.is_on(s);
+        let auto = self.auto.filter(|_| on(Section::Auto));
+        let mut out = self.basic;
+        for id in ColorParamId::LIGHT.iter().chain(&ColorParamId::COLOR) {
+            let manual = if id.section().is_some_and(on) {
+                self.basic.get(*id).unwrap_or(0)
+            } else {
+                id.spec().default
+            };
+            let added = auto.map_or(0, |a| a.added(*id));
+            if let Some(slot) = out.slot(*id) {
+                *slot = id.spec().clamp(manual.saturating_add(added));
+            }
+        }
+        out
+    }
+
+    /// The stack with `auto` as its auto correction (`None` removes it);
+    /// offsets and Strength are limited to their ranges.
+    #[must_use]
+    pub fn with_auto(&self, auto: Option<AutoCorrection>) -> ColorStack {
+        ColorStack {
+            auto: auto.map(|a| AutoCorrection {
+                offsets: a.offsets.clamped(),
+                strength: a.strength.min(100),
+                ..a
+            }),
+            ..self.clone()
+        }
+    }
+
+    /// The stack with `xf` as its colour match (`None` removes it).
+    #[must_use]
+    pub fn with_match(&self, xf: Option<MatchTransform>) -> ColorStack {
+        ColorStack {
+            match_xf: xf.map(|m| {
+                let intensity = m.intensity;
+                m.with_intensity(intensity)
+            }),
+            ..self.clone()
+        }
+    }
+
+    /// The stack with the auto correction added into the sliders at its
+    /// Strength, each clamped into its range, and the correction removed
+    /// (CL-019's **Apply to sliders**). Unchanged without a correction.
+    #[must_use]
+    pub fn with_auto_applied(&self) -> ColorStack {
+        let Some(auto) = self.auto else {
+            return self.clone();
+        };
+        AutoOffsets::PARAMS
+            .into_iter()
+            .fold(self.with_auto(None), |s, id| {
+                let v = s.get(id).saturating_add(auto.added(id));
+                s.with(id, v)
+            })
     }
 
     /// Skin protection of `scope` (CL-030); the default for the LUT scope
@@ -635,6 +784,17 @@ impl ColorStack {
             ColorParamId::Amount => out.amount = u8::try_from(v).unwrap_or(100),
             ColorParamId::WheelStrength => out.wheels.strength = u8::try_from(v).unwrap_or(100),
             // In range 0..=100 after the clamp.
+            ColorParamId::AutoStrength => {
+                if let Some(a) = out.auto.as_mut() {
+                    a.strength = u8::try_from(v).unwrap_or(100);
+                }
+            }
+            ColorParamId::MatchIntensity => {
+                if let Some(m) = out.match_xf.as_mut() {
+                    m.intensity = u8::try_from(v).unwrap_or(100);
+                }
+            }
+            // In range 0..=100 after the clamp.
             ColorParamId::LutIntensity => {
                 if let Some(l) = out.lut.as_mut() {
                     l.intensity = u8::try_from(v).unwrap_or(100);
@@ -685,13 +845,15 @@ impl ColorStack {
         out
     }
 
-    /// Every value limited to its range (curves and pucks are valid by
-    /// construction).
+    /// Every value limited to its range (curves, pucks and match
+    /// transforms are valid by construction).
     #[must_use]
     pub fn clamped(&self) -> ColorStack {
-        ColorParamId::ALL
+        let mut out = ColorParamId::ALL
             .into_iter()
-            .fold(self.clone(), |s, id| s.with(id, s.get(id)))
+            .fold(self.with_auto(self.auto), |s, id| s.with(id, s.get(id)));
+        out.masks = out.masks.iter().map(ColorMask::clamped).collect();
+        out
     }
 
     /// Whether every value is in its range.
@@ -699,7 +861,90 @@ impl ColorStack {
         ColorParamId::ALL
             .into_iter()
             .all(|id| id.spec().contains(self.get(id)))
+            && self.auto.is_none_or(|a| a.offsets == a.offsets.clamped())
             && SectionMask::from_bits(self.sections_enabled.bits()) == self.sections_enabled
+            && masks::masks_valid(&self.masks)
+    }
+
+    /// Whether masks limit the grade (CL-031): the Masks section is on and
+    /// holds at least one mask. Otherwise the grade covers the whole item.
+    pub fn masks_active(&self) -> bool {
+        self.sections_enabled.is_on(Section::Masks) && !self.masks.is_empty()
+    }
+
+    /// The mask named `id`.
+    pub fn mask(&self, id: u16) -> Option<&ColorMask> {
+        self.masks.iter().find(|m| m.id == id)
+    }
+
+    /// The stack with `mask` added at the end of the list under the
+    /// smallest free id, and that id; `None` when it already holds
+    /// [`MAX_COLOR_MASKS`].
+    pub fn with_mask_added(&self, mask: Mask) -> Option<(ColorStack, u16)> {
+        if self.masks.len() >= MAX_COLOR_MASKS {
+            return None;
+        }
+        let id = masks::free_id(&self.masks)?;
+        let mut out = self.clone();
+        out.masks.push(ColorMask::new(id, mask));
+        Some((out, id))
+    }
+
+    /// The stack without mask `id` (unchanged when it has none).
+    #[must_use]
+    pub fn without_mask(&self, id: u16) -> ColorStack {
+        let mut out = self.clone();
+        out.masks.retain(|m| m.id != id);
+        out
+    }
+
+    /// The stack with mask `id` moved to position `to` (clamped to the
+    /// list); unchanged when it has no such mask.
+    #[must_use]
+    pub fn with_mask_moved(&self, id: u16, to: usize) -> ColorStack {
+        let mut out = self.clone();
+        if let Some(from) = out.masks.iter().position(|m| m.id == id) {
+            let m = out.masks.remove(from);
+            let to = to.min(out.masks.len());
+            out.masks.insert(to, m);
+        }
+        out
+    }
+
+    /// The stack with the mask of `mask.id` replaced by `mask` (clamped);
+    /// unchanged when it has no such mask.
+    #[must_use]
+    pub fn with_mask(&self, mask: ColorMask) -> ColorStack {
+        let mut out = self.clone();
+        if let Some(slot) = out.masks.iter_mut().find(|m| m.id == mask.id) {
+            *slot = mask.clamped();
+        }
+        out
+    }
+
+    /// The stack with mask `id` combined by `mode`.
+    #[must_use]
+    pub fn with_mask_mode(&self, id: u16, mode: MaskCombine) -> ColorStack {
+        match self.mask(id) {
+            Some(m) => self.with_mask(ColorMask { mode, ..*m }),
+            None => self.clone(),
+        }
+    }
+
+    /// Mask `id`'s `param` as a keyframe holds it; `None` without the mask
+    /// or the value.
+    pub fn mask_param(&self, id: u16, param: ColorMaskParam) -> Option<PropValue> {
+        self.mask(id)?.get(param)
+    }
+
+    /// The stack with mask `id`'s `param` at `value`, clamped; unchanged
+    /// when the mask or the value is missing or the kind is wrong.
+    #[must_use]
+    pub fn with_mask_param(&self, id: u16, param: ColorMaskParam, value: PropValue) -> ColorStack {
+        match self.mask(id).and_then(|m| m.with(param, value)) {
+            Some(m) => self.with_mask(m),
+            None => self.clone(),
+        }
     }
 
     /// Whether the section's values are all at their defaults (its switch
@@ -712,6 +957,9 @@ impl ColorStack {
                 .all(|w| self.wheels.wheel(*w).puck_is_centred()),
             Section::Color => !self.basic.skin.on,
             Section::Lut => self.lut.is_none(),
+            Section::Auto => self.auto.is_none(),
+            Section::Match => self.match_xf.is_none(),
+            Section::Masks => self.masks.is_empty(),
             _ => true,
         };
         extra
@@ -734,6 +982,10 @@ impl ColorStack {
                 .iter()
                 .any(|id| self.get(*id) != id.spec().default),
             Section::Lut => self.lut.as_ref().is_some_and(|l| l.intensity > 0),
+            Section::Auto => self.auto.is_some_and(|a| a.changes()),
+            Section::Match => self.match_xf.as_ref().is_some_and(MatchTransform::changes),
+            // Masks only limit the other sections (CL-031).
+            Section::Masks => false,
             _ => section.params().iter().any(|id| {
                 let v = self.get(*id);
                 v != id.spec().default
@@ -768,6 +1020,10 @@ impl ColorStack {
             Section::Color => out.basic.skin = SkinProtect::default(),
             // CL-017: the reset keeps the LUT choice.
             Section::Lut => out.lut = out.lut.as_ref().map(LutSlot::reset),
+            // CL-019, CL-020: the reset badge removes the result.
+            Section::Auto => out.auto = None,
+            Section::Match => out.match_xf = None,
+            Section::Masks => out.masks.clear(),
             _ => {}
         }
         out.sections_enabled = out.sections_enabled.with(section, true);
@@ -802,6 +1058,108 @@ impl ColorStack {
     /// The stack a clip's `color` field stands for.
     pub fn of(color: Option<&Arc<ColorStack>>) -> ColorStack {
         color.map_or_else(ColorStack::default, |s| ColorStack::clone(s))
+    }
+
+    /// The stack with the values and switches of `sections` taken from
+    /// `from` (CL-025's replace, CL-026's apply); everything else, Amount
+    /// and bypass included, stays.
+    #[must_use]
+    pub fn with_sections_from(&self, from: &ColorStack, sections: SectionMask) -> ColorStack {
+        let mut out = self.clone();
+        for section in Section::ALL {
+            if !sections.is_on(section) {
+                continue;
+            }
+            // The slot first: the LUT's sliders live in it.
+            match section {
+                Section::Color => out.basic.skin = from.basic.skin,
+                Section::Lut => out.lut.clone_from(&from.lut),
+                Section::Auto => out.auto = from.auto,
+                Section::Match => out.match_xf.clone_from(&from.match_xf),
+                Section::Hsl => out.hsl = from.hsl,
+                Section::Curves => out.curves = from.curves.clone(),
+                Section::Wheels => out.wheels = from.wheels,
+                Section::Masks => out.masks.clone_from(&from.masks),
+                _ => {}
+            }
+            for id in section.params() {
+                out = out.with(*id, from.get(*id));
+            }
+            out.sections_enabled = out
+                .sections_enabled
+                .with(section, from.sections_enabled.is_on(section));
+        }
+        out
+    }
+
+    /// The sections that hold non-default values (CL-026's pre-ticked
+    /// checklist), among `of`.
+    pub fn changed_sections(&self, of: &[Section]) -> SectionMask {
+        of.iter()
+            .filter(|s| !self.section_is_default(**s))
+            .fold(SectionMask::NONE, |m, s| m.with(*s, true))
+    }
+}
+
+impl Section {
+    /// The sections a saved look carries (CL-026): never Auto, Match,
+    /// Detail's footage repair or Masks, which belong to one piece of
+    /// footage or one shot's framing.
+    pub const LOOK: [Section; 7] = [
+        Section::Light,
+        Section::Color,
+        Section::Lut,
+        Section::Filter,
+        Section::Hsl,
+        Section::Curves,
+        Section::Wheels,
+    ];
+
+    /// Whether a saved look can carry the section.
+    pub fn in_look(self) -> bool {
+        Section::LOOK.contains(&self)
+    }
+}
+
+/// The values of some sections of a stack, taken by value (CL-024,
+/// CL-025, CL-026): what `ColorEdit::ApplySections` copies onto clips.
+/// Keyframes are never part of it; a saved look holds the values at the
+/// playhead.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SectionSnapshot {
+    sections: SectionMask,
+    values: ColorStack,
+}
+
+impl SectionSnapshot {
+    /// The `sections` of `stack`; the other sections' values are left at
+    /// their defaults, so equal snapshots compare equal. Amount and bypass
+    /// are never part of a snapshot.
+    pub fn new(stack: &ColorStack, sections: SectionMask) -> SectionSnapshot {
+        SectionSnapshot {
+            sections,
+            values: ColorStack::default().with_sections_from(&stack.clamped(), sections),
+        }
+    }
+
+    /// Which sections it holds.
+    pub fn sections(&self) -> SectionMask {
+        self.sections
+    }
+
+    /// The held sections' values (the others at their defaults, Amount 100).
+    pub fn values(&self) -> &ColorStack {
+        &self.values
+    }
+
+    /// Whether it holds no section.
+    pub fn is_empty(&self) -> bool {
+        self.sections == SectionMask::NONE
+    }
+
+    /// `stack` with the held sections replaced.
+    pub fn applied_to(&self, stack: &ColorStack) -> ColorStack {
+        stack.with_sections_from(&self.values, self.sections)
     }
 }
 
@@ -840,7 +1198,9 @@ mod tests {
                 + 1
                 + ColorParamId::HSL.len()
                 + ColorParamId::WHEELS.len()
-                + ColorParamId::LUT.len(),
+                + ColorParamId::LUT.len()
+                + ColorParamId::AUTO.len()
+                + ColorParamId::MATCH.len(),
             ColorParamId::ALL.len()
         );
         // Every control is listed once.

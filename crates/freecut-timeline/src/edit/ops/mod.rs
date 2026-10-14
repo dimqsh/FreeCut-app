@@ -1,5 +1,6 @@
 //! The edit operations. Each is a planner over a [`Tx`].
 
+mod adjust;
 mod anim;
 mod audio;
 mod color;
@@ -25,6 +26,7 @@ mod trim;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+pub use adjust::{AdjustSpan, DEFAULT_ADJUSTMENT_DURATION, default_adjustment_duration};
 pub use audio::{AudioEdit, linked_audio};
 pub use color::{ColorEdit, ColorOp, has_color, is_color_prop};
 pub use cut::{Cut, TrimTargets, Unavailable, trim_to_playhead_available};
@@ -44,6 +46,7 @@ pub use text::{ResetScope, TextLayoutEdit, TextStyleEdit, change_case};
 pub use track::{AddTrackReq, TrackPosition};
 pub use trim::{Edge, TrimReq};
 
+pub(crate) use adjust::add_adjustment_clip;
 pub(crate) use anim::set_clip_animation;
 pub(crate) use audio::{detach_audio, restore_audio, set_clip_audio, set_master_gain};
 pub(crate) use color::edit_color;
