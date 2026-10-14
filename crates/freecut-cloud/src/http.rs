@@ -8,25 +8,44 @@
 //! stops waiting and the helper ends on its own timeouts. Body bytes travel
 //! over a bounded channel, so a streamed answer is also abandoned between
 //! chunks.
+//!
+//! Two more rules hold for paid calls and cost checks (review M3):
+//! - a paid request goes out on a fresh connection whose connector chain
+//!   ends in a cancel gate: once the connection (TLS included) is up, the
+//!   gate checks the token, so a cancel that fires before the first request
+//!   byte stops the request there and it is reported as *not sent*;
+//! - for a request with a [`LateSink`](crate::transport::LateSink), the
+//!   helper keeps a copy of the answer; if the caller's token fired before
+//!   it had the whole answer, the helper reads it to its end and hands it
+//!   to the sink, so job ids that arrive late are not lost. (If the token
+//!   fires just as a complete answer was read, the sink may see that answer
+//!   too: consumers record job ids idempotently.)
 
 use std::io::{self, Read};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::thread;
 use std::time::Duration;
 
 use freecut_media::cancel::CancelToken;
-use std::sync::Arc;
-
 use ureq::Agent;
+use ureq::config::Config;
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
+use ureq::unversioned::resolver::DefaultResolver;
+use ureq::unversioned::transport::{ConnectionDetails, Connector, DefaultConnector, Transport};
 
+use crate::secret::Secret;
 use crate::transport::{
-    HttpRequest, HttpResponse, HttpTransport, Method, SendState, TransportError, TransportErrorKind,
+    HttpRequest, HttpResponse, HttpTransport, LateResponse, Method, SendState, TransportError,
+    TransportErrorKind,
 };
 
 const WAIT_SLICE: Duration = Duration::from_millis(250);
 const CHUNK_BYTES: usize = 16 * 1024;
 const CHUNKS_IN_FLIGHT: usize = 8;
+/// The most of a late answer kept for the sink.
+const MAX_LATE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Transport settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,48 +70,100 @@ impl Default for TransportConfig {
 #[derive(Debug, Clone)]
 pub struct UreqTransport {
     pooled: Agent,
-    fresh: Agent,
+    /// Settings for paid requests, which get an agent of their own per
+    /// request (fresh connection, cancel gate).
+    fresh: Config,
+}
+
+fn agent_config(config: &TransportConfig, idle: usize) -> Config {
+    Agent::config_builder()
+        .http_status_as_error(false)
+        .https_only(config.https_only)
+        .max_redirects(0)
+        // A redirect comes back as its own 3xx answer, not an error.
+        .max_redirects_will_error(false)
+        .user_agent(config.user_agent.as_str())
+        .proxy(ureq::Proxy::try_from_env())
+        .tls_config(
+            TlsConfig::builder()
+                .provider(TlsProvider::Rustls)
+                // Passed explicitly: ureq is built without a provider of its
+                // own (no bundled roots).
+                .unversioned_rustls_crypto_provider(Arc::new(
+                    rustls::crypto::ring::default_provider(),
+                ))
+                .root_certs(RootCerts::PlatformVerifier)
+                .build(),
+        )
+        .max_idle_connections(idle)
+        .build()
 }
 
 impl UreqTransport {
     /// A transport with `config`.
     pub fn new(config: &TransportConfig) -> UreqTransport {
-        let agent = |idle: usize| {
-            Agent::config_builder()
-                .http_status_as_error(false)
-                .https_only(config.https_only)
-                .max_redirects(0)
-                // A redirect comes back as its own 3xx answer, not an error.
-                .max_redirects_will_error(false)
-                .user_agent(config.user_agent.as_str())
-                .proxy(ureq::Proxy::try_from_env())
-                .tls_config(
-                    TlsConfig::builder()
-                        .provider(TlsProvider::Rustls)
-                        // Passed explicitly: ureq is built without a
-                        // provider of its own (no bundled roots).
-                        .unversioned_rustls_crypto_provider(Arc::new(
-                            rustls::crypto::ring::default_provider(),
-                        ))
-                        .root_certs(RootCerts::PlatformVerifier)
-                        .build(),
-                )
-                .max_idle_connections(idle)
-                .build()
-                .new_agent()
-        };
         UreqTransport {
-            pooled: agent(4),
+            pooled: agent_config(config, 4).new_agent(),
             // Paid submissions: no pooled socket that may be stale (§4.5).
-            fresh: agent(0),
+            fresh: agent_config(config, 0),
         }
     }
+
+    /// An agent for one paid request: a new connection, and a cancel gate
+    /// after the connector chain.
+    fn gated_agent(&self, cancel: &CancelToken) -> Agent {
+        Agent::with_parts(
+            self.fresh.clone(),
+            DefaultConnector::new().chain(CancelGate(cancel.clone())),
+            DefaultResolver::default(),
+        )
+    }
+}
+
+/// Stops a request whose token fired while its connection was being made:
+/// it runs after TCP and TLS, right before ureq writes the request.
+#[derive(Debug)]
+struct CancelGate(CancelToken);
+
+/// The cancel gate refused to let a request be written.
+#[derive(Debug)]
+struct CancelledBeforeSend;
+
+impl std::fmt::Display for CancelledBeforeSend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("cancelled before the request was written")
+    }
+}
+
+impl std::error::Error for CancelledBeforeSend {}
+
+impl Connector<Box<dyn Transport>> for CancelGate {
+    type Out = Box<dyn Transport>;
+
+    fn connect(
+        &self,
+        _details: &ConnectionDetails<'_>,
+        chained: Option<Box<dyn Transport>>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        if self.0.is_cancelled() {
+            return Err(ureq::Error::Other(Box::new(CancelledBeforeSend)));
+        }
+        Ok(chained)
+    }
+}
+
+fn is_gate_refusal(err: &ureq::Error) -> bool {
+    matches!(err, ureq::Error::Other(e) if e.downcast_ref::<CancelledBeforeSend>().is_some())
 }
 
 /// Whether a ureq error can only have happened before the first request
 /// byte (§4.5). `ureq::Error` is `#[non_exhaustive]`, so variants added by a
 /// later version fall into the conservative `MaybeSent` arm; the version is
 /// pinned exactly and the table below is re-checked when it changes.
+///
+/// The `io::ErrorKind`s counted as not sent are the ones `connect(2)`
+/// reports; once a connection is up, a broken one shows as a reset, a broken
+/// pipe or a timeout instead, which count as maybe sent (review F7).
 pub fn send_state(err: &ureq::Error) -> SendState {
     use ureq::Error;
     match err {
@@ -112,6 +183,7 @@ pub fn send_state(err: &ureq::Error) -> SendState {
         {
             SendState::NotSent
         }
+        e if is_gate_refusal(e) => SendState::NotSent,
         _ => SendState::MaybeSent,
     }
 }
@@ -119,6 +191,7 @@ pub fn send_state(err: &ureq::Error) -> SendState {
 fn kind_of(err: &ureq::Error) -> TransportErrorKind {
     use ureq::Error;
     match err {
+        e if is_gate_refusal(e) => TransportErrorKind::Cancelled,
         Error::HostNotFound => TransportErrorKind::HostNotFound,
         Error::ConnectionFailed | Error::ConnectProxyFailed(_) => TransportErrorKind::Connect,
         Error::Timeout(_) => TransportErrorKind::Timeout,
@@ -138,9 +211,18 @@ fn to_transport_error(err: &ureq::Error) -> TransportError {
 
 type Head = Result<(u16, Vec<(String, String)>), ureq::Error>;
 
+/// What the helper thread shares with the caller's side.
+struct Shared {
+    /// Set when the caller stops waiting because its token fired; only then
+    /// is the rest of the answer a late answer.
+    abandoned: AtomicBool,
+}
+
 fn run(
     agent: &Agent,
     request: HttpRequest,
+    cancel: &CancelToken,
+    shared: &Shared,
     head_tx: &SyncSender<Head>,
     body_tx: &SyncSender<io::Result<Vec<u8>>>,
 ) {
@@ -149,9 +231,15 @@ fn run(
         url,
         headers,
         bearer,
-        body,
+        mut body,
         limits,
+        late,
     } = request;
+    // Cheap first check; the gate covers the time spent connecting.
+    if cancel.is_cancelled() {
+        let _ = head_tx.send(Err(ureq::Error::Other(Box::new(CancelledBeforeSend))));
+        return;
+    }
     let mut builder = ureq::http::Request::builder()
         .method(match method {
             Method::Get => "GET",
@@ -163,22 +251,26 @@ fn run(
         builder = builder.header(name.as_str(), value.as_str());
     }
     if let Some(token) = &bearer {
-        builder = builder.header("authorization", format!("Bearer {}", token.expose()));
+        // Cleared on drop; the copy inside the request is ureq's (best
+        // effort, §5.6).
+        let value = Secret::new(format!("Bearer {}", token.expose()));
+        builder = builder.header("authorization", value.expose());
     }
     drop(bearer);
-    let request = match builder.body(body) {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = head_tx.send(Err(ureq::Error::from(e)));
-            return;
+    let result = match builder.body(&body[..]) {
+        Ok(request) => {
+            let request = agent
+                .configure_request(request)
+                .timeout_connect(Some(limits.connect))
+                .timeout_global(Some(limits.total))
+                .build();
+            agent.run(request)
         }
+        Err(e) => Err(ureq::Error::from(e)),
     };
-    let request = agent
-        .configure_request(request)
-        .timeout_connect(Some(limits.connect))
-        .timeout_global(Some(limits.total))
-        .build();
-    let response = match agent.run(request) {
+    // Form bodies hold codes and refresh tokens: clear them once sent.
+    body.fill(0);
+    let response = match result {
         Ok(r) => r,
         Err(e) => {
             let _ = head_tx.send(Err(e));
@@ -186,7 +278,7 @@ fn run(
         }
     };
     let status = response.status().as_u16();
-    let headers = response
+    let headers: Vec<(String, String)> = response
         .headers()
         .iter()
         .filter_map(|(k, v)| {
@@ -195,24 +287,52 @@ fn run(
                 .map(|v| (k.as_str().to_ascii_lowercase(), v.to_owned()))
         })
         .collect();
-    if head_tx.send(Ok((status, headers))).is_err() {
-        return; // the caller stopped waiting
-    }
+    let mut caller_gone = head_tx.send(Ok((status, headers.clone()))).is_err();
+    // With a late sink, keep a copy of the body until the caller has read it
+    // all: if it stops waiting, the whole answer goes to the sink.
+    let mut kept: Option<Vec<u8>> = late.as_ref().map(|_| Vec::new());
     let mut reader = response.into_body().into_reader();
     let mut buf = vec![0u8; CHUNK_BYTES];
-    loop {
+    let complete = loop {
         match reader.read(&mut buf) {
-            Ok(0) => return,
+            Ok(0) => break true,
             Ok(n) => {
-                if body_tx.send(Ok(buf[..n].to_vec())).is_err() {
+                if let Some(k) = kept.as_mut()
+                    && k.len() + n <= MAX_LATE_BYTES
+                {
+                    k.extend_from_slice(&buf[..n]);
+                }
+                if !caller_gone && body_tx.send(Ok(buf[..n].to_vec())).is_err() {
+                    caller_gone = true;
+                }
+                if caller_gone && kept.is_none() {
                     return;
                 }
             }
             Err(e) => {
-                let _ = body_tx.send(Err(e));
-                return;
+                if !caller_gone {
+                    let _ = body_tx.send(Err(e));
+                }
+                break false;
             }
         }
+    };
+    let abandoned = shared.abandoned.load(Ordering::Acquire) || cancel.is_cancelled();
+    if let (Some(sink), Some(body)) = (late, kept)
+        && abandoned
+    {
+        tracing::debug!(
+            status,
+            bytes = body.len(),
+            complete,
+            "an answer arrived after a cancel"
+        );
+        sink(LateResponse {
+            status,
+            headers,
+            body,
+            complete,
+        });
     }
 }
 
@@ -222,6 +342,7 @@ struct ChannelReader {
     pending: Vec<u8>,
     pos: usize,
     cancel: CancelToken,
+    shared: Arc<Shared>,
 }
 
 impl Read for ChannelReader {
@@ -234,6 +355,7 @@ impl Read for ChannelReader {
                 return Ok(n);
             }
             if self.cancel.is_cancelled() {
+                self.shared.abandoned.store(true, Ordering::Release);
                 return Err(io::Error::other("cancelled"));
             }
             match self.chunks.recv_timeout(WAIT_SLICE) {
@@ -262,15 +384,29 @@ impl HttpTransport for UreqTransport {
             ));
         }
         let agent = if request.limits.fresh_connection {
-            self.fresh.clone()
+            self.gated_agent(cancel)
         } else {
             self.pooled.clone()
         };
+        let shared = Arc::new(Shared {
+            abandoned: AtomicBool::new(false),
+        });
         let (head_tx, head_rx) = mpsc::sync_channel::<Head>(1);
         let (body_tx, body_rx) = mpsc::sync_channel(CHUNKS_IN_FLIGHT);
+        let helper_cancel = cancel.clone();
+        let helper_shared = Arc::clone(&shared);
         thread::Builder::new()
             .name("freecut-cloud-http".into())
-            .spawn(move || run(&agent, request, &head_tx, &body_tx))
+            .spawn(move || {
+                run(
+                    &agent,
+                    request,
+                    &helper_cancel,
+                    &helper_shared,
+                    &head_tx,
+                    &body_tx,
+                );
+            })
             .map_err(|e| {
                 TransportError::not_sent(
                     TransportErrorKind::Other,
@@ -279,7 +415,9 @@ impl HttpTransport for UreqTransport {
             })?;
         loop {
             if cancel.is_cancelled() {
-                // The helper may already have written the request.
+                // The helper may already have written the request; if an
+                // answer still comes, it goes to the late sink.
+                shared.abandoned.store(true, Ordering::Release);
                 return Err(TransportError::maybe_sent(
                     TransportErrorKind::Cancelled,
                     "cancelled while waiting",
@@ -295,6 +433,7 @@ impl HttpTransport for UreqTransport {
                             pending: Vec::new(),
                             pos: 0,
                             cancel: cancel.clone(),
+                            shared,
                         }),
                     });
                 }
@@ -394,6 +533,39 @@ mod tests {
             matches!(err.kind, TransportErrorKind::Tls | TransportErrorKind::Io),
             "{err:?}"
         );
+    }
+
+    /// M3: the gate runs after the connection is up and stops the request
+    /// before its first byte; the server sees a connection and no data.
+    #[test]
+    fn the_cancel_gate_stops_a_paid_request_before_it_is_written() {
+        use std::io::Read as _;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut s, _)) = listener.accept() {
+                let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
+                let mut buf = Vec::new();
+                let _ = s.read_to_end(&mut buf);
+                let _ = tx.send(buf.len());
+            }
+        });
+        let t = UreqTransport::new(&TransportConfig {
+            https_only: false,
+            ..TransportConfig::default()
+        });
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let err = t
+            .gated_agent(&cancel)
+            .get(format!("http://127.0.0.1:{port}/mcp"))
+            .call()
+            .unwrap_err();
+        assert!(is_gate_refusal(&err), "{err:?}");
+        assert_eq!(send_state(&err), SendState::NotSent);
+        assert_eq!(kind_of(&err), TransportErrorKind::Cancelled);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), 0);
     }
 
     #[test]

@@ -20,7 +20,10 @@ use freecut_cloud::mcp::{McpClient, McpError, StaticToken};
 use freecut_cloud::provider::higgsfield::allow;
 use freecut_cloud::provider::{GenerationProvider, Operation, QuoteOutcome, Unavailable};
 use freecut_cloud::secret::Secret;
-use freecut_cloud::transport::CallLimits;
+use freecut_cloud::transport::{
+    CallLimits, HttpRequest, HttpResponse, HttpTransport, LateResponse, TransportError,
+    TransportErrorKind, read_body,
+};
 use pretty_assertions::assert_eq;
 use proptest::prelude::*;
 use serde_json::{Value, json};
@@ -752,6 +755,77 @@ fn json_rpc_errors_on_paid_calls_are_unknown_unless_the_code_proves_nothing_ran(
         p.quote(&image_op(), &CancelToken::new()).unwrap(),
         QuoteOutcome::PossiblyStarted(_)
     ));
+}
+
+/// Hands every answer to a call that carries a late sink to that sink and
+/// tells the caller it was cancelled while waiting: the server got the call,
+/// the caller gave up, the answer came later (review M3).
+#[derive(Debug)]
+struct CancelsAfterSending(freecut_cloud::fake::FakeService);
+
+impl HttpTransport for CancelsAfterSending {
+    fn send(
+        &self,
+        request: HttpRequest,
+        cancel: &CancelToken,
+    ) -> Result<HttpResponse, TransportError> {
+        let Some(sink) = request.late.clone() else {
+            return self.0.send(request, cancel);
+        };
+        let mut answer = self.0.send(request, cancel)?;
+        let body = read_body(&mut answer.body, &CancelToken::new(), 1 << 20).unwrap();
+        sink(LateResponse {
+            status: answer.status,
+            headers: answer.headers,
+            body,
+            complete: true,
+        });
+        Err(TransportError::maybe_sent(
+            TransportErrorKind::Cancelled,
+            "cancelled while waiting",
+        ))
+    }
+}
+
+/// M3: job ids in an answer that arrives after a cancel reach the late queue,
+/// over JSON and SSE; free calls carry no late sink at all.
+#[test]
+fn job_ids_that_arrive_after_a_cancel_are_kept() {
+    for stream in [StreamMode::Json, StreamMode::Sse { chunk: 7 }] {
+        let fake = paid_fake();
+        fake.set_stream(stream);
+        let c = McpClient::new(
+            freecut_cloud::provider::higgsfield::ENDPOINT,
+            Arc::new(CancelsAfterSending(fake.clone())),
+            token("t1"),
+            Arc::new(common::NoWait::default()),
+            "0.1.0",
+        );
+        // A free call has no late sink, so it goes through untouched.
+        c.call_tool(
+            &allow::MODELS_EXPLORE,
+            json!({"action": "list", "type": "audio"}),
+            &CancelToken::new(),
+        )
+        .unwrap();
+        assert!(c.take_late_results().is_empty());
+
+        let err = submit(&c).unwrap_err();
+        assert!(
+            matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+            "{err:?}"
+        );
+        assert_eq!(fake.calls_to("generate_image").len(), 1);
+        let late = c.take_late_results();
+        assert_eq!(late.len(), 1, "{stream:?}");
+        assert_eq!(late[0].tool, "generate_image");
+        assert_eq!(
+            late[0].job_ids,
+            vec!["0b4f6d2a-1111-4222-8333-944455556666"]
+        );
+        assert!(late[0].value.is_some(), "{stream:?}");
+        assert!(c.take_late_results().is_empty(), "taking empties the queue");
+    }
 }
 
 /// R1: a `404` to `notifications/initialized` ends the handshake. It must not

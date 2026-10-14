@@ -32,8 +32,8 @@ use crate::oauth::discovery::{BearerChallenge, parse_bearer_challenge};
 use crate::redact;
 use crate::secret::Secret;
 use crate::transport::{
-    BodyError, CallLimits, HttpRequest, HttpResponse, HttpTransport, Method, SendState,
-    TransportError, Waiter, backoff_delay, read_body,
+    BodyError, CallLimits, HttpRequest, HttpResponse, HttpTransport, LateResponse, LateSink,
+    Method, SendState, TransportError, Waiter, backoff_delay, read_body,
 };
 
 use self::jsonrpc::{Incoming, RpcError};
@@ -311,6 +311,27 @@ impl McpError {
     }
 }
 
+/// An answer to a paid call or a cost check that arrived after the caller
+/// stopped waiting (review M3, §4.4, §7.2). Its job ids must reach the
+/// ledger: the cloud worker drains [`McpClient::take_late_results`] after a
+/// cancelled call. The same answer may have been read by the caller too, so
+/// ids are recorded idempotently.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LateToolResult {
+    /// The tool called.
+    pub tool: String,
+    /// The JSON-RPC request id.
+    pub request_id: i64,
+    /// The HTTP status.
+    pub status: u16,
+    /// Whether the whole body arrived.
+    pub complete: bool,
+    /// The tool result, when it could be read.
+    pub value: Option<Value>,
+    /// Every UUID-shaped string in the answer, read or not.
+    pub job_ids: Vec<String>,
+}
+
 /// What the server said about itself in `initialize`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerInfo {
@@ -395,6 +416,7 @@ pub struct McpClient {
     waiter: Arc<dyn Waiter>,
     client_version: String,
     session: Mutex<Session>,
+    late: Arc<Mutex<Vec<LateToolResult>>>,
 }
 
 impl fmt::Debug for McpClient {
@@ -422,6 +444,7 @@ impl McpClient {
             waiter,
             client_version: client_version.into(),
             session: Mutex::new(Session::default()),
+            late: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -433,6 +456,12 @@ impl McpClient {
     /// The server's description from the last handshake.
     pub fn server(&self) -> Option<ServerInfo> {
         self.lock().server.clone()
+    }
+
+    /// Answers to paid calls and cost checks that arrived after a cancel,
+    /// oldest first; taking them empties the queue.
+    pub fn take_late_results(&self) -> Vec<LateToolResult> {
+        std::mem::take(&mut *self.late.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// The current session id, if the server issued one.
@@ -757,6 +786,9 @@ impl McpClient {
         let mut request = HttpRequest::post_json(self.endpoint.clone(), body, limits)
             .header("accept", "application/json, text/event-stream")
             .with_bearer(token);
+        if out.kind == Kind::Request && class != CallClass::Free {
+            request = request.with_late(self.late_sink(out, id));
+        }
         if !is_initialize {
             if let Some(version) = protocol {
                 request = request.header("mcp-protocol-version", version);
@@ -951,6 +983,75 @@ impl McpClient {
         if let Err(e) = self.transport.send(request, cancel) {
             tracing::debug!(error = %e, %method, "could not answer a server request");
         }
+    }
+}
+
+impl McpClient {
+    /// Where a late answer to request `id` goes: parsed as far as possible
+    /// and queued with every job id it names.
+    fn late_sink(&self, out: &Outgoing<'_>, id: i64) -> LateSink {
+        let tool = out
+            .params
+            .as_ref()
+            .and_then(|p| p.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or(out.method)
+            .to_owned();
+        let queue = Arc::clone(&self.late);
+        Arc::new(move |response: LateResponse| {
+            let result = late_result(&tool, id, response);
+            tracing::warn!(
+                tool = %result.tool,
+                jobs = result.job_ids.len(),
+                "an answer arrived after a cancel"
+            );
+            queue
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(result);
+        })
+    }
+}
+
+/// Reads a late answer: a JSON or SSE body with the response to `id`.
+fn late_result(tool: &str, id: i64, response: LateResponse) -> LateToolResult {
+    let text = String::from_utf8_lossy(&response.body).into_owned();
+    let is_stream = response.headers.iter().any(|(k, v)| {
+        k.eq_ignore_ascii_case("content-type")
+            && v.to_ascii_lowercase().starts_with("text/event-stream")
+    });
+    let mut messages = Vec::new();
+    if is_stream {
+        let mut parser = SseParser::new(MAX_ANSWER_BYTES);
+        let mut events = parser.feed(response.body.as_slice()).unwrap_or_default();
+        // A cut-off stream may lack the final blank line.
+        events.extend(parser.feed(b"\n\n").unwrap_or_default());
+        for event in events {
+            if let Ok(value) = serde_json::from_str::<Value>(&event.data) {
+                messages.extend(jsonrpc::messages(value).unwrap_or_default());
+            }
+        }
+    } else if let Ok(value) = serde_json::from_str::<Value>(&text) {
+        messages.extend(jsonrpc::messages(value).unwrap_or_default());
+    }
+    let value = messages.iter().find_map(|m| match jsonrpc::parse(m) {
+        Ok(Incoming::Response { id: rid, outcome }) if rid == json!(id) => match outcome {
+            Ok(result) => match parse_tool_result(result) {
+                Ok(output) => output.value(),
+                Err(McpError::Tool { structured, .. }) => structured,
+                Err(_) => None,
+            },
+            Err(e) => e.data,
+        },
+        _ => None,
+    });
+    LateToolResult {
+        tool: tool.to_owned(),
+        request_id: id,
+        status: response.status,
+        complete: response.complete,
+        value,
+        job_ids: guard::uuids_in_text(&text),
     }
 }
 

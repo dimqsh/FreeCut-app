@@ -258,6 +258,46 @@ fn a_connection_dropped_after_the_request_is_an_unknown_outcome_sent_once() {
     assert_eq!(server.count.load(Ordering::SeqCst), 3);
 }
 
+/// M3: the caller gives up at 200 ms, the answer with a job id comes at
+/// 700 ms; the id reaches the late queue instead of being lost.
+#[test]
+fn an_answer_after_a_cancel_reaches_the_late_queue() {
+    let server = serve(mcp_script(|body| {
+        thread::sleep(Duration::from_millis(700));
+        json_reply(
+            &body["id"],
+            json!({"content": [{"type": "text", "text": "{\"jobs\":[{\"job_id\":\"5c6f0d1e-2b3a-4c4d-8e5f-6a7b8c9d0e1f\"}]}"}]}),
+            Vec::new(),
+        )
+    }));
+    let c = client(&server.url);
+    c.initialize(&CancelToken::new()).unwrap();
+    let cancel = CancelToken::new();
+    let trigger = cancel.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        trigger.cancel();
+    });
+    let err = paid(&c, &cancel).unwrap_err();
+    assert!(
+        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+        "{err:?}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut late = Vec::new();
+    while late.is_empty() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+        late = c.take_late_results();
+    }
+    assert_eq!(late.len(), 1);
+    assert_eq!(
+        late[0].job_ids,
+        vec!["5c6f0d1e-2b3a-4c4d-8e5f-6a7b8c9d0e1f"]
+    );
+    assert!(late[0].complete);
+    assert_eq!(server.count.load(Ordering::SeqCst), 3);
+}
+
 #[test]
 fn a_stalled_answer_is_abandoned_on_cancel() {
     let server = serve(mcp_script(|_| Reply::Stall(Duration::from_secs(4))));

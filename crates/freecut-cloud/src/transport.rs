@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::io::Read;
+use std::sync::Arc;
 use std::time::Duration;
 
 use freecut_media::cancel::CancelToken;
@@ -69,6 +70,23 @@ impl CallLimits {
     };
 }
 
+/// An answer that arrived after the caller stopped waiting (§4.4, §7.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LateResponse {
+    /// The status code.
+    pub status: u16,
+    /// Header names (lower-case) and values.
+    pub headers: Vec<(String, String)>,
+    /// The body, as much as arrived.
+    pub body: Vec<u8>,
+    /// Whether the body was read to its end.
+    pub complete: bool,
+}
+
+/// Receives a [`LateResponse`]. Set on paid calls and cost checks, whose
+/// answers may carry job ids that must reach the ledger even after a cancel.
+pub type LateSink = Arc<dyn Fn(LateResponse) + Send + Sync>;
+
 /// One HTTP request.
 ///
 /// The bearer token is kept apart from the headers so that it is added by the
@@ -86,6 +104,9 @@ pub struct HttpRequest {
     pub body: Vec<u8>,
     /// Timeouts and connection reuse.
     pub limits: CallLimits,
+    /// Where an answer goes that arrives after the caller cancelled. A
+    /// transport that can abandon a request in flight must deliver it there.
+    pub late: Option<LateSink>,
 }
 
 impl HttpRequest {
@@ -98,6 +119,7 @@ impl HttpRequest {
             bearer: None,
             body: Vec::new(),
             limits,
+            late: None,
         }
     }
 
@@ -110,6 +132,7 @@ impl HttpRequest {
             bearer: None,
             body,
             limits,
+            late: None,
         }
     }
 
@@ -133,6 +156,7 @@ impl HttpRequest {
             bearer: None,
             body: form.finish().into_bytes(),
             limits,
+            late: None,
         }
     }
 
@@ -147,6 +171,13 @@ impl HttpRequest {
     #[must_use]
     pub fn with_bearer(mut self, token: Secret) -> HttpRequest {
         self.bearer = Some(token);
+        self
+    }
+
+    /// Sets where a late answer goes.
+    #[must_use]
+    pub fn with_late(mut self, sink: LateSink) -> HttpRequest {
+        self.late = Some(sink);
         self
     }
 
@@ -168,6 +199,7 @@ impl fmt::Debug for HttpRequest {
             .field("bearer", &self.bearer.as_ref().map(|_| "<redacted>"))
             .field("body", &format_args!("<{} bytes>", self.body.len()))
             .field("limits", &self.limits)
+            .field("late", &self.late.as_ref().map(|_| "<sink>"))
             .finish()
     }
 }

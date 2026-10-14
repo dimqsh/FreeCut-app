@@ -128,6 +128,19 @@ fn collect_uuids(value: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// Every UUID-shaped token in raw text, lower-case and deduplicated: used on
+/// late answers that may not parse, so no job id in them is lost.
+pub fn uuids_in_text(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = text
+        .split(|c: char| !(c.is_ascii_hexdigit() || c == '-'))
+        .filter(|t| is_uuid(t))
+        .map(str::to_ascii_lowercase)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// `8-4-4-4-12` hexadecimal digits.
 pub fn is_uuid(text: &str) -> bool {
     let groups: Vec<&str> = text.split('-').collect();
@@ -246,6 +259,16 @@ mod tests {
             job_ids_in(&answer),
             vec!["0b4f6d2a-1111-4222-8333-944455556666"]
         );
+    }
+
+    #[test]
+    fn uuids_are_found_in_raw_and_cut_off_text() {
+        let text = "data: {\"jobs\":[{\"job_id\":\"0B4F6D2A-1111-4222-8333-944455556666\"},{\"job_id\":\"0b4f6d2a-1111-4222-8333-94445555";
+        assert_eq!(
+            uuids_in_text(text),
+            vec!["0b4f6d2a-1111-4222-8333-944455556666"]
+        );
+        assert!(uuids_in_text("no ids, 2025-11-25").is_empty());
     }
 
     #[test]

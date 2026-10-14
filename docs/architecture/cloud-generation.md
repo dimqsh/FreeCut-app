@@ -1077,6 +1077,14 @@ Other notes:
   it like a run with an unknown outcome. "Lost" uses the paid-call rule: whatever
   `submit_disposition` would call *Outcome unknown*. Refusals stay errors. UUIDs in an answer
   still give `StartedRun` with those ids for the ledger.
+- **Cancelling paid calls (§4.4, review M3).** A paid request gets an agent of its own (fresh
+  connection) whose connector chain ends in a cancel gate: after TCP and TLS, right before the
+  request is written, the gate checks the token, and a cancel there is *not sent*. Paid calls and
+  cost checks also carry a late sink: if the caller's token fired before it had the whole answer,
+  the helper thread reads the answer to its end and the MCP client queues it as a
+  `LateToolResult` with every UUID in it (`McpClient::take_late_results`); the cloud worker
+  drains the queue into the ledger after a cancel. The queue is in memory: until the ledger
+  exists (H2), a late answer is kept only while FreeCut runs.
 - **Device sign-in (§5.2, §5.4).** Registration asks for the device grant only when the server
   advertises a device endpoint and grant; if that registration is refused, FreeCut registers
   again without it (browser sign-in stays the main path) and reports whether *Use a code
