@@ -307,3 +307,45 @@ fn cloud_opens_sockets_only_in_its_http_transport() {
         "socket code outside http.rs: {offenders:?}"
     );
 }
+
+/// The app's normal build never enables a workspace crate's `test-support`
+/// feature, such as freecut-cloud's scripted provider (review Q10, round 2).
+/// Features are read as resolved for freecut-app's normal dependencies, so a
+/// dev-dependency that enables one does not count. Until the app depends on
+/// freecut-cloud (Phase B) the cloud crate is simply absent from this tree.
+#[test]
+fn the_app_build_enables_no_test_support_feature() {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = Command::new(cargo)
+        .args([
+            "tree",
+            "-p",
+            "freecut-app",
+            "-e",
+            "normal,features",
+            "--prefix",
+            "none",
+            "--offline",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run cargo tree");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.lines().any(|l| l.starts_with("freecut-timeline ")),
+        "unexpected cargo tree output: {text}"
+    );
+    let enabled: Vec<&str> = text
+        .lines()
+        .filter(|l| l.starts_with("freecut-") && l.contains("feature \"test-support\""))
+        .collect();
+    assert!(
+        enabled.is_empty(),
+        "freecut-app's normal build enables {enabled:?}"
+    );
+}
