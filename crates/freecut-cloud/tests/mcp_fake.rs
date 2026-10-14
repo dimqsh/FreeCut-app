@@ -408,27 +408,79 @@ fn free_calls_retry_connect_failures_and_5xx_but_not_lost_answers() {
 
 #[test]
 fn cost_checks_retry_only_while_nothing_was_sent() {
+    // How each failure of the check ends: retried and fine, refused (no run
+    // can have started), or possibly started (fail closed, review M1).
+    #[derive(Debug, PartialEq)]
+    enum End {
+        Quoted,
+        Refused,
+        PossiblyStarted,
+    }
     let cancel = CancelToken::new();
-    for (fault, expected_calls, ok) in [
-        (Fault::Refuse, 1, true),
-        (Fault::DropAfterSend, 1, false),
-        (Fault::Status(503, "unavailable".into()), 1, false),
-        (Fault::Status(429, "slow down".into()), 1, false),
-        (Fault::Garbage, 1, false),
-        (Fault::CutStream, 1, false),
+    for (fault, end) in [
+        (Fault::Refuse, End::Quoted),
+        (Fault::DropAfterSend, End::PossiblyStarted),
+        (
+            Fault::Status(503, "unavailable".into()),
+            End::PossiblyStarted,
+        ),
+        (Fault::Status(429, "slow down".into()), End::Refused),
+        (Fault::Garbage, End::PossiblyStarted),
+        (Fault::CutStream, End::PossiblyStarted),
     ] {
         let fake = fake_higgsfield();
         let (p, _) = provider(&fake, token("t1"));
         p.catalogue(&cancel).unwrap();
         p.connect(&cancel).unwrap();
         fake.push_fault(fault.clone());
-        let result = p.quote(&image_op(), &cancel);
-        assert_eq!(result.is_ok(), ok, "{fault:?}: {result:?}");
+        let got = match p.quote(&image_op(), &cancel) {
+            Ok(QuoteOutcome::Quote(_)) => End::Quoted,
+            Ok(QuoteOutcome::PossiblyStarted(_)) => End::PossiblyStarted,
+            Err(_) => End::Refused,
+            Ok(other) => panic!("{fault:?}: {other:?}"),
+        };
+        assert_eq!(got, end, "{fault:?}");
+        assert_eq!(fake.calls_to("generate_image").len(), 1, "{fault:?}");
         assert_eq!(
-            fake.calls_to("generate_image").len(),
-            expected_calls,
+            p.guard().is_blocked("generate_image"),
+            end == End::PossiblyStarted,
             "{fault:?}"
         );
+    }
+}
+
+/// M1: an answer of an unknown shape may hide a paid run, so the check fails
+/// closed: the tool's checks stop until restart, other tools keep theirs.
+#[test]
+fn an_unreadable_cost_answer_is_possibly_started_and_stops_further_checks() {
+    for answer in [
+        json!({"status": "queued"}),
+        json!({"cost": {"credits": "a lot"}}),
+        json!("Your generation is on its way"),
+        json!(null),
+    ] {
+        let fake = fake_higgsfield();
+        let reply = answer.clone();
+        fake.on_tool("generate_image", move |_| ToolReply::Json(reply.clone()));
+        let (p, _) = provider(&fake, token("t1"));
+        let cancel = CancelToken::new();
+        let QuoteOutcome::PossiblyStarted(started) = p.quote(&image_op(), &cancel).unwrap() else {
+            panic!("expected possibly started for {answer}");
+        };
+        assert_eq!(started.tool, "generate_image");
+        assert_eq!(
+            started.arguments,
+            golden("get_cost-image-gpt_image_2_5.json")
+        );
+        assert_eq!(
+            p.quote(&image_op(), &cancel).unwrap(),
+            QuoteOutcome::NotAvailable(Unavailable::PreflightStopped)
+        );
+        assert_eq!(fake.calls_to("generate_image").len(), 1, "{answer}");
+        assert!(matches!(
+            p.quote(&video_op(), &cancel).unwrap(),
+            QuoteOutcome::Quote(_)
+        ));
     }
 }
 
@@ -523,6 +575,8 @@ fn service_errors_from_a_cost_check_are_classified() {
         p.quote(&video_op(), &CancelToken::new()),
         Err(CloudError::InsufficientCredits)
     );
+    // A refusal the service explains cannot have started a run.
+    assert!(!p.guard().is_blocked("generate_video"));
 }
 
 #[test]

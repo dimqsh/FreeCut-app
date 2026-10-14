@@ -12,13 +12,13 @@ use serde_json::{Value, json};
 
 use crate::catalogue::{Catalogue, parse_listing};
 use crate::credits::Credits;
-use crate::error::{CloudError, classify, quoted};
+use crate::error::{CloudError, SubmitError, classify, quoted, submit_disposition};
 use crate::guard::{self, PreflightGuard, QuoteRequest};
 use crate::mcp::{McpClient, ServerInfo, TokenSource, ToolInfo, schema};
 use crate::oauth::discovery::AuthPolicy;
 use crate::provider::{
-    Adjustment, GenerationProvider, Operation, Quote, QuoteOutcome, ServiceInfo, ServiceQuestion,
-    StartedRun, Unavailable,
+    Adjustment, GenerationProvider, Operation, PossiblyStarted, Quote, QuoteOutcome, ServiceInfo,
+    ServiceQuestion, StartedRun, Unavailable,
 };
 use crate::secret::ProviderId;
 use crate::transport::{HttpTransport, Waiter};
@@ -251,13 +251,35 @@ impl GenerationProvider for HiggsfieldProvider {
                 detail: v.to_string(),
             }
         })?;
-        let output = self
-            .mcp
-            .check_cost(call.tool, &request, cancel)
-            .map_err(|e| classify(&e))?;
-        let answer = output.value().ok_or_else(|| CloudError::Protocol {
-            detail: "empty cost answer".into(),
-        })?;
+        // Fail closed (review M1): an answer that is lost or cannot be read
+        // may hide a paid run, so this tool's checks stop until restart.
+        let possibly_started = |cause: CloudError| {
+            self.guard.block(call.tool.name());
+            tracing::warn!(
+                tool = call.tool.name(),
+                error = %cause,
+                "a cost check may have started a run; cost checks for this tool are off until restart"
+            );
+            QuoteOutcome::PossiblyStarted(PossiblyStarted {
+                tool: call.tool.name().to_owned(),
+                arguments: request.arguments().clone(),
+                cause,
+            })
+        };
+        let output = match self.mcp.check_cost(call.tool, &request, cancel) {
+            Ok(output) => output,
+            Err(e) => {
+                return match submit_disposition(&e) {
+                    SubmitError::OutcomeUnknown(cause) => Ok(possibly_started(cause)),
+                    SubmitError::NotSent(cause) | SubmitError::Rejected(cause) => Err(cause),
+                };
+            }
+        };
+        let Some(answer) = output.value() else {
+            return Ok(possibly_started(CloudError::Protocol {
+                detail: "empty cost answer".into(),
+            }));
+        };
         let job_ids = guard::job_ids_in(&answer);
         if !job_ids.is_empty() {
             self.guard.block(call.tool.name());
@@ -272,7 +294,10 @@ impl GenerationProvider for HiggsfieldProvider {
                 arguments: request.arguments().clone(),
             }));
         }
-        parse_quote_answer(&answer, call.tool.name(), request.arguments())
+        match parse_quote_answer(&answer, call.tool.name(), request.arguments()) {
+            Ok(outcome) => Ok(outcome),
+            Err(cause) => Ok(possibly_started(cause)),
+        }
     }
 }
 
@@ -280,7 +305,8 @@ impl GenerationProvider for HiggsfieldProvider {
 /// "credits_exact": 35}}`), or the service's question or follow-up.
 ///
 /// # Errors
-/// [`CloudError::Protocol`] when it holds none of them.
+/// [`CloudError::Protocol`] when it holds none of them, or a cost FreeCut
+/// cannot read; the provider then treats the check as possibly started.
 pub fn parse_quote_answer(
     answer: &Value,
     tool: &str,

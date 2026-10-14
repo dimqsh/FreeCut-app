@@ -234,8 +234,8 @@ pub enum ServiceQuestion {
 pub enum Unavailable {
     /// The tool's live schema no longer offers a cost check (§4.7 rule 2).
     NoEstimate,
-    /// A cost check of this tool started a run earlier; checks stay off until
-    /// FreeCut restarts (§4.7 rule 4).
+    /// A cost check of this tool started, or may have started, a run
+    /// earlier; checks stay off until FreeCut restarts (§4.7 rule 4).
     PreflightStopped,
     /// The estimate does not cover more than `max` variants (CG-005).
     VariantsNotCovered {
@@ -267,6 +267,21 @@ pub struct StartedRun {
     pub arguments: Value,
 }
 
+/// A cost check whose answer was lost, unreadable or of an unknown shape.
+/// The service shares the tool with the paid run, so it may have started
+/// one (§4.7, review M1). Checks of this tool stay off until FreeCut
+/// restarts; the caller records it like a run whose outcome is unknown and
+/// tells the user to look at their Higgsfield account.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PossiblyStarted {
+    /// The tool.
+    pub tool: String,
+    /// The arguments that were sent.
+    pub arguments: Value,
+    /// What went wrong.
+    pub cause: CloudError,
+}
+
 /// What a cost check produced.
 #[derive(Debug, Clone, PartialEq)]
 #[must_use]
@@ -279,6 +294,8 @@ pub enum QuoteOutcome {
     NotAvailable(Unavailable),
     /// The check started a run.
     StartedRun(StartedRun),
+    /// The check may have started a run (fail closed).
+    PossiblyStarted(PossiblyStarted),
 }
 
 /// A generation service reached through the user's own account.

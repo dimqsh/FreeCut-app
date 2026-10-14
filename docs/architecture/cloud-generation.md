@@ -1070,6 +1070,12 @@ Other notes:
   `McpClient::check_cost(tool, &QuoteRequest)`, for tools that offer one. The provider does not
   expose its MCP client (only `server_info()` for the debug view). §14's H1 contract
   `McpClient::{initialize, list_tools, call_tool}` gains `check_cost`.
+- **Cost checks fail closed (§4.7, review M1).** A check whose answer is lost, unreadable or of
+  an unknown shape (anything but `cost`, `unlim_choice` or `recovery_tool`) is
+  `QuoteOutcome::PossiblyStarted`: that tool's checks stop until restart, and the caller records
+  it like a run with an unknown outcome. "Lost" uses the paid-call rule: whatever
+  `submit_disposition` would call *Outcome unknown*. Refusals stay errors. UUIDs in an answer
+  still give `StartedRun` with those ids for the ledger.
 - **Device sign-in (§5.2, §5.4).** Registration asks for the device grant only when the server
   advertises a device endpoint and grant; if that registration is refused, FreeCut registers
   again without it (browser sign-in stays the main path) and reports whether *Use a code
