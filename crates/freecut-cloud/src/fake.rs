@@ -27,6 +27,24 @@ pub enum StreamMode {
         /// Bytes per read.
         chunk: usize,
     },
+    /// MCP 2025-11-25 polling: the stream sends one priming event (an id
+    /// and `retry: 5`) and ends; the response comes on `GET` with that
+    /// `Last-Event-ID`, as [`ResumeMode`] says.
+    SseResumable {
+        /// Bytes per read.
+        chunk: usize,
+    },
+}
+
+/// How the fake answers a `GET` that resumes a stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeMode {
+    /// With the response.
+    Answer,
+    /// With this status (405: resuming not supported).
+    Refuse(u16),
+    /// With another priming event and no response, every time.
+    Stall,
 }
 
 /// A failure injected into the next request.
@@ -73,6 +91,8 @@ pub struct Recorded {
     pub session: Option<String>,
     /// The `MCP-Protocol-Version` header.
     pub protocol: Option<String>,
+    /// The `Last-Event-ID` header.
+    pub last_event_id: Option<String>,
     /// The bearer token (fake tokens only).
     pub bearer: Option<String>,
     /// The body: parsed JSON, a form as an object, or `null`.
@@ -109,6 +129,9 @@ struct State {
     page_size: usize,
     handlers: BTreeMap<String, ToolHandler>,
     stream: StreamMode,
+    resume: ResumeMode,
+    held: BTreeMap<String, String>,
+    next_event: u64,
     faults: VecDeque<Fault>,
     method_faults: BTreeMap<String, Fault>,
     before_response: Vec<Value>,
@@ -157,6 +180,9 @@ impl FakeService {
                 page_size: 100,
                 handlers: BTreeMap::new(),
                 stream: StreamMode::Json,
+                resume: ResumeMode::Answer,
+                held: BTreeMap::new(),
+                next_event: 0,
                 faults: VecDeque::new(),
                 method_faults: BTreeMap::new(),
                 before_response: Vec::new(),
@@ -198,6 +224,11 @@ impl FakeService {
     /// JSON or SSE answers.
     pub fn set_stream(&self, mode: StreamMode) {
         self.lock().stream = mode;
+    }
+
+    /// How a `GET` that resumes a stream is answered.
+    pub fn set_resume(&self, mode: ResumeMode) {
+        self.lock().resume = mode;
     }
 
     /// Messages sent ahead of each SSE response (server requests or
@@ -305,6 +336,7 @@ fn record(req: &HttpRequest) -> Recorded {
         url: req.url.clone(),
         session: header(req, "mcp-session-id").map(str::to_owned),
         protocol: header(req, "mcp-protocol-version").map(str::to_owned),
+        last_event_id: header(req, "last-event-id").map(str::to_owned),
         bearer: req.bearer.as_ref().map(|b| b.expose().to_owned()),
         body,
         fault: None,
@@ -350,6 +382,9 @@ impl FakeService {
                 s.sessions.remove(id);
             }
             return Ok(HttpResponse::new(200, Vec::new(), Vec::new()));
+        }
+        if rec.method == Method::Get {
+            return Ok(Self::resume_stream(&mut s, rec));
         }
         if rec.method != Method::Post {
             return Ok(HttpResponse::new(405, Vec::new(), Vec::new()));
@@ -438,7 +473,7 @@ impl FakeService {
                     .unwrap_or(Value::Null);
                 let Some(handler) = s.handlers.get(name).cloned() else {
                     let reply = rpc_error(&id, -32602, &format!("Unknown tool: {name}"));
-                    return Ok(self.wrap(&s, reply, extra_headers));
+                    return Ok(self.wrap(&mut s, reply, extra_headers));
                 };
                 drop(s);
                 let reply = handler(&args);
@@ -462,16 +497,23 @@ impl FakeService {
             }
             other => rpc_error(&id, -32601, &format!("Method not found: {other}")),
         };
-        Ok(self.wrap(&s, response, extra_headers))
+        Ok(self.wrap(&mut s, response, extra_headers))
     }
 
     fn wrap(
         &self,
-        s: &State,
+        s: &mut State,
         response: Value,
         extra_headers: Vec<(String, String)>,
     ) -> HttpResponse {
         match s.stream {
+            StreamMode::SseResumable { chunk } => {
+                s.next_event += 1;
+                let event = format!("ev-{}", s.next_event);
+                s.held.insert(event.clone(), response.to_string());
+                let text = format!(": stream opened\n\nid: {event}\nretry: 5\ndata:\n\n");
+                sse_response(text, chunk, extra_headers)
+            }
             StreamMode::Json => {
                 let mut r = json_response(200, &response);
                 r.headers.extend(extra_headers);
@@ -485,6 +527,48 @@ impl FakeService {
                 text.push_str(&format!("id: 1\nevent: message\ndata: {response}\n\n"));
                 sse_response(text, chunk, extra_headers)
             }
+        }
+    }
+}
+
+impl FakeService {
+    /// Answers `GET` with `Last-Event-ID` (MCP 2025-11-25 polling).
+    fn resume_stream(s: &mut State, rec: &Recorded) -> HttpResponse {
+        if !rec.bearer.as_ref().is_some_and(|t| s.tokens.contains(t)) {
+            return json_response(401, &json!({"error": "Unauthorized"}));
+        }
+        if let ResumeMode::Refuse(status) = s.resume {
+            return HttpResponse::new(status, Vec::new(), Vec::new());
+        }
+        if s.issue_sessions
+            && !rec
+                .session
+                .as_ref()
+                .is_some_and(|id| s.sessions.contains(id))
+        {
+            return json_response(404, &json!({"error": "unknown session"}));
+        }
+        let Some(last) = rec.last_event_id.clone() else {
+            return HttpResponse::new(405, Vec::new(), Vec::new());
+        };
+        let chunk = match s.stream {
+            StreamMode::SseResumable { chunk } | StreamMode::Sse { chunk } => chunk,
+            StreamMode::Json => 64,
+        };
+        if s.resume == ResumeMode::Stall {
+            return sse_response(
+                format!("id: {last}\nretry: 5\ndata:\n\n"),
+                chunk,
+                Vec::new(),
+            );
+        }
+        match s.held.remove(&last) {
+            Some(response) => sse_response(
+                format!("id: {last}-r\nevent: message\ndata: {response}\n\n"),
+                chunk,
+                Vec::new(),
+            ),
+            None => json_response(404, &json!({"error": "unknown event id"})),
         }
     }
 }

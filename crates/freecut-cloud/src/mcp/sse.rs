@@ -31,6 +31,7 @@ pub struct SseParser {
     has_data: bool,
     event: String,
     last_id: Option<String>,
+    retry_ms: Option<u64>,
     max: usize,
 }
 
@@ -45,6 +46,7 @@ impl SseParser {
             has_data: false,
             event: String::new(),
             last_id: None,
+            retry_ms: None,
             max,
         }
     }
@@ -125,9 +127,33 @@ impl SseParser {
             }
             "event" => self.event = value.to_owned(),
             "id" if !value.contains('\0') => self.last_id = Some(value.to_owned()),
+            "retry" if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
+                self.retry_ms = value.parse().ok();
+            }
             _ => {}
         }
         Ok(())
+    }
+
+    /// The last event id seen, for `Last-Event-ID` when resuming.
+    pub fn last_event_id(&self) -> Option<&str> {
+        self.last_id.as_deref()
+    }
+
+    /// The reconnection delay the server asked for, in milliseconds.
+    pub fn retry_ms(&self) -> Option<u64> {
+        self.retry_ms
+    }
+
+    /// Starts reading a resumed stream: a half-read line or event of the old
+    /// one is dropped; the last event id and retry delay are kept.
+    pub fn next_stream(&mut self) {
+        self.line.clear();
+        self.pending_cr = false;
+        self.started = false;
+        self.data.clear();
+        self.has_data = false;
+        self.event.clear();
     }
 }
 
@@ -192,6 +218,28 @@ mod tests {
     #[test]
     fn an_unterminated_event_is_not_dispatched() {
         assert!(feed_all(&[b"data: half"]).is_empty());
+    }
+
+    #[test]
+    fn retry_and_the_last_id_survive_into_a_resumed_stream() {
+        let mut p = SseParser::new(1 << 20);
+        assert!(
+            p.feed(b"id: ev-1\nretry: 250\ndata:\n\nretry: x\n\ndata: half")
+                .unwrap()
+                .iter()
+                .all(|e| e.data.is_empty())
+        );
+        assert_eq!(p.last_event_id(), Some("ev-1"));
+        assert_eq!(p.retry_ms(), Some(250));
+        p.next_stream();
+        assert_eq!(
+            p.feed(b"data: whole\n\n").unwrap(),
+            vec![SseEvent {
+                event: "message".into(),
+                data: "whole".into(),
+                id: Some("ev-1".into()),
+            }]
+        );
     }
 
     #[test]

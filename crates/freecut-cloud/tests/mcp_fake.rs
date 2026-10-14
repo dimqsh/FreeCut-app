@@ -14,7 +14,7 @@ use common::{
 use freecut_cloud::CancelToken;
 use freecut_cloud::credits::Credits;
 use freecut_cloud::error::{CloudError, NotAcceptedReason, SubmitError, submit_disposition};
-use freecut_cloud::fake::{Fault, StreamMode, ToolReply};
+use freecut_cloud::fake::{Fault, ResumeMode, StreamMode, ToolReply};
 use freecut_cloud::guard::QuoteRequest;
 use freecut_cloud::mcp::{McpClient, McpError, StaticToken};
 use freecut_cloud::provider::higgsfield::allow;
@@ -829,6 +829,92 @@ fn job_ids_that_arrive_after_a_cancel_are_kept() {
         );
         assert!(late[0].value.is_some(), "{stream:?}");
         assert!(c.take_late_results().is_empty(), "taking empties the queue");
+    }
+}
+
+/// F4: MCP 2025-11-25 lets a server end a stream after its first event; the
+/// client resumes with GET and Last-Event-ID, after the server's retry
+/// delay, and never sends the request again.
+#[test]
+fn a_stream_closed_after_its_first_event_is_resumed_without_resending() {
+    let fake = paid_fake();
+    fake.set_stream(StreamMode::SseResumable { chunk: 4 });
+    let c = mcp_client(&fake, token("t1"));
+    submit(&c).unwrap();
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+    let gets: Vec<_> = fake
+        .requests()
+        .into_iter()
+        .filter(|r| r.method == freecut_cloud::transport::Method::Get)
+        .collect();
+    // initialize, tools/call: one resume each (the notification needs none).
+    assert_eq!(gets.len(), 2);
+    assert!(gets.iter().all(|r| {
+        r.last_event_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("ev-"))
+    }));
+    assert!(
+        gets.iter()
+            .all(|r| r.session.as_deref() == Some("fake-session-1"))
+    );
+
+    // A cost check through the provider, with the server's 5 ms delay.
+    let fake = fake_higgsfield();
+    fake.set_stream(StreamMode::SseResumable { chunk: 64 });
+    let (p, waits) = provider(&fake, token("t1"));
+    assert!(matches!(
+        p.quote(&image_op(), &CancelToken::new()).unwrap(),
+        QuoteOutcome::Quote(_)
+    ));
+    assert_eq!(fake.calls_to("generate_image").len(), 1);
+    assert!(
+        waits
+            .waits
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|d| *d == std::time::Duration::from_millis(5))
+    );
+}
+
+/// F4: if the stream cannot be resumed, the answer is lost: a paid call is an
+/// unknown outcome, sent once; a free call fails without being resent.
+#[test]
+fn a_stream_that_cannot_be_resumed_loses_the_answer() {
+    for mode in [ResumeMode::Refuse(405), ResumeMode::Stall] {
+        let fake = paid_fake();
+        let c = mcp_client(&fake, token("t1"));
+        c.initialize(&CancelToken::new()).unwrap();
+        fake.set_stream(StreamMode::SseResumable { chunk: 16 });
+        fake.set_resume(mode);
+        let err = submit(&c).unwrap_err();
+        assert!(
+            matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+            "{mode:?}: {err:?}"
+        );
+        assert_eq!(fake.calls_to("generate_image").len(), 1, "{mode:?}");
+        let gets = fake
+            .requests()
+            .iter()
+            .filter(|r| r.method == freecut_cloud::transport::Method::Get)
+            .count();
+        let expected = if mode == ResumeMode::Stall {
+            freecut_cloud::mcp::MAX_RESUMES as usize
+        } else {
+            1
+        };
+        assert_eq!(gets, expected, "{mode:?}");
+
+        let err = c
+            .call_tool(
+                &allow::MODELS_EXPLORE,
+                json!({"action": "list", "type": "audio"}),
+                &CancelToken::new(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, McpError::Protocol { .. }), "{err:?}");
+        assert_eq!(fake.calls_to("models_explore").len(), 1, "{mode:?}");
     }
 }
 

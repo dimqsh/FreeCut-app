@@ -21,7 +21,7 @@ pub mod sse;
 use std::fmt;
 use std::io::Read;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use freecut_media::cancel::CancelToken;
 use serde_json::{Value, json};
@@ -33,7 +33,7 @@ use crate::redact;
 use crate::secret::Secret;
 use crate::transport::{
     BodyError, CallLimits, HttpRequest, HttpResponse, HttpTransport, LateResponse, LateSink,
-    Method, SendState, TransportError, Waiter, backoff_delay, read_body,
+    Method, SendState, TransportError, TransportErrorKind, Waiter, backoff_delay, read_body,
 };
 
 use self::jsonrpc::{Incoming, RpcError};
@@ -54,6 +54,11 @@ const MAX_ANSWER_BYTES: usize = 16 * 1024 * 1024;
 const MAX_EXCERPT_BYTES: usize = 2 * 1024;
 const MAX_RETRIES: u32 = 3;
 const MAX_TOOL_PAGES: usize = 50;
+/// Times one answer's event stream is resumed before the answer counts as
+/// lost.
+pub const MAX_RESUMES: u32 = 5;
+const DEFAULT_RESUME_DELAY_MS: u64 = 1_000;
+const MAX_RESUME_DELAY_MS: u64 = 30_000;
 
 /// A tool FreeCut may call, with the rules the transport applies to it
 /// (§4.5, §6.3). Only this crate's allow lists can create one, so a caller
@@ -400,6 +405,13 @@ struct Outgoing<'a> {
     /// Part of the handshake: a session `404` here means the handshake
     /// failed, and must never start another one (which would recurse).
     in_handshake: bool,
+}
+
+/// What resuming an answer's event stream needs (review F4).
+struct Resume {
+    limits: CallLimits,
+    late: Option<LateSink>,
+    session: Option<String>,
 }
 
 #[derive(Debug)]
@@ -786,8 +798,10 @@ impl McpClient {
         let mut request = HttpRequest::post_json(self.endpoint.clone(), body, limits)
             .header("accept", "application/json, text/event-stream")
             .with_bearer(token);
-        if out.kind == Kind::Request && class != CallClass::Free {
-            request = request.with_late(self.late_sink(out, id));
+        let late = (out.kind == Kind::Request && class != CallClass::Free)
+            .then(|| self.late_sink(out, id));
+        if let Some(sink) = &late {
+            request = request.with_late(Arc::clone(sink));
         }
         if !is_initialize {
             if let Some(version) = protocol {
@@ -819,7 +833,12 @@ impl McpClient {
                     session: session_header,
                 }),
                 Kind::Request => {
-                    let result = self.read_answer(response, id, cancel)?;
+                    let resume = Resume {
+                        limits,
+                        late,
+                        session: session_header.clone(),
+                    };
+                    let result = self.read_answer(response, id, resume, cancel)?;
                     Ok(Answer {
                         result,
                         session: session_header,
@@ -844,6 +863,7 @@ impl McpClient {
         &self,
         mut response: HttpResponse,
         id: i64,
+        resume: Resume,
         cancel: &CancelToken,
     ) -> Result<Value, McpError> {
         match response.media_type().as_deref() {
@@ -862,7 +882,7 @@ impl McpClient {
                     "the answer has no response to the request",
                 ))
             }
-            Some("text/event-stream") => self.read_stream(response, id, cancel),
+            Some("text/event-stream") => self.read_stream(response.body, id, &resume, cancel),
             other => Err(McpError::protocol(format!(
                 "unexpected content type {}",
                 other.unwrap_or("(none)")
@@ -870,21 +890,29 @@ impl McpClient {
         }
     }
 
+    /// Reads an event stream until the response to `id`. A stream that ends
+    /// after an event id but before the response is resumed with `GET` and
+    /// `Last-Event-ID`, after the server's `retry` delay, at most
+    /// [`MAX_RESUMES`] times (MCP 2025-11-25, review F4). A `GET` never
+    /// resends the request; if resuming fails, the answer is lost, which
+    /// for a paid call is an unknown outcome.
     fn read_stream(
         &self,
-        mut response: HttpResponse,
+        mut body: Box<dyn Read + Send>,
         id: i64,
+        resume: &Resume,
         cancel: &CancelToken,
     ) -> Result<Value, McpError> {
         let mut parser = SseParser::new(MAX_ANSWER_BYTES);
         let mut chunk = [0u8; 8 * 1024];
+        let mut resumes = 0;
         loop {
             if cancel.is_cancelled() {
                 return Err(McpError::Cancelled {
                     send: SendState::MaybeSent,
                 });
             }
-            let n = match response.body.read(&mut chunk) {
+            let n = match body.read(&mut chunk) {
                 Ok(n) => n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) if cancel.is_cancelled() => {
@@ -895,9 +923,31 @@ impl McpClient {
                 Err(e) => return Err(McpError::protocol(format!("the event stream broke: {e}"))),
             };
             if n == 0 {
-                return Err(McpError::protocol(
-                    "the event stream ended before the response",
-                ));
+                let Some(last) = parser.last_event_id().map(str::to_owned) else {
+                    return Err(McpError::protocol(
+                        "the event stream ended before the response",
+                    ));
+                };
+                if resumes == MAX_RESUMES {
+                    return Err(McpError::protocol(
+                        "the event stream ended again and again before the response",
+                    ));
+                }
+                resumes += 1;
+                let delay = Duration::from_millis(
+                    parser
+                        .retry_ms()
+                        .unwrap_or(DEFAULT_RESUME_DELAY_MS)
+                        .min(MAX_RESUME_DELAY_MS),
+                );
+                if !self.waiter.wait(delay, cancel) {
+                    return Err(McpError::Cancelled {
+                        send: SendState::MaybeSent,
+                    });
+                }
+                body = self.resume(&last, resume, cancel)?;
+                parser.next_stream();
+                continue;
             }
             let events = parser
                 .feed(&chunk[..n])
@@ -915,6 +965,58 @@ impl McpClient {
                     }
                 }
             }
+        }
+    }
+
+    /// Opens the resumed stream after `last_event_id` (review F4).
+    fn resume(
+        &self,
+        last_event_id: &str,
+        resume: &Resume,
+        cancel: &CancelToken,
+    ) -> Result<Box<dyn Read + Send>, McpError> {
+        let lost = |why: String| {
+            McpError::protocol(format!("the event stream could not be resumed: {why}"))
+        };
+        let token = self
+            .tokens
+            .bearer(TokenPurpose::Ordinary, cancel)
+            .map_err(|e| lost(e.to_string()))?;
+        let (session, protocol) = {
+            let s = self.lock();
+            // The answer's own session id first: during `initialize` it is
+            // not stored yet.
+            (
+                resume.session.clone().or_else(|| s.id.clone()),
+                s.protocol.clone(),
+            )
+        };
+        let mut request = HttpRequest::get(self.endpoint.clone(), resume.limits)
+            .header("accept", "text/event-stream")
+            .header("last-event-id", last_event_id)
+            .with_bearer(token);
+        if let Some(version) = protocol {
+            request = request.header("mcp-protocol-version", version);
+        }
+        if let Some(sid) = session {
+            request = request.header("mcp-session-id", sid);
+        }
+        if let Some(sink) = &resume.late {
+            request = request.with_late(Arc::clone(sink));
+        }
+        tracing::debug!(%last_event_id, "resuming an event stream");
+        match self.transport.send(request, cancel) {
+            Ok(response)
+                if response.status == 200
+                    && response.media_type().as_deref() == Some("text/event-stream") =>
+            {
+                Ok(response.body)
+            }
+            Ok(response) => Err(lost(format!("HTTP {}", response.status))),
+            Err(e) if e.kind == TransportErrorKind::Cancelled => Err(McpError::Cancelled {
+                send: SendState::MaybeSent,
+            }),
+            Err(e) => Err(lost(e.to_string())),
         }
     }
 

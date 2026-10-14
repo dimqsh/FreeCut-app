@@ -233,7 +233,12 @@ Rules:
 - **Server-to-client messages.** FreeCut declares no client capabilities (no sampling, roots or
   elicitation). Server requests are answered with JSON-RPC error `-32601`; `notifications/progress`
   and `notifications/message` are logged at `debug`; anything else is ignored.
-- FreeCut does not open the optional `GET` stream; it polls with `jobs_wait`.
+- FreeCut does not open the optional standalone `GET` stream; it polls with `jobs_wait`. It does
+  use `GET` with `Last-Event-ID` to **resume** an answer's stream that the server ended after an
+  event id but before the response (MCP 2025-11-25 polling): after the server's `retry` delay
+  (1 s if none, at most 30 s), at most 5 times. A `GET` never resends the request; if resuming
+  fails, the answer is lost, so a paid call is *Outcome unknown* and a free call fails (review
+  F4).
 - **Sessions.** The `Mcp-Session-Id` from the `initialize` response is kept in memory for the
   worker's lifetime. HTTP `404` on a request carrying a session id means the session expired:
   FreeCut re-initializes once. A **free** call (§4.5's table) is then sent again. A **paid**
@@ -1095,6 +1100,9 @@ Other notes:
 - **Refreshed tokens the keychain refuses (§5.6, review SEC-3)** are kept in memory and used:
   the stored refresh token may already be dead after rotation and is never sent again. The
   write is retried before the next refresh; a disconnect or a new sign-in drops them.
+- **Stream resumption (§4.1, review F4).** Implemented rather than offering only 2025-06-18:
+  `GET` + `Last-Event-ID`, the server's `retry`, at most 5 resumes, the same late sink as the
+  request, the answer's own session id during `initialize`.
 - **Device sign-in (§5.2, §5.4).** Registration asks for the device grant only when the server
   advertises a device endpoint and grant; if that registration is refused, FreeCut registers
   again without it (browser sign-in stays the main path) and reports whether *Use a code
