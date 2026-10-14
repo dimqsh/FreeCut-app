@@ -959,7 +959,9 @@ README).
 - **Features:** CG-004 to CG-013, CG-025, CG-026.
 - **Contracts:** `GenerationProvider::{prepare_upload, confirm_upload, submit, poll}`,
   `SubmitOutcome`, `SubmitError`, `LedgerEntry` v1, `UploadPlan`, recipe v1,
-  `TaskOwner::Cloud`.
+  `TaskOwner::Cloud`. From H1: the app-owned `LateQueue` the worker drains (R10), the
+  `RunTag` every `quote`/`submit` carries and every `LateToolResult` returns (R15), the
+  app-owned `PreflightGuard` (R6) and one `TokenManager` per provider id (R17).
 - **Tests:** unknown-outcome property test; ledger crash points (kill after each write point,
   restart, expected state); poller batching and `poll_after_seconds` clamping; upload
   confirm-only-after-all-200; download resume and checksum; recipe golden JSON; import +
@@ -972,10 +974,15 @@ README).
   times out after sending shows *Outcome unknown* and is never sent again on its own.
 - **Worker obligations (review round 2, R9; acceptance criteria, each with a test):**
   - **Drain the late queue.** Late job ids can arrive up to 120 s after a cancel or after an
-    answer the client gave up on (longer across resumes) and sit only in
-    `McpClient::take_late_results`. The worker drains it on every tick and before quitting and
-    writes every id to the ledger; draining once right after a cancel is not enough. Test: a
-    late answer that arrives after the cancel tick still reaches the ledger.
+    answer the client gave up on (longer across resumes, plus the 30 s verdict wait). They go
+    to the app's `LateQueue`, which the app creates once and passes to every provider, so a
+    provider may be dropped or replaced (disconnect, reconnect, account switch) without losing
+    them (R10). The worker drains it (`LateQueue::take`) on every tick and before quitting,
+    and writes every id to the ledger entry its `RunTag` names, as a paid run or a cost check
+    (`LateToolResult::{run, class}`, R15); draining once right after a cancel is not enough.
+    Acceptance tests: `late_job_ids_reach_the_app_after_the_provider_is_gone`,
+    `a_late_job_id_lands_on_the_run_that_caused_it`, and a worker test where a late answer
+    that arrives after the cancel tick still reaches the ledger.
   - **Explain blocked checks.** Cost checks use pooled connections without the cancel gate, so
     cancelling a check in flight ends as *PossiblyStarted* and blocks that tool's checks until
     restart. The run sheet says so in plain words. If that proves too harsh, route checks
