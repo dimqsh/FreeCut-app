@@ -323,12 +323,15 @@ pub const MAX_ENTRY_CHARS: usize = 1_200;
 const MAX_PARTS: usize = 8;
 
 /// A [`SecretStore`] over plain entries: `<provider>/meta` plus numbered
-/// parts `<provider>/access.<gen>.<n>` and `<provider>/refresh.<gen>.<n>`.
+/// parts `<provider>/access.<slot>.<n>` and `<provider>/refresh.<slot>.<n>`.
 ///
-/// Every write uses a new generation number: all parts are written first,
-/// then `meta` (which names the generation and part counts), then the old
-/// generation's parts are removed. A crash at any point leaves either the
-/// old or the new credential readable, never a mix.
+/// Every write uses the next generation number, whose parity is its slot,
+/// so a new credential always goes to the slot the current one does not
+/// use: all parts are written first, then `meta` (which names the
+/// generation and part counts), then the other slot is cleared. A crash at
+/// any point leaves either the old or the new credential readable, never a
+/// mix; with only two slots, a delete can clear everything, including
+/// parts a crash left before `meta` was written (review SEC-2).
 #[derive(Debug)]
 pub struct ChunkedSecretStore<E> {
     entries: E,
@@ -390,7 +393,7 @@ impl<E: EntryStore> ChunkedSecretStore<E> {
     }
 
     fn part_account(provider: ProviderId, which: &str, generation: u64, index: usize) -> String {
-        format!("{provider}/{which}.{generation}.{index}")
+        format!("{provider}/{which}.{}.{index}", generation % 2)
     }
 
     fn read_meta(&self, provider: ProviderId) -> Result<Option<Meta>, SecretError> {
@@ -458,18 +461,30 @@ impl<E: EntryStore> ChunkedSecretStore<E> {
         Ok(parts.len())
     }
 
-    fn remove_generation(&self, provider: ProviderId, meta: &Meta) {
+    /// Removes every part in the slot of `generation`.
+    fn clear_slot(&self, provider: ProviderId, generation: u64) {
         for index in 0..MAX_PARTS {
             for which in ["access", "refresh"] {
-                if let Err(e) = self.entries.remove(&Self::part_account(
-                    provider,
-                    which,
-                    meta.generation,
-                    index,
-                )) {
+                if let Err(e) = self
+                    .entries
+                    .remove(&Self::part_account(provider, which, generation, index))
+                {
                     tracing::debug!(error = %e, "could not remove an old credential part");
                 }
             }
+        }
+    }
+
+    /// The current metadata; a damaged one counts as none, an unreadable
+    /// store is an error (it must not be mistaken for an empty one).
+    fn meta_or_damaged(&self, provider: ProviderId) -> Result<Option<Meta>, SecretError> {
+        match self.read_meta(provider) {
+            Ok(meta) => Ok(meta),
+            Err(SecretError::Corrupt(detail)) => {
+                tracing::warn!(%detail, "the stored sign-in is damaged; it is replaced");
+                Ok(None)
+            }
+            Err(e) => Err(e),
         }
     }
 }
@@ -527,7 +542,7 @@ impl<E: EntryStore> SecretStore for ChunkedSecretStore<E> {
     fn set(&self, provider: ProviderId, credential: &Credential) -> Result<(), SecretError> {
         let _write = self.lock.write().unwrap_or_else(PoisonError::into_inner);
         // A damaged old entry must not block signing in again.
-        let old = self.read_meta(provider).unwrap_or(None);
+        let old = self.meta_or_damaged(provider)?;
         let generation = old.as_ref().map_or(1, |m| m.generation.wrapping_add(1));
         let access_parts =
             self.write_parts(provider, "access", generation, credential.access_token())?;
@@ -571,23 +586,21 @@ impl<E: EntryStore> SecretStore for ChunkedSecretStore<E> {
         let text = serde_json::to_string(&meta)
             .map_err(|e| SecretError::Corrupt(format!("metadata: {e}")))?;
         self.entries.write(&Self::meta_account(provider), &text)?;
-        if let Some(old) = old
-            && old.generation != generation
-        {
-            self.remove_generation(provider, &old);
-        }
+        // The other slot: the previous credential, or leftovers of a damaged
+        // one or of an interrupted write.
+        self.clear_slot(provider, generation.wrapping_add(1));
         Ok(())
     }
 
     fn delete(&self, provider: ProviderId) -> Result<(), SecretError> {
         let _write = self.lock.write().unwrap_or_else(PoisonError::into_inner);
-        let old = self.read_meta(provider).unwrap_or(None);
-        // Removing `meta` first makes the credential unreadable at once; the
-        // parts are orphans after that.
+        // An unreadable store is an error, not "nothing to delete".
+        self.meta_or_damaged(provider)?;
+        // Removing `meta` first makes the credential unreadable at once; then
+        // both slots are cleared, so no token part survives.
         self.entries.remove(&Self::meta_account(provider))?;
-        if let Some(old) = old {
-            self.remove_generation(provider, &old);
-        }
+        self.clear_slot(provider, 0);
+        self.clear_slot(provider, 1);
         Ok(())
     }
 }
@@ -604,6 +617,7 @@ struct MemoryEntries {
     map: BTreeMap<String, String>,
     max_utf16_bytes: Option<usize>,
     writes_left: Option<usize>,
+    locked: bool,
 }
 
 impl MemoryEntryStore {
@@ -631,6 +645,11 @@ impl MemoryEntryStore {
         self.lock().writes_left = None;
     }
 
+    /// While `locked`, every operation fails as a locked keychain does.
+    pub fn set_locked(&self, locked: bool) {
+        self.lock().locked = locked;
+    }
+
     /// The names of all entries.
     pub fn accounts(&self) -> Vec<String> {
         self.lock().map.keys().cloned().collect()
@@ -654,11 +673,18 @@ impl MemoryEntryStore {
 
 impl EntryStore for MemoryEntryStore {
     fn read(&self, account: &str) -> Result<Option<String>, SecretError> {
-        Ok(self.lock().map.get(account).cloned())
+        let entries = self.lock();
+        if entries.locked {
+            return Err(SecretError::Unavailable("the keychain is locked".into()));
+        }
+        Ok(entries.map.get(account).cloned())
     }
 
     fn write(&self, account: &str, value: &str) -> Result<(), SecretError> {
         let mut entries = self.lock();
+        if entries.locked {
+            return Err(SecretError::Unavailable("the keychain is locked".into()));
+        }
         if let Some(limit) = entries.max_utf16_bytes
             && value.encode_utf16().count() * 2 > limit
         {
@@ -671,7 +697,7 @@ impl EntryStore for MemoryEntryStore {
 
     fn remove(&self, account: &str) -> Result<(), SecretError> {
         let mut entries = self.lock();
-        if entries.writes_left == Some(0) {
+        if entries.locked || entries.writes_left == Some(0) {
             return Err(SecretError::Unavailable("simulated crash".into()));
         }
         entries.map.remove(account);
@@ -783,9 +809,9 @@ mod tests {
         assert_eq!(
             store.entries().accounts(),
             vec![
-                "higgsfield/access.2.0",
+                "higgsfield/access.0.0",
                 "higgsfield/meta",
-                "higgsfield/refresh.2.0"
+                "higgsfield/refresh.0.0"
             ]
         );
     }
@@ -809,6 +835,10 @@ mod tests {
                     "crash_at {crash_at}"
                 );
             }
+            // A delete right after the crash leaves no token part behind,
+            // including parts written before the crash reached `meta`.
+            store.delete(ProviderId::HIGGSFIELD).unwrap();
+            assert!(store.entries().accounts().is_empty(), "crash_at {crash_at}");
             // The next write after a crash still succeeds.
             store.set(ProviderId::HIGGSFIELD, &new).unwrap();
             assert_eq!(
@@ -816,6 +846,48 @@ mod tests {
                 Some(new.clone())
             );
         }
+    }
+
+    /// SEC-2: damaged metadata is cleared completely; a locked store is an
+    /// error for both reads and deletes, never "nothing stored".
+    #[test]
+    fn damaged_metadata_is_swept_and_a_locked_store_is_an_error() {
+        let store = ChunkedSecretStore::new(MemoryEntryStore::new());
+        store
+            .set(ProviderId::HIGGSFIELD, &oauth(1_500, 1_300, 'a'))
+            .unwrap();
+        store
+            .entries()
+            .write("higgsfield/meta", "{not json")
+            .unwrap();
+        assert!(matches!(
+            store.get(ProviderId::HIGGSFIELD),
+            Err(SecretError::Corrupt(_))
+        ));
+        store.delete(ProviderId::HIGGSFIELD).unwrap();
+        assert!(store.entries().accounts().is_empty());
+
+        store
+            .set(ProviderId::HIGGSFIELD, &oauth(100, 10, 'b'))
+            .unwrap();
+        store.entries().set_locked(true);
+        assert!(matches!(
+            store.get(ProviderId::HIGGSFIELD),
+            Err(SecretError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store.delete(ProviderId::HIGGSFIELD),
+            Err(SecretError::Unavailable(_))
+        ));
+        assert!(matches!(
+            store.set(ProviderId::HIGGSFIELD, &oauth(100, 10, 'c')),
+            Err(SecretError::Unavailable(_))
+        ));
+        store.entries().set_locked(false);
+        assert_eq!(
+            store.get(ProviderId::HIGGSFIELD).unwrap(),
+            Some(oauth(100, 10, 'b'))
+        );
     }
 
     /// SEC-1: writers are exclusive, so concurrent `set`s never mix parts and

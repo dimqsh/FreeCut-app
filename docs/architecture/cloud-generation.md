@@ -1039,9 +1039,12 @@ Deviations from the sections above, all **accepted by owner** (2026-10-14):
 
 - **Server requests (§4.1).** `ping` gets the empty result MCP requires; every other server
   request gets `-32601`. *Accepted by owner.*
-- **Keychain entries (§5.6).** Parts are named `<provider>/access.<generation>.<n>`; each write
-  uses a new generation and replaces `meta` last, which is what makes "old or new set, never a
-  mix" hold. *Accepted by owner.*
+- **Keychain entries (§5.6).** Each write uses a new generation and replaces `meta` last, which
+  is what makes "old or new set, never a mix" hold. *Accepted by owner.* Parts are named
+  `<provider>/access.<slot>.<n>` with slot = generation mod 2, so there are only two sets to
+  clear: a write clears the other slot, a delete clears both, and a damaged `meta` is swept the
+  same way; an unreadable store is an error, never "nothing stored" (review SEC-2). Writes are
+  exclusive (SEC-1).
 - **Contracts (§6.1).** A provider is built with a `TokenSource` (the `TokenManager` supplies
   tokens), so `connect` takes no `Credential`; `quote` takes the `Operation` alone (inputs are
   `RoleRef`s with service media ids). `QuoteOutcome` gains `StartedRun` (§4.7 rule 4).
