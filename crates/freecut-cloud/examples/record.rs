@@ -104,7 +104,13 @@ fn main() -> anyhow_free::Result {
     if print_url || !open_in_browser(&request.url) {
         println!("Open this address to sign in:\n{}", request.url);
     }
-    let code = wait_for_callback(&listener, &request.state, &found.server)?;
+    let code = wait_for_callback(
+        listener,
+        &request.state,
+        &found.server,
+        Duration::from_secs(5),
+        SIGN_IN_WAIT,
+    )?;
     let tokens = oauth.exchange_code(
         &found.server,
         &registration.client_id,
@@ -240,49 +246,106 @@ fn open_in_browser(url: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Serves the loopback redirect until the sign-in answer arrives.
+/// Serves the loopback redirect until the sign-in answer with `state`
+/// arrives, for at most `wait` (review R26). Anything else gets a 400 and
+/// the wait goes on: a socket that sends nothing within `read_timeout`, bytes
+/// that are not UTF-8, a line over 8 KiB, another path, a wrong state, an
+/// accept error. It ends on an answer whose state matches: the code, or the
+/// error that answer carries. The listener is closed as soon as it returns.
 fn wait_for_callback(
-    listener: &TcpListener,
+    listener: TcpListener,
     state: &freecut_cloud::secret::Secret,
     server: &freecut_cloud::oauth::discovery::AuthServer,
+    read_timeout: Duration,
+    wait: Duration,
 ) -> anyhow_free::Result<freecut_cloud::secret::Secret> {
-    let deadline = Instant::now() + SIGN_IN_WAIT;
+    let deadline = Instant::now() + wait;
     listener.set_nonblocking(true)?;
     while Instant::now() < deadline {
-        let mut stream = match listener.accept() {
+        let stream = match listener.accept() {
             Ok((stream, _)) => stream,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::WouldBlock {
+                    eprintln!("A connection to the sign-in listener failed; still waiting.");
+                }
                 std::thread::sleep(Duration::from_millis(100));
                 continue;
             }
-            Err(e) => return Err(e.into()),
         };
-        stream.set_nonblocking(false)?;
-        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-        let mut line = String::new();
-        BufReader::new(&stream).read_line(&mut line)?;
-        let target = line
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or_default()
-            .to_owned();
-        let result = parse_callback(&target, state, server);
-        let page = match &result {
-            Ok(_) => "Signed in. You can close this tab and go back to the terminal.",
-            Err(_) => "This is not the sign-in answer FreeCut is waiting for.",
-        };
-        let _ = write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
-            page.len()
-        );
-        match result {
-            Ok(code) => return Ok(code),
-            Err(freecut_cloud::oauth::CallbackError::NotTheCallback) => {}
-            Err(e) => return Err(e.into()),
+        match answer_one(stream, state, server, read_timeout) {
+            Some(Ok(code)) => return Ok(code),
+            Some(Err(e)) => return Err(e.into()),
+            None => {}
         }
     }
-    Err("sign-in was not finished within 5 minutes".into())
+    Err("sign-in was not finished in time".into())
+}
+
+/// Reads one request to the listener and answers it. `Some` when it is the
+/// sign-in answer with our state: the code, or the error it carries.
+fn answer_one(
+    mut stream: std::net::TcpStream,
+    state: &freecut_cloud::secret::Secret,
+    server: &freecut_cloud::oauth::discovery::AuthServer,
+    read_timeout: Duration,
+) -> Option<Result<freecut_cloud::secret::Secret, freecut_cloud::oauth::CallbackError>> {
+    use freecut_cloud::oauth::CallbackError;
+    use std::io::Read as _;
+    let reply = |stream: &mut std::net::TcpStream, status: &str, page: &str| {
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
+            page.len()
+        );
+        // Close gracefully: unread input would turn the close into a reset
+        // and the browser would not see the answer. Bounded, and the read
+        // timeout still applies.
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        let _ = std::io::copy(&mut (&*stream).take(64 * 1024), &mut std::io::sink());
+    };
+    if stream.set_nonblocking(false).is_err()
+        || stream.set_read_timeout(Some(read_timeout)).is_err()
+    {
+        return None;
+    }
+    let mut line = Vec::new();
+    let read = BufReader::new((&stream).take(8 * 1024)).read_until(b'\n', &mut line);
+    let target = match read {
+        Ok(n) if n > 0 && line.ends_with(b"\n") => String::from_utf8(line)
+            .ok()
+            .and_then(|l| l.split_whitespace().nth(1).map(str::to_owned)),
+        _ => None,
+    };
+    let Some(target) = target else {
+        reply(
+            &mut stream,
+            "400 Bad Request",
+            "Not a request FreeCut understands.",
+        );
+        return None;
+    };
+    match parse_callback(&target, state, server) {
+        Ok(code) => {
+            reply(
+                &mut stream,
+                "200 OK",
+                "Signed in. You can close this tab and go back to the terminal.",
+            );
+            Some(Ok(code))
+        }
+        Err(CallbackError::NotTheCallback | CallbackError::StateMismatch) => {
+            reply(
+                &mut stream,
+                "400 Bad Request",
+                "This is not the sign-in answer FreeCut is waiting for.",
+            );
+            None
+        }
+        Err(e) => {
+            reply(&mut stream, "400 Bad Request", "Sign-in did not complete.");
+            Some(Err(e))
+        }
+    }
 }
 
 /// A transport that refuses anything but free calls and keeps every
@@ -1581,6 +1644,69 @@ mod tests {
                 .unwrap()
                 .starts_with("fake-session-")
         );
+    }
+
+    /// Sends `request` to the listener on `port` and returns the status line
+    /// of the answer (empty if none came).
+    fn hit(port: u16, request: &[u8]) -> String {
+        use std::io::Read as _;
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.write_all(request).unwrap();
+        let mut answer = String::new();
+        let _ = stream.read_to_string(&mut answer);
+        answer.lines().next().unwrap_or_default().to_owned()
+    }
+
+    /// R26: the sign-in listener answers 400 to anything that is not the
+    /// answer it waits for and keeps waiting: an idle socket, bytes that are
+    /// not UTF-8, an over-long line, another path, a wrong state. It ends on
+    /// the answer with its state and closes right after.
+    #[test]
+    fn the_sign_in_listener_survives_bad_connections() {
+        let server = freecut_cloud::oauth::discovery::AuthServer {
+            issuer: "https://clerk.example".into(),
+            authorization_endpoint: "https://clerk.example/oauth/authorize".into(),
+            token_endpoint: "https://clerk.example/oauth/token".into(),
+            registration_endpoint: None,
+            revocation_endpoint: None,
+            device_authorization_endpoint: None,
+            grant_types_supported: vec![],
+            scopes_supported: vec![],
+            authorization_response_iss_parameter_supported: false,
+            client_id_metadata_document_supported: false,
+        };
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let waiting = std::thread::spawn(move || {
+            wait_for_callback(
+                listener,
+                &Secret::new("st4te"),
+                &server,
+                Duration::from_millis(200),
+                Duration::from_secs(10),
+            )
+            .map(|code| code.expose().to_owned())
+            .map_err(|e| e.to_string())
+        });
+        // An idle socket: no request line before the read timeout.
+        let idle = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        drop(idle);
+        assert!(hit(port, b"\xff\xfe\xfd\r\n\r\n").contains("400"));
+        let long = format!("GET /{} HTTP/1.1\r\n\r\n", "a".repeat(20_000));
+        assert!(hit(port, long.as_bytes()).contains("400"));
+        assert!(hit(port, b"GET /favicon.ico HTTP/1.1\r\n\r\n").contains("400"));
+        assert!(hit(port, b"GET /callback?code=c&state=wrong HTTP/1.1\r\n\r\n").contains("400"));
+        assert!(
+            hit(
+                port,
+                b"GET /callback?code=the-code&state=st4te HTTP/1.1\r\n\r\n"
+            )
+            .contains("200")
+        );
+        assert_eq!(waiting.join().unwrap(), Ok("the-code".to_owned()));
+        // The listener is gone as soon as the code arrived.
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
     }
 
     #[test]
