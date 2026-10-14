@@ -319,8 +319,9 @@ impl GenerationProvider for HiggsfieldProvider {
             }
         };
         // Every content item, not only the one read as the answer (R5);
-        // the request's own ids are echoes (R14).
-        let job_ids = crate::guard::new_ids(output.job_ids(), request.arguments());
+        // `job_ids` leaves out the request's own ids, which are echoes (R14,
+        // R39).
+        let job_ids = output.job_ids();
         if !job_ids.is_empty() {
             return Ok(check.started_run(job_ids));
         }

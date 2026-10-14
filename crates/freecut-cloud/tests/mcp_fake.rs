@@ -2066,6 +2066,32 @@ fn sse_framing_is_not_scanned_for_job_ids() {
     assert_eq!(out.job_ids(), vec![PAID_JOB]);
 }
 
+/// R39: a successful paid answer that echoes the request's own media id
+/// names only the new job, as a late or failed answer would.
+#[test]
+fn a_successful_paid_answer_leaves_out_the_requests_own_ids() {
+    const MEDIA: &str = "5a1c0e3b-2222-4333-8444-955566667777";
+    let fake = paid_fake();
+    fake.on_tool("generate_image", |_| {
+        ToolReply::Json(json!({
+            "jobs": [{"index": 0, "job_id": PAID_JOB}],
+            "medias": [{"role": "image", "value": MEDIA}],
+        }))
+    });
+    let c = mcp_client(&fake, token("t1"));
+    let args = json!({"params": {"model": "gpt_image_2_5", "prompt": "x", "count": 1,
+        "medias": [{"role": "image", "value": MEDIA}]}});
+    let out = c
+        .call_paid(
+            &allow::GENERATE_IMAGE,
+            args,
+            &run_tag(),
+            &CancelToken::new(),
+        )
+        .unwrap();
+    assert_eq!(out.job_ids(), vec![PAID_JOB]);
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),

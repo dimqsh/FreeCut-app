@@ -992,6 +992,10 @@ README).
     refresh over the network under a token that cannot be cancelled. Only the cloud worker
     calls into `freecut-cloud`. Test: the UI thread's cancel path returns without a call into
     the client.
+  - **Job ids of a paid answer come from `ToolOutput::job_ids()`** (or `McpError::job_ids` and
+    `submit_disposition` for a failure), never from a scan of the answer by hand: it leaves out
+    the request's own UUIDs, so an echoed `medias[].value` is not recorded or polled as a job
+    (R14, R39). Test: `a_successful_paid_answer_leaves_out_the_requests_own_ids`.
   - **One `PreflightGuard` per app run**, shared by every provider the worker creates (R6).
   - **The catalogue reaches the UI only through the provider**: `catalogue()` from the service,
     or `provider::higgsfield::catalogue_from_cache` for the disk cache. Both apply the reviewed

@@ -514,11 +514,16 @@ pub struct ToolOutput {
     /// Job ids anywhere in the raw answer: non-text items, `_meta`, events
     /// before the response (review R12).
     pub answer_job_ids: Vec<String>,
+    /// The UUIDs in the request's own arguments, which
+    /// [`ToolOutput::job_ids`] leaves out (review R39).
+    request_ids: Vec<String>,
 }
 
 impl ToolOutput {
     /// Every job id the result names, in its structured content or any text
-    /// item (review R5).
+    /// item (review R5), and in the rest of the raw answer. The request's own
+    /// UUIDs (media ids the service echoes) are left out, as they are from a
+    /// failed or late answer (review R14, R39).
     pub fn job_ids(&self) -> Vec<String> {
         let mut all = self.texts.join("\n");
         if let Some(value) = &self.structured {
@@ -527,6 +532,7 @@ impl ToolOutput {
         }
         let mut ids = guard::uuids_in_text(&all);
         ids.extend(self.answer_job_ids.iter().cloned());
+        ids.retain(|id| !self.request_ids.contains(id));
         ids.sort();
         ids.dedup();
         ids
@@ -890,6 +896,7 @@ impl McpClient {
         self.ensure_initialized(cancel)
             .map_err(|e| McpError::BeforeSending(Box::new(e)))?;
         tracing::debug!(tool = name, ?class, "tools/call");
+        let request_ids = guard::uuids_in_text(&arguments.to_string());
         let answer = self.exchange(
             &Outgoing {
                 method: "tools/call",
@@ -906,6 +913,7 @@ impl McpClient {
         match parse_tool_result(answer.result) {
             Ok(mut output) => {
                 output.answer_job_ids = answer.job_ids;
+                output.request_ids = request_ids;
                 Ok(output)
             }
             Err(e) => Err(e.with_answer(raw.as_bytes()).with_job_ids(answer.job_ids)),
@@ -1654,6 +1662,7 @@ fn parse_tool_result(result: Value) -> Result<ToolOutput, McpError> {
         structured: obj.get("structuredContent").cloned(),
         texts,
         answer_job_ids: Vec::new(),
+        request_ids: Vec::new(),
     };
     if obj.get("isError").and_then(Value::as_bool).unwrap_or(false) {
         return Err(McpError::Tool {
@@ -1699,6 +1708,7 @@ mod tests {
             structured: None,
             texts: vec![r#"{"cost":{"credits":2}}"#.into(), format!("queued {job}")],
             answer_job_ids: vec![],
+            request_ids: vec![],
         };
         assert_eq!(output.value(), Some(json!({"cost": {"credits": 2}})));
         assert_eq!(output.job_ids(), vec![job]);
