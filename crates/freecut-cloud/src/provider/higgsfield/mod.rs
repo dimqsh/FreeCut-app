@@ -266,11 +266,30 @@ impl GenerationProvider for HiggsfieldProvider {
                 cause,
             })
         };
+        // A check that named job ids started a run: the ids go to the ledger
+        // (§4.7 rule 4), and this tool's checks stop until restart.
+        let started_run = |job_ids: Vec<String>| {
+            self.guard.block(call.tool.name());
+            tracing::warn!(
+                tool = call.tool.name(),
+                jobs = job_ids.len(),
+                "a cost check started a run; cost checks for this tool are off until restart"
+            );
+            QuoteOutcome::StartedRun(StartedRun {
+                tool: call.tool.name().to_owned(),
+                job_ids,
+                arguments: request.arguments().clone(),
+            })
+        };
         let output = match self.mcp.check_cost(call.tool, &request, cancel) {
             Ok(output) => output,
             Err(e) => {
                 return match submit_disposition(&e) {
-                    SubmitError::OutcomeUnknown(cause) => Ok(possibly_started(cause)),
+                    // An unreadable answer that still named jobs (review R4).
+                    SubmitError::OutcomeUnknown { job_ids, .. } if !job_ids.is_empty() => {
+                        Ok(started_run(job_ids))
+                    }
+                    SubmitError::OutcomeUnknown { cause, .. } => Ok(possibly_started(cause)),
                     SubmitError::NotSent(cause) | SubmitError::Rejected(cause) => Err(cause),
                 };
             }
@@ -282,17 +301,7 @@ impl GenerationProvider for HiggsfieldProvider {
         };
         let job_ids = guard::job_ids_in(&answer);
         if !job_ids.is_empty() {
-            self.guard.block(call.tool.name());
-            tracing::warn!(
-                tool = call.tool.name(),
-                jobs = job_ids.len(),
-                "a cost check started a run; cost checks for this tool are off until restart"
-            );
-            return Ok(QuoteOutcome::StartedRun(StartedRun {
-                tool: call.tool.name().to_owned(),
-                job_ids,
-                arguments: request.arguments().clone(),
-            }));
+            return Ok(started_run(job_ids));
         }
         match parse_quote_answer(&answer, call.tool.name(), request.arguments()) {
             Ok(outcome) => Ok(outcome),

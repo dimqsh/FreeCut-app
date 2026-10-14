@@ -509,7 +509,7 @@ pub enum SubmitOutcome {
 }
 pub enum SubmitError {
     NotSent(CloudError),            // safe to offer Run again without warning
-    OutcomeUnknown(CloudError),     // CG-010
+    OutcomeUnknown { cause: CloudError, job_ids: Vec<String> },  // CG-010; ids for the ledger
     Rejected(CloudError),           // the service answered with an error
 }
 ```
@@ -1124,11 +1124,17 @@ Other notes:
 - **Cancelling paid calls (§4.4, review M3).** A paid request gets an agent of its own (fresh
   connection) whose connector chain ends in a cancel gate: after TCP and TLS, right before the
   request is written, the gate checks the token, and a cancel there is *not sent*. Paid calls and
-  cost checks also carry a late sink: if the caller's token fired before it had the whole answer,
-  the helper thread reads the answer to its end and the MCP client queues it as a
-  `LateToolResult` with every UUID in it (`McpClient::take_late_results`); the cloud worker
-  drains the queue into the ledger after a cancel. The queue is in memory: until the ledger
-  exists (H2), a late answer is kept only while FreeCut runs.
+  cost checks also carry a late sink: if the caller stopped before the end of the answer,
+  because its token fired or because it gave up on a part it could not read (bad JSON, an
+  oversized or broken event, a failed resume; review R4), the helper thread reads the answer to
+  its end and the MCP client queues it as a `LateToolResult` with every UUID in it
+  (`McpClient::take_late_results`). The helper waits for the caller's verdict (read to the end,
+  or stopped) before deciding; an answer whose response the caller already has is not queued,
+  nor a refusal status that names no job. The bytes the caller did read are scanned too: an
+  unreadable answer is *Outcome unknown* with the ids it named
+  (`SubmitError::OutcomeUnknown { job_ids }`), and a cost check that named ids is a
+  `StartedRun`. The queue is in memory: until the ledger exists (H2), a late answer is kept
+  only while FreeCut runs; the worker drains it on every tick and before quitting (R9).
 - **Refreshed tokens the keychain refuses (§5.6, review SEC-3)** are kept in memory and used:
   the stored refresh token may already be dead after rotation and is never sent again. The
   write is retried before the next refresh; a disconnect or a new sign-in drops them.

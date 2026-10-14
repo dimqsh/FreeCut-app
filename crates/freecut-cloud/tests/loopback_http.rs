@@ -229,6 +229,62 @@ fn sse_answers_arrive_in_pieces() {
     assert_eq!(out.value(), Some(json!({"ok": 1})));
 }
 
+/// R4: when the caller gives up on an answer it cannot read (here an event
+/// that is not JSON), the rest of the stream still reaches the late queue
+/// with the job ids it names. An answer the caller did read is never queued.
+#[test]
+fn an_unreadable_event_hands_the_rest_of_the_stream_to_the_late_queue() {
+    const JOB: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    let calls = AtomicUsize::new(0);
+    let server = serve(mcp_script(move |body| {
+        let response = json!({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [
+            {"type": "text", "text": format!("{{\"jobs\":[{{\"job_id\":\"{JOB}\"}}]}}")}
+        ]}})
+        .to_string();
+        let after = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n\n";
+        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            // Read normally; the stream goes on after the response.
+            Reply::Stream(vec![
+                format!("event: message\ndata: {response}\n\n"),
+                after.into(),
+            ])
+        } else {
+            Reply::Stream(vec![
+                "event: message\ndata: {not json\n\n".into(),
+                format!("event: message\ndata: {response}\n\n"),
+            ])
+        }
+    }));
+    let c = client(&server.url);
+    let wait_for_late = |c: &McpClient| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let late = c.take_late_results();
+            if !late.is_empty() || Instant::now() > deadline {
+                return late;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    };
+
+    paid(&c, &CancelToken::new()).unwrap();
+    thread::sleep(Duration::from_millis(300));
+    assert!(
+        c.take_late_results().is_empty(),
+        "an answer read in full is not late"
+    );
+
+    let err = paid(&c, &CancelToken::new()).unwrap_err();
+    assert!(
+        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
+        "{err:?}"
+    );
+    let late = wait_for_late(&c);
+    assert_eq!(late.len(), 1, "{late:?}");
+    assert_eq!(late[0].job_ids, vec![JOB]);
+    assert!(late[0].complete);
+}
+
 #[test]
 fn a_refused_connection_is_not_sent() {
     let port = {
@@ -253,7 +309,7 @@ fn a_connection_dropped_after_the_request_is_an_unknown_outcome_sent_once() {
     let c = client(&server.url);
     let err = paid(&c, &CancelToken::new()).unwrap_err();
     assert!(
-        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
         "{err:?}"
     );
     // initialize, initialized, and exactly one paid request.
@@ -282,7 +338,7 @@ fn an_answer_after_a_cancel_reaches_the_late_queue() {
     });
     let err = paid(&c, &cancel).unwrap_err();
     assert!(
-        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
         "{err:?}"
     );
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -342,7 +398,7 @@ fn a_stalled_answer_is_abandoned_on_cancel() {
     );
     assert_eq!(err.send_state(), SendState::MaybeSent);
     assert!(
-        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
         "{err:?}"
     );
 }

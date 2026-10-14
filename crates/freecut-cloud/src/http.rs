@@ -16,16 +16,17 @@
 //!   gate checks the token, so a cancel that fires before the first request
 //!   byte stops the request there and it is reported as *not sent*;
 //! - for a request with a [`LateSink`](crate::transport::LateSink), the
-//!   helper keeps a copy of the answer; if the caller's token fired before
-//!   it had the whole answer, the helper reads it to its end and hands it
-//!   to the sink, so job ids that arrive late are not lost. (If the token
-//!   fires just as a complete answer was read, the sink may see that answer
-//!   too: consumers record job ids idempotently.)
+//!   helper keeps a copy of the answer and reads it to its end. If the
+//!   caller stopped before the end, because its token fired or because it
+//!   gave up on an answer it could not read (review R4), the whole copy goes
+//!   to the sink, so job ids that arrive late are not lost. The helper waits
+//!   for the caller's verdict (read to the end, or stopped) before it
+//!   decides; consumers record job ids idempotently, so an answer seen by
+//!   both the caller and the sink is harmless.
 
 use std::io::{self, Read};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
@@ -47,6 +48,9 @@ const CHUNK_BYTES: usize = 16 * 1024;
 const CHUNKS_IN_FLIGHT: usize = 8;
 /// The most of a late answer kept for the sink.
 const MAX_LATE_BYTES: usize = 16 * 1024 * 1024;
+/// How long the helper waits, after the whole answer arrived, for the caller
+/// to finish reading it; after that the copy goes to the sink anyway.
+const VERDICT_WAIT: Duration = Duration::from_secs(30);
 
 /// Transport settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,10 +269,54 @@ fn to_transport_error(err: &ureq::Error) -> TransportError {
 type Head = Result<(u16, Vec<(String, String)>), ureq::Error>;
 
 /// What the helper thread shares with the caller's side.
+/// What the caller did with an answer (review M3, R4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reading {
+    /// Not decided yet.
+    Open,
+    /// Read to its end: nothing in it is late.
+    Finished,
+    /// Stopped before its end (a cancel, an answer it could not read, a
+    /// dropped body): the rest is a late answer.
+    Abandoned,
+}
+
+/// The caller's verdict, shared with the helper thread.
 struct Shared {
-    /// Set when the caller stops waiting because its token fired; only then
-    /// is the rest of the answer a late answer.
-    abandoned: AtomicBool,
+    reading: Mutex<Reading>,
+    changed: Condvar,
+}
+
+impl Shared {
+    fn new() -> Shared {
+        Shared {
+            reading: Mutex::new(Reading::Open),
+            changed: Condvar::new(),
+        }
+    }
+
+    /// Records the verdict; the first one stands.
+    fn decide(&self, verdict: Reading) {
+        let mut reading = self.reading.lock().unwrap_or_else(PoisonError::into_inner);
+        if *reading == Reading::Open {
+            *reading = verdict;
+            self.changed.notify_all();
+        }
+    }
+
+    /// Waits up to `limit` for the verdict. Still open after that counts as
+    /// abandoned: a copy the caller also read is harmless, a lost one is not.
+    fn verdict(&self, limit: Duration) -> Reading {
+        let reading = self.reading.lock().unwrap_or_else(PoisonError::into_inner);
+        let (reading, _) = self
+            .changed
+            .wait_timeout_while(reading, limit, |r| *r == Reading::Open)
+            .unwrap_or_else(PoisonError::into_inner);
+        match *reading {
+            Reading::Open => Reading::Abandoned,
+            decided => decided,
+        }
+    }
 }
 
 fn run(
@@ -277,7 +325,7 @@ fn run(
     cancel: &CancelToken,
     shared: &Shared,
     head_tx: &SyncSender<Head>,
-    body_tx: &SyncSender<io::Result<Vec<u8>>>,
+    body_tx: SyncSender<io::Result<Vec<u8>>>,
 ) {
     let HttpRequest {
         method,
@@ -370,15 +418,17 @@ fn run(
             }
         }
     };
-    let abandoned = shared.abandoned.load(Ordering::Acquire) || cancel.is_cancelled();
-    if let (Some(sink), Some(body)) = (late, kept)
-        && abandoned
-    {
+    // The caller sees the end of the body once the channel closes.
+    drop(body_tx);
+    let (Some(sink), Some(body)) = (late, kept) else {
+        return;
+    };
+    if cancel.is_cancelled() || shared.verdict(VERDICT_WAIT) == Reading::Abandoned {
         tracing::debug!(
             status,
             bytes = body.len(),
             complete,
-            "an answer arrived after a cancel"
+            "the caller stopped before the end of an answer"
         );
         sink(LateResponse {
             status,
@@ -389,7 +439,8 @@ fn run(
     }
 }
 
-/// A body read from the helper thread, abandoned when the token fires.
+/// A body read from the helper thread. It is abandoned when the token fires
+/// or when it is dropped before its end (review R4).
 struct ChannelReader {
     chunks: Receiver<io::Result<Vec<u8>>>,
     pending: Vec<u8>,
@@ -408,7 +459,7 @@ impl Read for ChannelReader {
                 return Ok(n);
             }
             if self.cancel.is_cancelled() {
-                self.shared.abandoned.store(true, Ordering::Release);
+                self.shared.decide(Reading::Abandoned);
                 return Err(io::Error::other("cancelled"));
             }
             match self.chunks.recv_timeout(WAIT_SLICE) {
@@ -418,9 +469,19 @@ impl Read for ChannelReader {
                 }
                 Ok(Err(e)) => return Err(e),
                 Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return Ok(0),
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.shared.decide(Reading::Finished);
+                    return Ok(0);
+                }
             }
         }
+    }
+}
+
+impl Drop for ChannelReader {
+    fn drop(&mut self) {
+        // No-op after the end was read.
+        self.shared.decide(Reading::Abandoned);
     }
 }
 
@@ -441,9 +502,7 @@ impl HttpTransport for UreqTransport {
         } else {
             self.pooled.clone()
         };
-        let shared = Arc::new(Shared {
-            abandoned: AtomicBool::new(false),
-        });
+        let shared = Arc::new(Shared::new());
         let (head_tx, head_rx) = mpsc::sync_channel::<Head>(1);
         let (body_tx, body_rx) = mpsc::sync_channel(CHUNKS_IN_FLIGHT);
         let helper_cancel = cancel.clone();
@@ -457,7 +516,7 @@ impl HttpTransport for UreqTransport {
                     &helper_cancel,
                     &helper_shared,
                     &head_tx,
-                    &body_tx,
+                    body_tx,
                 );
             })
             .map_err(|e| {
@@ -470,7 +529,7 @@ impl HttpTransport for UreqTransport {
             if cancel.is_cancelled() {
                 // The helper may already have written the request; if an
                 // answer still comes, it goes to the late sink.
-                shared.abandoned.store(true, Ordering::Release);
+                shared.decide(Reading::Abandoned);
                 return Err(TransportError::maybe_sent(
                     TransportErrorKind::Cancelled,
                     "cancelled while waiting",

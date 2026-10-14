@@ -650,11 +650,17 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     );
     let (d, n) = at_call(Fault::DropAfterSend);
     assert!(
-        matches!(d, OutcomeUnknown(CloudError::NoAnswer)) && n == 1,
+        matches!(
+            d,
+            OutcomeUnknown {
+                cause: CloudError::NoAnswer,
+                ..
+            }
+        ) && n == 1,
         "{d:?} {n}"
     );
     let (d, n) = at_call(Fault::Status(502, "bad gateway".into()));
-    assert!(matches!(d, OutcomeUnknown(_)) && n == 1, "{d:?} {n}");
+    assert!(matches!(d, OutcomeUnknown { .. }) && n == 1, "{d:?} {n}");
     let (d, n) = at_call(Fault::Status(429, "too many concurrent jobs".into()));
     assert!(
         matches!(d, Rejected(CloudError::Busy)) && n == 1,
@@ -662,13 +668,19 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     );
     let (d, n) = at_call(Fault::Garbage);
     assert!(
-        matches!(d, OutcomeUnknown(CloudError::Protocol { .. })) && n == 1,
+        matches!(
+            d,
+            OutcomeUnknown {
+                cause: CloudError::Protocol { .. },
+                ..
+            }
+        ) && n == 1,
         "{d:?} {n}"
     );
     let (d, n) = at_call(Fault::CutStream);
-    assert!(matches!(d, OutcomeUnknown(_)) && n == 1, "{d:?} {n}");
+    assert!(matches!(d, OutcomeUnknown { .. }) && n == 1, "{d:?} {n}");
     let (d, n) = at_call(Fault::RpcError(-32603, "Internal error".into()));
-    assert!(matches!(d, OutcomeUnknown(_)) && n == 1, "{d:?} {n}");
+    assert!(matches!(d, OutcomeUnknown { .. }) && n == 1, "{d:?} {n}");
     let (d, n) = at_call(Fault::RpcError(-32602, "Invalid params".into()));
     assert!(matches!(d, Rejected(_)) && n == 1, "{d:?} {n}");
 
@@ -736,7 +748,7 @@ fn json_rpc_errors_on_paid_calls_are_unknown_unless_the_code_proves_nothing_ran(
         if rejected {
             assert!(matches!(d, Rejected(_)), "{code}: {d:?}");
         } else {
-            assert!(matches!(d, OutcomeUnknown(_)), "{code}: {d:?}");
+            assert!(matches!(d, OutcomeUnknown { .. }), "{code}: {d:?}");
         }
         assert_eq!(fake.calls_to("generate_image").len(), 1, "{code}");
     }
@@ -748,7 +760,10 @@ fn json_rpc_errors_on_paid_calls_are_unknown_unless_the_code_proves_nothing_ran(
     let err = submit(&mcp_client(&fake, token("t1"))).unwrap_err();
     assert_eq!(
         submit_disposition(&err),
-        OutcomeUnknown(CloudError::InsufficientCredits)
+        OutcomeUnknown {
+            cause: CloudError::InsufficientCredits,
+            job_ids: vec![]
+        }
     );
 
     // And a cost check answered with such an error fails closed (M1).
@@ -818,7 +833,7 @@ fn job_ids_that_arrive_after_a_cancel_are_kept() {
 
         let err = submit(&c).unwrap_err();
         assert!(
-            matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+            matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
             "{err:?}"
         );
         assert_eq!(fake.calls_to("generate_image").len(), 1);
@@ -920,7 +935,7 @@ fn a_stream_that_cannot_be_resumed_loses_the_answer() {
         fake.set_resume(mode);
         let err = submit(&c).unwrap_err();
         assert!(
-            matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+            matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
             "{mode:?}: {err:?}"
         );
         assert_eq!(fake.calls_to("generate_image").len(), 1, "{mode:?}");
@@ -968,7 +983,7 @@ fn a_cancel_after_sending_tells_the_server() {
         .call_tool(&allow::GENERATE_IMAGE, image_args(), &cancel)
         .unwrap_err();
     assert!(
-        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown { .. }),
         "{err:?}"
     );
     let requests = fake.requests();
@@ -1121,6 +1136,39 @@ fn cost_checks_are_refused_for_tools_without_one_or_for_another_tool() {
     assert!(fake.requests().is_empty());
 }
 
+/// R4: an answer that breaks off unreadably still names its jobs. A paid
+/// call is "outcome unknown" with them; a cost check reports the run it
+/// started.
+#[test]
+fn unreadable_answers_keep_the_job_ids_they_name() {
+    for fault in [
+        Fault::GarbageWith(format!("{{\"jobs\":[{{\"job_id\":\"{JOB}\"")),
+        Fault::CutStreamWith(format!("queued {JOB}, then")),
+    ] {
+        let fake = paid_fake();
+        let c = mcp_client(&fake, token("t1"));
+        c.initialize(&CancelToken::new()).unwrap();
+        fake.push_fault(fault.clone());
+        let d = submit_disposition(&submit(&c).unwrap_err());
+        assert!(
+            matches!(&d, SubmitError::OutcomeUnknown { job_ids, .. } if job_ids == &[JOB]),
+            "{fault:?} gave {d:?}"
+        );
+        assert_eq!(fake.calls_to("generate_image").len(), 1);
+    }
+
+    let fake = fake_higgsfield();
+    let (p, _) = provider(&fake, token("t1"));
+    p.connect(&CancelToken::new()).unwrap();
+    p.catalogue(&CancelToken::new()).unwrap();
+    fake.push_fault(Fault::CutStreamWith(format!("queued {JOB}, then")));
+    match p.quote(&image_op(), &CancelToken::new()).unwrap() {
+        QuoteOutcome::StartedRun(run) => assert_eq!(run.job_ids, vec![JOB]),
+        other => panic!("{other:?}"),
+    }
+    assert!(p.guard().is_blocked("generate_image"));
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),
@@ -1133,6 +1181,10 @@ fn fault_strategy() -> impl Strategy<Value = Fault> {
         Just(Fault::Status(404, "x".into())),
         Just(Fault::Garbage),
         Just(Fault::CutStream),
+        Just(Fault::GarbageWith(format!(
+            "{{\"jobs\":[{{\"job_id\":\"{JOB}\""
+        ))),
+        Just(Fault::CutStreamWith(format!("queued {JOB}, then"))),
         Just(Fault::RpcError(-32603, "Internal error".into())),
         Just(Fault::RpcError(-32000, "Server error".into())),
         Just(Fault::RpcError(-32602, "Invalid params".into())),
@@ -1143,10 +1195,25 @@ fn fault_strategy() -> impl Strategy<Value = Fault> {
 /// or unreadable: the run must end as an unknown outcome.
 fn hides_the_outcome(fault: &Fault) -> bool {
     match fault {
-        Fault::DropAfterSend | Fault::Garbage | Fault::CutStream => true,
+        Fault::DropAfterSend
+        | Fault::Garbage
+        | Fault::CutStream
+        | Fault::GarbageWith(_)
+        | Fault::CutStreamWith(_) => true,
         Fault::Status(status, _) => *status >= 500,
         Fault::RpcError(code, _) => !freecut_cloud::error::REJECTING_RPC_CODES.contains(code),
         Fault::Refuse => false,
+    }
+}
+
+/// The job id the fake's faults name.
+const JOB: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+
+/// Faults whose answer names [`JOB`].
+fn names_job(fault: &Fault) -> bool {
+    match fault {
+        Fault::GarbageWith(text) | Fault::CutStreamWith(text) => text.contains(JOB),
+        _ => false,
     }
 }
 
@@ -1200,8 +1267,15 @@ proptest! {
                 let d = submit_disposition(&e);
                 prop_assert!(!matches!(d, NotSent(_)), "reached but {:?}", d);
                 match &rec.fault {
+                    // An answer that named a job keeps it (review R4, R5).
+                    Some(f) if names_job(f) => {
+                        prop_assert!(
+                            matches!(&d, OutcomeUnknown { job_ids, .. } if job_ids == &[JOB]),
+                            "{:?} gave {:?}", f, d
+                        );
+                    }
                     Some(f) if hides_the_outcome(f) => {
-                        prop_assert!(matches!(d, OutcomeUnknown(_)), "{:?} gave {:?}", f, d);
+                        prop_assert!(matches!(d, OutcomeUnknown { .. }), "{:?} gave {:?}", f, d);
                     }
                     Some(_) => {}
                     None => prop_assert!(matches!(d, Rejected(_)), "{:?}", d),

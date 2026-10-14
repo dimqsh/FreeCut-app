@@ -20,6 +20,7 @@ pub mod sse;
 
 use std::fmt;
 use std::io::Read;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -278,6 +279,9 @@ pub enum McpError {
     Protocol {
         /// Details for the log.
         detail: String,
+        /// Job ids named in the part of the answer that was read (review
+        /// R4): the request may have started them.
+        job_ids: Vec<String>,
     },
     /// The server chose a revision FreeCut does not implement.
     #[error("unsupported protocol version {0}")]
@@ -312,15 +316,29 @@ impl McpError {
     fn protocol(detail: impl Into<String>) -> McpError {
         McpError::Protocol {
             detail: detail.into(),
+            job_ids: Vec::new(),
+        }
+    }
+
+    /// For an unreadable answer, the job ids in `read`, the part of it that
+    /// arrived (review R4). Other errors are returned as they are.
+    fn naming_jobs_in(self, read: &[u8]) -> McpError {
+        match self {
+            McpError::Protocol { detail, .. } => McpError::Protocol {
+                detail,
+                job_ids: guard::uuids_in_text(&String::from_utf8_lossy(read)),
+            },
+            other => other,
         }
     }
 }
 
-/// An answer to a paid call or a cost check that arrived after the caller
-/// stopped waiting (review M3, §4.4, §7.2). Its job ids must reach the
-/// ledger: the cloud worker drains [`McpClient::take_late_results`] after a
-/// cancelled call. The same answer may have been read by the caller too, so
-/// ids are recorded idempotently.
+/// An answer to a paid call or a cost check that the caller stopped reading
+/// before its end: after a cancel, or after a part it could not read (review
+/// M3, R4, §4.4, §7.2). Its job ids must reach the ledger: the cloud worker
+/// drains [`McpClient::take_late_results`] on every tick and before quitting
+/// (R9). Part of the answer may have been read by the caller too, so ids are
+/// recorded idempotently.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LateToolResult {
     /// The tool called.
@@ -410,8 +428,25 @@ struct Outgoing<'a> {
 /// What resuming an answer's event stream needs (review F4).
 struct Resume {
     limits: CallLimits,
-    late: Option<LateSink>,
+    late: Option<LateRoute>,
     session: Option<String>,
+}
+
+impl Resume {
+    /// The caller has the response: what the transport may still hand the
+    /// late sink is not late (review R4).
+    fn answered(&self) {
+        if let Some(route) = &self.late {
+            route.answered.store(true, Ordering::Release);
+        }
+    }
+}
+
+/// Where the rest of an answer goes if the caller stops reading early.
+struct LateRoute {
+    sink: LateSink,
+    /// Set once the caller has the response to the request.
+    answered: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -678,7 +713,8 @@ impl McpClient {
             limits,
             cancel,
         )?;
-        parse_tool_result(answer.result)
+        let raw = answer.result.to_string();
+        parse_tool_result(answer.result).map_err(|e| e.naming_jobs_in(raw.as_bytes()))
     }
 
     /// Ends the session with `DELETE` (on disconnect and quit; best effort,
@@ -802,9 +838,9 @@ impl McpClient {
             .header("accept", "application/json, text/event-stream")
             .with_bearer(token);
         let late = (out.kind == Kind::Request && class != CallClass::Free)
-            .then(|| self.late_sink(out, id));
-        if let Some(sink) = &late {
-            request = request.with_late(Arc::clone(sink));
+            .then(|| self.late_route(out, id));
+        if let Some(route) = &late {
+            request = request.with_late(Arc::clone(&route.sink));
         }
         if !is_initialize {
             if let Some(version) = protocol {
@@ -892,18 +928,15 @@ impl McpClient {
                 let bytes =
                     read_body(&mut response.body, cancel, MAX_ANSWER_BYTES).map_err(body_error)?;
                 tracing::trace!(target: WIRE_TARGET, body = %redact::body(&bytes), "mcp answer body");
-                let value: Value = serde_json::from_slice(&bytes)
-                    .map_err(|e| McpError::protocol(format!("invalid JSON: {e}")))?;
-                for message in jsonrpc::messages(value).map_err(McpError::protocol)? {
-                    if let Some(outcome) = self.handle_incoming(&message, id, cancel)? {
-                        return outcome;
-                    }
-                }
-                Err(McpError::protocol(
-                    "the answer has no response to the request",
-                ))
+                // Read to its end, so nothing in it can be reported late.
+                self.response_in(&bytes, id, cancel)
+                    .map_err(|e| e.naming_jobs_in(&bytes))?
             }
-            Some("text/event-stream") => self.read_stream(response.body, id, &resume, cancel),
+            Some("text/event-stream") => {
+                let mut read = Vec::new();
+                self.read_stream(response.body, id, &resume, cancel, &mut read)
+                    .map_err(|e| e.naming_jobs_in(&read))
+            }
             other => Err(McpError::protocol(format!(
                 "unexpected content type {}",
                 other.unwrap_or("(none)")
@@ -911,18 +944,41 @@ impl McpClient {
         }
     }
 
+    /// The response to `id` in a JSON body.
+    #[allow(clippy::type_complexity)] // as for `handle_incoming`
+    fn response_in(
+        &self,
+        bytes: &[u8],
+        id: i64,
+        cancel: &CancelToken,
+    ) -> Result<Result<Value, McpError>, McpError> {
+        let value: Value = serde_json::from_slice(bytes)
+            .map_err(|e| McpError::protocol(format!("invalid JSON: {e}")))?;
+        for message in jsonrpc::messages(value).map_err(McpError::protocol)? {
+            if let Some(outcome) = self.handle_incoming(&message, id, cancel)? {
+                return Ok(outcome);
+            }
+        }
+        Err(McpError::protocol(
+            "the answer has no response to the request",
+        ))
+    }
+
     /// Reads an event stream until the response to `id`. A stream that ends
     /// after an event id but before the response is resumed with `GET` and
     /// `Last-Event-ID`, after the server's `retry` delay, at most
     /// [`MAX_RESUMES`] times (MCP 2025-11-25, review F4). A `GET` never
     /// resends the request; if resuming fails, the answer is lost, which
-    /// for a paid call is an unknown outcome.
+    /// for a paid call is an unknown outcome. The bytes read, across
+    /// resumes, are kept in `read` (up to the answer limit) so an unreadable
+    /// answer still names its job ids (review R4).
     fn read_stream(
         &self,
         mut body: Box<dyn Read + Send>,
         id: i64,
         resume: &Resume,
         cancel: &CancelToken,
+        read: &mut Vec<u8>,
     ) -> Result<Value, McpError> {
         let mut parser = SseParser::new(MAX_ANSWER_BYTES);
         let mut chunk = [0u8; 8 * 1024];
@@ -970,6 +1026,9 @@ impl McpClient {
                 parser.next_stream();
                 continue;
             }
+            if read.len() < MAX_ANSWER_BYTES {
+                read.extend_from_slice(&chunk[..n.min(MAX_ANSWER_BYTES - read.len())]);
+            }
             let events = parser
                 .feed(&chunk[..n])
                 .map_err(|e| McpError::protocol(e.to_string()))?;
@@ -984,6 +1043,9 @@ impl McpClient {
                     .map_err(|e| McpError::protocol(format!("invalid JSON in an event: {e}")))?;
                 for message in jsonrpc::messages(value).map_err(McpError::protocol)? {
                     if let Some(outcome) = self.handle_incoming(&message, id, cancel)? {
+                        // Taken before the body is dropped, so the transport's
+                        // copy of the rest is not reported as late.
+                        resume.answered();
                         return outcome;
                     }
                 }
@@ -1059,8 +1121,8 @@ impl McpClient {
         if let Some(sid) = session {
             request = request.header("mcp-session-id", sid);
         }
-        if let Some(sink) = &resume.late {
-            request = request.with_late(Arc::clone(sink));
+        if let Some(route) = &resume.late {
+            request = request.with_late(Arc::clone(&route.sink));
         }
         tracing::debug!(%last_event_id, "resuming an event stream");
         match self.transport.send(request, cancel) {
@@ -1148,8 +1210,9 @@ impl McpClient {
 
 impl McpClient {
     /// Where a late answer to request `id` goes: parsed as far as possible
-    /// and queued with every job id it names.
-    fn late_sink(&self, out: &Outgoing<'_>, id: i64) -> LateSink {
+    /// and queued with every job id it names. Nothing is queued once the
+    /// caller has the response, nor for a refusal status that names no job.
+    fn late_route(&self, out: &Outgoing<'_>, id: i64) -> LateRoute {
         let tool = out
             .params
             .as_ref()
@@ -1158,18 +1221,31 @@ impl McpClient {
             .unwrap_or(out.method)
             .to_owned();
         let queue = Arc::clone(&self.late);
-        Arc::new(move |response: LateResponse| {
+        let answered = Arc::new(AtomicBool::new(false));
+        let taken = Arc::clone(&answered);
+        let sink: LateSink = Arc::new(move |response: LateResponse| {
+            if taken.load(Ordering::Acquire) {
+                return;
+            }
             let result = late_result(&tool, id, response);
+            if result.job_ids.is_empty() && !(200..300).contains(&result.status) {
+                tracing::debug!(
+                    status = result.status,
+                    "a refusal arrived after the caller stopped"
+                );
+                return;
+            }
             tracing::warn!(
                 tool = %result.tool,
                 jobs = result.job_ids.len(),
-                "an answer arrived after a cancel"
+                "an answer arrived after the caller stopped reading"
             );
             queue
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push(result);
-        })
+        });
+        LateRoute { sink, answered }
     }
 }
 

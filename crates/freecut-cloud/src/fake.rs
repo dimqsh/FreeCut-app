@@ -68,6 +68,11 @@ pub enum Fault {
     Garbage,
     /// An SSE stream that ends before the response.
     CutStream,
+    /// `200` JSON that breaks off inside the response, after this text
+    /// (review R4: an unreadable answer that names a job).
+    GarbageWith(String),
+    /// An SSE stream that ends inside the response event, after this text.
+    CutStreamWith(String),
     /// A JSON-RPC error answer with this code and message.
     RpcError(i64, String),
 }
@@ -612,6 +617,13 @@ fn sse_response(text: String, chunk: usize, extra_headers: Vec<(String, String)>
     }
 }
 
+/// The start of a tool-result response to `rec`, broken off inside its
+/// first text item.
+fn response_start(rec: &Recorded) -> String {
+    let id = rec.body.get("id").cloned().unwrap_or(Value::Null);
+    format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"content":[{{"type":"text","text":""#)
+}
+
 fn fault_response(fault: &Fault, rec: &Recorded) -> Result<HttpResponse, TransportError> {
     match fault {
         Fault::RpcError(code, message) => {
@@ -629,6 +641,16 @@ fn fault_response(fault: &Fault, rec: &Recorded) -> Result<HttpResponse, Transpo
             200,
             vec![("content-type".into(), "application/json".into())],
             b"{not json".to_vec(),
+        )),
+        Fault::GarbageWith(text) => Ok(HttpResponse::new(
+            200,
+            vec![("content-type".into(), "application/json".into())],
+            format!("{}{text}", response_start(rec)).into_bytes(),
+        )),
+        Fault::CutStreamWith(text) => Ok(sse_response(
+            format!("event: message\ndata: {}{text}", response_start(rec)),
+            64,
+            Vec::new(),
         )),
         Fault::CutStream => Ok(sse_response(
             "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n\n".into(),

@@ -140,8 +140,14 @@ pub enum SubmitError {
     NotSent(CloudError),
     /// It may have reached the service without a readable answer: *Outcome
     /// unknown*; never resent automatically.
-    #[error("outcome unknown: {0}")]
-    OutcomeUnknown(CloudError),
+    #[error("outcome unknown: {cause}")]
+    OutcomeUnknown {
+        /// What went wrong.
+        cause: CloudError,
+        /// Job ids the partial or refused answer named (review R4, R5):
+        /// the ledger records them with the run.
+        job_ids: Vec<String>,
+    },
     /// The service answered with a refusal or an error.
     #[error("rejected: {0}")]
     Rejected(CloudError),
@@ -217,7 +223,7 @@ pub fn classify(err: &McpError) -> CloudError {
             message,
             structured,
         } => classify_service_message(message, structured.as_ref()),
-        McpError::Protocol { detail } => CloudError::Protocol {
+        McpError::Protocol { detail, .. } => CloudError::Protocol {
             detail: detail.clone(),
         },
         McpError::UnsupportedVersion(v) => {
@@ -263,14 +269,18 @@ pub const REJECTING_RPC_CODES: &[i64] = &[-32700, -32600, -32601, -32602];
 /// nothing ran are `Rejected`; everything else is `OutcomeUnknown`, with the
 /// classified reason kept for the message.
 pub fn submit_disposition(err: &McpError) -> SubmitError {
+    let unknown = |cause| SubmitError::OutcomeUnknown {
+        cause,
+        job_ids: Vec::new(),
+    };
     match err {
         McpError::Transport(e) => match e.send {
             SendState::NotSent => SubmitError::NotSent(classify(err)),
-            SendState::MaybeSent => SubmitError::OutcomeUnknown(CloudError::NoAnswer),
+            SendState::MaybeSent => unknown(CloudError::NoAnswer),
         },
         McpError::Cancelled { send } => match send {
             SendState::NotSent => SubmitError::NotSent(CloudError::Cancelled),
-            SendState::MaybeSent => SubmitError::OutcomeUnknown(CloudError::NoAnswer),
+            SendState::MaybeSent => unknown(CloudError::NoAnswer),
         },
         // Refused before sending: no token, a guard refusal, an unsupported
         // service found during the handshake.
@@ -286,17 +296,18 @@ pub fn submit_disposition(err: &McpError) -> SubmitError {
             if REJECTING_RPC_CODES.contains(&e.code) {
                 SubmitError::Rejected(classify(err))
             } else {
-                SubmitError::OutcomeUnknown(classify(err))
+                unknown(classify(err))
             }
         }
         // The tool answered with an error result: the service explains a
         // refusal. One that names job ids may have created them anyway.
         McpError::Tool { structured, .. } => {
-            if structured
-                .as_ref()
-                .is_some_and(|v| !job_ids_in(v).is_empty())
-            {
-                SubmitError::OutcomeUnknown(classify(err))
+            let job_ids = structured.as_ref().map(job_ids_in).unwrap_or_default();
+            if !job_ids.is_empty() {
+                SubmitError::OutcomeUnknown {
+                    cause: classify(err),
+                    job_ids,
+                }
             } else {
                 SubmitError::Rejected(classify(err))
             }
@@ -305,14 +316,18 @@ pub fn submit_disposition(err: &McpError) -> SubmitError {
             if *status >= 500 {
                 // A server or gateway error says nothing about whether the
                 // job was created behind it.
-                SubmitError::OutcomeUnknown(classify(err))
+                unknown(classify(err))
             } else {
                 SubmitError::Rejected(classify(err))
             }
         }
         // An answer that cannot be read after a paid request was sent is
-        // always an unknown outcome, never a failure.
-        McpError::Protocol { .. } => SubmitError::OutcomeUnknown(classify(err)),
+        // always an unknown outcome, never a failure; the part that arrived
+        // may name job ids (review R4).
+        McpError::Protocol { job_ids, .. } => SubmitError::OutcomeUnknown {
+            cause: classify(err),
+            job_ids: job_ids.clone(),
+        },
     }
 }
 
@@ -531,17 +546,17 @@ mod tests {
                 TransportErrorKind::Timeout,
                 SendState::MaybeSent
             )),
-            OutcomeUnknown(_)
+            OutcomeUnknown { .. }
         ));
         assert!(matches!(
             d(&transport(TransportErrorKind::Io, SendState::MaybeSent)),
-            OutcomeUnknown(_)
+            OutcomeUnknown { .. }
         ));
         assert!(matches!(
             d(&McpError::Cancelled {
                 send: SendState::MaybeSent
             }),
-            OutcomeUnknown(_)
+            OutcomeUnknown { .. }
         ));
         assert!(matches!(
             d(&McpError::Cancelled {
@@ -569,11 +584,14 @@ mod tests {
                 status: 502,
                 excerpt: String::new()
             }),
-            OutcomeUnknown(_)
+            OutcomeUnknown { .. }
         ));
         assert!(matches!(
-            d(&McpError::Protocol { detail: "x".into() }),
-            OutcomeUnknown(_)
+            d(&McpError::Protocol {
+                detail: "x".into(),
+                job_ids: vec![]
+            }),
+            OutcomeUnknown { .. }
         ));
         // A server-defined code proves nothing: unknown, reason kept.
         assert!(matches!(
@@ -582,7 +600,10 @@ mod tests {
                 message: "Not enough credits".into(),
                 data: None
             })),
-            OutcomeUnknown(CloudError::InsufficientCredits)
+            OutcomeUnknown {
+                cause: CloudError::InsufficientCredits,
+                ..
+            }
         ));
         let rpc = |code| {
             McpError::Rpc(RpcError {
@@ -595,7 +616,7 @@ mod tests {
             assert!(matches!(d(&rpc(code)), Rejected(_)), "{code}");
         }
         for code in [-32603, -32000, -32001, -32099, 1, 0] {
-            assert!(matches!(d(&rpc(code)), OutcomeUnknown(_)), "{code}");
+            assert!(matches!(d(&rpc(code)), OutcomeUnknown { .. }), "{code}");
         }
         assert!(matches!(
             d(&McpError::Tool {
@@ -604,7 +625,7 @@ mod tests {
                     serde_json::json!({"job_id": "0b4f6d2a-1111-4222-8333-944455556666"})
                 )
             }),
-            OutcomeUnknown(_)
+            OutcomeUnknown { .. }
         ));
         assert!(matches!(
             d(&McpError::Tool {
