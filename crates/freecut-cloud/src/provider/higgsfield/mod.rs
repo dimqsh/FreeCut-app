@@ -246,7 +246,10 @@ impl GenerationProvider for HiggsfieldProvider {
             .get(op.model().as_str())
             .filter(|m| m.is_visible())
             .ok_or_else(|| CloudError::ModelUnavailable {
-                message: format!("{} is not in the service's model list", op.model()),
+                message: format!(
+                    "{} is not offered in FreeCut (not listed or not reviewed)",
+                    op.model()
+                ),
             })?;
         let call = map::tool_call(op, model).map_err(|e| CloudError::NotOffered {
             what: e.to_string(),

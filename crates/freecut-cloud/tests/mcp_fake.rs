@@ -1763,6 +1763,45 @@ fn every_byte_of_an_answer_is_scanned_for_job_ids() {
     }
 }
 
+/// R19: a model the service lists but FreeCut has not reviewed is refused
+/// before any request: one in the recorded listing, and one the service
+/// added since. Nothing reaches a generate tool.
+#[test]
+fn an_unreviewed_model_is_refused_before_any_request() {
+    use freecut_cloud::catalogue::ModelId;
+    let fake = fake_higgsfield();
+    fake.on_tool("models_explore", |args| {
+        let kind = args["type"].as_str().unwrap_or_default();
+        let mut listing = fixture_json(&format!("models_explore-list-{kind}.json"));
+        if kind == "video" {
+            let mut added = listing["items"][0].clone();
+            added["id"] = json!("brand_new_video_9");
+            listing["items"].as_array_mut().unwrap().push(added);
+        }
+        ToolReply::Json(listing)
+    });
+    let (p, _) = provider(&fake, token("t1"));
+    let mut image = image_op();
+    if let Operation::Image(r) = &mut image {
+        r.model = ModelId::new("nano_banana_2_shots");
+    }
+    let mut video = video_op();
+    if let Operation::Video(r) = &mut video {
+        r.model = ModelId::new("brand_new_video_9");
+    }
+    for op in [image, video] {
+        match p.quote(&op, &run_tag(), &CancelToken::new()) {
+            Err(CloudError::ModelUnavailable { message }) => assert!(
+                message.contains("is not offered in FreeCut (not listed or not reviewed)"),
+                "{message}"
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+    assert!(fake.calls_to("generate_image").is_empty());
+    assert!(fake.calls_to("generate_video").is_empty());
+}
+
 fn fault_strategy() -> impl Strategy<Value = Fault> {
     prop_oneof![
         Just(Fault::Refuse),
