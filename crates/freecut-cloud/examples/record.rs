@@ -75,13 +75,36 @@ const MAX_RECORDED_BYTES: usize = 32 * 1024 * 1024;
 /// How long the owner has to finish signing in.
 const SIGN_IN_WAIT: Duration = Duration::from_secs(300);
 
-fn main() -> anyhow_free::Result {
-    let args: Vec<String> = std::env::args().collect();
-    if let Some(i) = args.iter().position(|a| a == "--filter-headers") {
-        let path = args.get(i + 1).ok_or("--filter-headers needs a file")?;
-        return filter_file(Path::new(path));
+/// What a run of the tool does.
+#[derive(Debug, PartialEq, Eq)]
+enum Mode {
+    /// Sign in and record.
+    Record { print_url: bool },
+    /// Rewrite an older recording; no sign-in, no network.
+    FilterHeaders(PathBuf),
+}
+
+const USAGE: &str = "usage: record [--print-url]\n       record --filter-headers <file>";
+
+/// The run's mode. Anything but the two documented forms is refused, so a
+/// typo in `--filter-headers` cannot start a sign-in (review N5).
+fn parse_args(args: &[String]) -> Result<Mode, String> {
+    match args {
+        [] => Ok(Mode::Record { print_url: false }),
+        [flag] if flag == "--print-url" => Ok(Mode::Record { print_url: true }),
+        [flag, file] if flag == "--filter-headers" && !file.starts_with('-') => {
+            Ok(Mode::FilterHeaders(PathBuf::from(file)))
+        }
+        _ => Err(format!("{USAGE}\nnot understood: {}", args.join(" "))),
     }
-    let print_url = args.iter().any(|a| a == "--print-url");
+}
+
+fn main() -> anyhow_free::Result {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let print_url = match parse_args(&args)? {
+        Mode::FilterHeaders(path) => return filter_file(&path),
+        Mode::Record { print_url } => print_url,
+    };
     let out = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/higgsfield/recorded/free-calls.jsonl");
     let cancel = CancelToken::new();
@@ -1888,6 +1911,39 @@ mod tests {
         body.read_to_end(&mut read).unwrap();
         assert_eq!(read, br#"{"access_token":"at-1"}"#);
         assert!(body.data.iter().all(|b| *b == 0));
+    }
+
+    /// N5: only the two documented forms run; a typo stops with the usage
+    /// before anything is built or sent.
+    #[test]
+    fn unknown_arguments_stop_before_anything_is_sent() {
+        let args = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_args(&args(&[])),
+            Ok(Mode::Record { print_url: false })
+        );
+        assert_eq!(
+            parse_args(&args(&["--print-url"])),
+            Ok(Mode::Record { print_url: true })
+        );
+        assert_eq!(
+            parse_args(&args(&["--filter-headers", "f.jsonl"])),
+            Ok(Mode::FilterHeaders(PathBuf::from("f.jsonl")))
+        );
+        for bad in [
+            &["--filter-header", "f.jsonl"][..],
+            &["--filter-headers=f.jsonl"],
+            &["--filter-headers"],
+            &["--filter-headers", "--print-url"],
+            &["--print-urls"],
+            &["--print-url", "extra"],
+            &["record"],
+        ] {
+            assert!(
+                parse_args(&args(bad)).unwrap_err().contains("usage"),
+                "{bad:?}"
+            );
+        }
     }
 
     #[test]
