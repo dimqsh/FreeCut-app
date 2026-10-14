@@ -8,11 +8,10 @@
 //!
 //! **Free calls only**: sign-in discovery, one client registration, the
 //! browser sign-in and its code exchange, then `initialize`, `tools/list`,
-//! `models_explore` listings and the session `DELETE`. No cost check and no
-//! paid tool: before anything leaves the computer, the recording transport
-//! refuses any body to the service that is not a single JSON-RPC object
-//! (batches included), any `tools/call` whose tool is not free on the allow
-//! list, and any request that carries `get_cost`.
+//! `models_explore` listings and the session `DELETE`. Before anything
+//! leaves the computer, the recording transport refuses every body but the
+//! few the tool sends (see [`refusal`]): no other tool, free or paid, no
+//! other action, no batch, nothing that names `get_cost`.
 //!
 //! What is written (`tests/fixtures/higgsfield/recorded/free-calls.jsonl`,
 //! one exchange per line) is scrubbed first. Every secret the run holds (the
@@ -42,11 +41,11 @@ use freecut_cloud::CancelToken;
 use freecut_cloud::catalogue::OutputKind;
 use freecut_cloud::guard::{PreflightGuard, is_uuid};
 use freecut_cloud::http::{TransportConfig, UreqTransport};
-use freecut_cloud::mcp::{CallClass, LateQueue, StaticToken};
+use freecut_cloud::mcp::{LateQueue, StaticToken};
 use freecut_cloud::oauth::pkce::{Pkce, random_state};
 use freecut_cloud::oauth::{OAuthClient, authorize_request, parse_callback};
 use freecut_cloud::provider::GenerationProvider;
-use freecut_cloud::provider::higgsfield::{ENDPOINT, HiggsfieldProvider, allow, auth_policy};
+use freecut_cloud::provider::higgsfield::{ENDPOINT, HiggsfieldProvider, auth_policy};
 use freecut_cloud::redact;
 use freecut_cloud::transport::{
     HttpRequest, HttpResponse, HttpTransport, Method, SystemWaiter, TransportError,
@@ -412,32 +411,68 @@ impl std::fmt::Debug for Recorder {
     }
 }
 
-/// Why `body`, sent to the MCP endpoint, may not leave: anything but one
-/// JSON-RPC object (a batch could carry any call, round 3), a tool call that
-/// is not free on the allow list, or anything carrying `get_cost`.
+/// The JSON-RPC methods the tool sends to the service, besides
+/// `tools/call` for `models_explore` with action `list` (review R25).
+const ALLOWED_METHODS: &[&str] = &[
+    "initialize",
+    "notifications/initialized",
+    "tools/list",
+    "ping",
+    "notifications/cancelled",
+];
+
+/// Why `body`, sent to `url`, may not leave (review R25). The service gets
+/// exactly what `main` sends: the handshake, `tools/list`, `ping`,
+/// `notifications/cancelled`, `models_explore` with action `list`, and
+/// replies to the server's requests (an `id` with a `result` or `error`).
+/// Everything else is refused: another tool, free ones included
+/// (`media_upload` creates upload slots, `balance` would record credit
+/// figures), another action, a method that is not exactly one of those
+/// strings, a batch, a body that is not JSON. At any URL, a body that names
+/// `get_cost`, or a JSON-RPC message to another host, is refused.
 fn refusal(url: &str, body: &[u8]) -> Option<String> {
-    if !url.starts_with(ENDPOINT) || body.is_empty() {
+    if body.is_empty() {
         return None;
     }
-    let text = String::from_utf8_lossy(body);
-    if text.contains("get_cost") {
+    if String::from_utf8_lossy(body).contains("get_cost") {
         return Some("a cost check".into());
     }
-    let message = match serde_json::from_slice::<Value>(body) {
+    let parsed = serde_json::from_slice::<Value>(body);
+    if !url.starts_with(ENDPOINT) {
+        // Sign-in: a form or a registration document, never JSON-RPC.
+        return match parsed {
+            Ok(Value::Object(m)) if m.contains_key("method") || m.contains_key("jsonrpc") => {
+                Some("a JSON-RPC message to another host".into())
+            }
+            Ok(Value::Array(_)) => Some("a JSON array to another host".into()),
+            _ => None,
+        };
+    }
+    let message = match parsed {
         Ok(message @ Value::Object(_)) => message,
         Ok(Value::Array(_)) => return Some("a JSON-RPC batch".into()),
         _ => return Some("a body that is not one JSON-RPC object".into()),
     };
-    if message.get("method").and_then(Value::as_str) != Some("tools/call") {
-        return None;
-    }
-    let name = message
-        .pointer("/params/name")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    match allow::lookup(name) {
-        Some(tool) if tool.class() == CallClass::Free => None,
-        _ => Some(format!("tool {name}, which is not a free call")),
+    match message.get("method") {
+        None => {
+            let reply = message.get("id").is_some()
+                && (message.get("result").is_some() || message.get("error").is_some());
+            (!reply).then(|| "a message that is neither a request nor a reply".into())
+        }
+        Some(Value::String(m)) if ALLOWED_METHODS.contains(&m.as_str()) => None,
+        Some(Value::String(m)) if m == "tools/call" => {
+            let name = message.pointer("/params/name").and_then(Value::as_str);
+            let action = message
+                .pointer("/params/arguments/action")
+                .and_then(Value::as_str);
+            match (name, action) {
+                (Some("models_explore"), Some("list")) => None,
+                _ => Some(format!(
+                    "tool {name:?} with action {action:?}, which the recorder does not send"
+                )),
+            }
+        }
+        Some(other) => Some(format!("method {other}, which the recorder does not send")),
     }
 }
 
@@ -846,6 +881,7 @@ mod tests {
     use super::*;
     use freecut_cloud::fake::{FakeService, StreamMode, ToolReply};
     use freecut_cloud::mcp::{McpClient, McpError, RunTag};
+    use freecut_cloud::provider::higgsfield::allow;
     use freecut_cloud::secret::Secret;
 
     /// Retries without sleeping.
@@ -1128,6 +1164,99 @@ mod tests {
         .with_bearer(Secret::new("t1"));
         assert!(recorder.send(one, &CancelToken::new()).is_ok());
         assert_eq!(fake.requests().len(), 1);
+    }
+
+    /// R25: the gate lets through exactly what `main` sends: the handshake,
+    /// `tools/list`, `ping`, `notifications/cancelled`, `models_explore`
+    /// with action `list`, and replies. Every other call, free tools
+    /// included, is refused before sending, at any URL.
+    #[test]
+    fn the_gate_allows_only_the_calls_the_tool_makes() {
+        let call = |name: &str, args: Value| {
+            json!({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                "params": {"name": name, "arguments": args}})
+        };
+        let refused = [
+            (
+                ENDPOINT,
+                call("media_upload", json!({"files": [{"name": "a.png"}]})),
+            ),
+            (ENDPOINT, call("balance", json!({}))),
+            (ENDPOINT, call("jobs_wait", json!({"job_ids": []}))),
+            (
+                ENDPOINT,
+                call("models_explore", json!({"action": "recommend"})),
+            ),
+            (
+                ENDPOINT,
+                call(
+                    "models_explore",
+                    json!({"action": "list", "type": "image", "get_cost": true}),
+                ),
+            ),
+            (
+                ENDPOINT,
+                json!({"jsonrpc": "2.0", "id": 9, "method": "Tools/Call",
+                "params": {"name": "generate_image"}}),
+            ),
+            (
+                ENDPOINT,
+                json!({"jsonrpc": "2.0", "id": 9, "method": ["tools/call"],
+                "params": {"name": "generate_image"}}),
+            ),
+            (
+                ENDPOINT,
+                json!({"jsonrpc": "2.0", "method": "resources/list"}),
+            ),
+            (ENDPOINT, json!({"jsonrpc": "2.0", "id": 9})),
+            (
+                "https://clerk.example/oauth/token",
+                call("models_explore", json!({"action": "list"})),
+            ),
+        ];
+        for (url, body) in &refused {
+            assert!(
+                refusal(url, body.to_string().as_bytes()).is_some(),
+                "{url} {body}"
+            );
+        }
+        let allowed = [
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+            json!({"jsonrpc": "2.0", "id": 3, "method": "ping"}),
+            json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 3}}),
+            call(
+                "models_explore",
+                json!({"action": "list", "type": "video", "limit": 100}),
+            ),
+            json!({"jsonrpc": "2.0", "id": "s1", "result": {}}),
+            json!({"jsonrpc": "2.0", "id": "s2", "error": {"code": -32601, "message": "x"}}),
+        ];
+        for body in &allowed {
+            assert_eq!(
+                refusal(ENDPOINT, body.to_string().as_bytes()),
+                None,
+                "{body}"
+            );
+        }
+        // OAuth requests: a form and a registration body go.
+        assert_eq!(
+            refusal(
+                "https://clerk.example/oauth/token",
+                b"grant_type=authorization_code&code=x"
+            ),
+            None
+        );
+        assert_eq!(
+            refusal(
+                "https://clerk.example/oauth/register",
+                json!({"client_name": "FreeCut", "redirect_uris": ["http://127.0.0.1/callback"]})
+                    .to_string()
+                    .as_bytes()
+            ),
+            None
+        );
     }
 
     /// Round 3: the one-off pass over an older recording keeps the same
