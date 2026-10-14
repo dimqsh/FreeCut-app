@@ -665,6 +665,10 @@ fn paid_failure_points_each_end_in_their_state_with_at_most_one_submission() {
     );
     let (d, n) = at_call(Fault::CutStream);
     assert!(matches!(d, OutcomeUnknown(_)) && n == 1, "{d:?} {n}");
+    let (d, n) = at_call(Fault::RpcError(-32603, "Internal error".into()));
+    assert!(matches!(d, OutcomeUnknown(_)) && n == 1, "{d:?} {n}");
+    let (d, n) = at_call(Fault::RpcError(-32602, "Invalid params".into()));
+    assert!(matches!(d, Rejected(_)) && n == 1, "{d:?} {n}");
 
     // 401: renewed, not resent.
     let fake = paid_fake();
@@ -950,19 +954,39 @@ fn fault_strategy() -> impl Strategy<Value = Fault> {
         Just(Fault::Refuse),
         Just(Fault::DropAfterSend),
         Just(Fault::Status(500, "x".into())),
+        Just(Fault::Status(502, "x".into())),
         Just(Fault::Status(503, "x".into())),
         Just(Fault::Status(429, "x".into())),
         Just(Fault::Status(400, "x".into())),
+        Just(Fault::Status(404, "x".into())),
         Just(Fault::Garbage),
         Just(Fault::CutStream),
+        Just(Fault::RpcError(-32603, "Internal error".into())),
+        Just(Fault::RpcError(-32000, "Server error".into())),
+        Just(Fault::RpcError(-32602, "Invalid params".into())),
     ]
+}
+
+/// Faults that leave the answer to a request that reached the server lost
+/// or unreadable: the run must end as an unknown outcome.
+fn hides_the_outcome(fault: &Fault) -> bool {
+    match fault {
+        Fault::DropAfterSend | Fault::Garbage | Fault::CutStream => true,
+        Fault::Status(status, _) => *status >= 500,
+        Fault::RpcError(code, _) => !freecut_cloud::error::REJECTING_RPC_CODES.contains(code),
+        Fault::Refuse => false,
+    }
 }
 
 proptest! {
     /// For any sequence of failures spread over the handshake and the paid
-    /// request, with or without SSE, expired sessions or a rejected token,
-    /// at most one submission reaches the service; and when none did, the
-    /// run is "not sent".
+    /// request, with or without SSE, expired sessions or a rejected token:
+    /// - at most one submission reaches the service (never resent);
+    /// - none reached it: the run is "not sent";
+    /// - one reached it: the run is never "not sent", and when its answer
+    ///   was lost or unreadable the run is "outcome unknown" (review M4);
+    /// - one reached it with no fault on its answer: it succeeded, or the
+    ///   service refused it readably (401 or session 404): "rejected".
     #[test]
     fn a_paid_call_is_submitted_at_most_once(
         faults in proptest::collection::vec(fault_strategy(), 0..8),
@@ -970,6 +994,7 @@ proptest! {
         expire in any::<bool>(),
         reject in any::<bool>(),
     ) {
+        use SubmitError::*;
         let fake = paid_fake();
         if sse {
             fake.set_stream(StreamMode::Sse { chunk: 5 });
@@ -987,13 +1012,27 @@ proptest! {
             fake.push_fault(f);
         }
         let result = submit(&c);
-        let submissions = fake.calls_to("generate_image").len();
-        prop_assert!(submissions <= 1, "{} submissions", submissions);
-        match result {
-            Ok(()) => prop_assert_eq!(submissions, 1),
-            Err(e) => {
-                if submissions == 0 {
-                    prop_assert!(matches!(submit_disposition(&e), SubmitError::NotSent(_)), "{:?}", e);
+        let reached: Vec<_> = fake
+            .requests()
+            .into_iter()
+            .filter(|r| r.tool() == Some("generate_image"))
+            .collect();
+        prop_assert!(reached.len() <= 1, "{} submissions", reached.len());
+        match (reached.first(), result) {
+            (None, Ok(())) => prop_assert!(false, "succeeded without reaching the service"),
+            (None, Err(e)) => {
+                prop_assert!(matches!(submit_disposition(&e), NotSent(_)), "{:?}", e);
+            }
+            (Some(rec), Ok(())) => prop_assert!(rec.fault.is_none(), "{:?}", rec.fault),
+            (Some(rec), Err(e)) => {
+                let d = submit_disposition(&e);
+                prop_assert!(!matches!(d, NotSent(_)), "reached but {:?}", d);
+                match &rec.fault {
+                    Some(f) if hides_the_outcome(f) => {
+                        prop_assert!(matches!(d, OutcomeUnknown(_)), "{:?} gave {:?}", f, d);
+                    }
+                    Some(_) => {}
+                    None => prop_assert!(matches!(d, Rejected(_)), "{:?}", d),
                 }
             }
         }

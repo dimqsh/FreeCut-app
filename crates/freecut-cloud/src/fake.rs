@@ -43,6 +43,8 @@ pub enum Fault {
     Garbage,
     /// An SSE stream that ends before the response.
     CutStream,
+    /// A JSON-RPC error answer with this code and message.
+    RpcError(i64, String),
 }
 
 /// A scripted tool reply.
@@ -75,6 +77,8 @@ pub struct Recorded {
     pub bearer: Option<String>,
     /// The body: parsed JSON, a form as an object, or `null`.
     pub body: Value,
+    /// The fault that replaced the answer to this request, if any.
+    pub fault: Option<Fault>,
 }
 
 impl Recorded {
@@ -303,6 +307,7 @@ fn record(req: &HttpRequest) -> Recorded {
         protocol: header(req, "mcp-protocol-version").map(str::to_owned),
         bearer: req.bearer.as_ref().map(|b| b.expose().to_owned()),
         body,
+        fault: None,
     }
 }
 
@@ -452,7 +457,7 @@ impl FakeService {
                         json!({"content": [{"type": "text", "text": m}], "isError": true}),
                     ),
                     ToolReply::RpcError(code, m) => rpc_error(&id, code, &m),
-                    ToolReply::Fault(fault) => return fault_response(&fault),
+                    ToolReply::Fault(fault) => return fault_response(&fault, rec),
                 }
             }
             other => rpc_error(&id, -32601, &format!("Method not found: {other}")),
@@ -498,8 +503,12 @@ fn sse_response(text: String, chunk: usize, extra_headers: Vec<(String, String)>
     }
 }
 
-fn fault_response(fault: &Fault) -> Result<HttpResponse, TransportError> {
+fn fault_response(fault: &Fault, rec: &Recorded) -> Result<HttpResponse, TransportError> {
     match fault {
+        Fault::RpcError(code, message) => {
+            let id = rec.body.get("id").cloned().unwrap_or(Value::Null);
+            Ok(json_response(200, &rpc_error(&id, *code, message)))
+        }
         Fault::Refuse => Err(TransportError::not_sent(TransportErrorKind::Connect, "connection refused (fake)")),
         Fault::DropAfterSend => Err(TransportError::maybe_sent(TransportErrorKind::Io, "connection reset after sending (fake)")),
         Fault::Status(status, body) => Ok(HttpResponse::new(
@@ -539,13 +548,14 @@ impl HttpTransport for FakeService {
                 "connection refused (fake)",
             ));
         }
-        let rec = record(&request);
-        self.lock().log.push(rec.clone());
+        let mut rec = record(&request);
         let fault = fault.or_else(|| {
             let s = self.lock();
             rec.rpc_method()
                 .and_then(|m| s.method_faults.get(m).cloned())
         });
+        rec.fault.clone_from(&fault);
+        self.lock().log.push(rec.clone());
         let is_mcp = strip_query(&rec.url) == self.lock().mcp_url;
         let answer = if is_mcp {
             self.answer_mcp(&rec)?
@@ -565,7 +575,7 @@ impl HttpTransport for FakeService {
         };
         match fault {
             None => Ok(answer),
-            Some(f) => fault_response(&f),
+            Some(f) => fault_response(&f, &rec),
         }
     }
 }
