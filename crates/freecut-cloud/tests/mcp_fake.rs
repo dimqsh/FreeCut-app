@@ -918,6 +918,62 @@ fn a_stream_that_cannot_be_resumed_loses_the_answer() {
     }
 }
 
+/// F8: a cancel after the request may have left sends
+/// notifications/cancelled with its id; a cancel before sending sends
+/// nothing.
+#[test]
+fn a_cancel_after_sending_tells_the_server() {
+    let fake = paid_fake();
+    let cancel = CancelToken::new();
+    let trigger = cancel.clone();
+    fake.on_tool("generate_image", move |_| {
+        trigger.cancel(); // the user cancels while the call is in flight
+        ToolReply::Json(
+            json!({"jobs": [{"index": 0, "job_id": "0b4f6d2a-1111-4222-8333-944455556666"}]}),
+        )
+    });
+    let c = mcp_client(&fake, token("t1"));
+    c.initialize(&CancelToken::new()).unwrap();
+    let err = c
+        .call_tool(&allow::GENERATE_IMAGE, image_args(), &cancel)
+        .unwrap_err();
+    assert!(
+        matches!(submit_disposition(&err), SubmitError::OutcomeUnknown(_)),
+        "{err:?}"
+    );
+    let requests = fake.requests();
+    let call_id = requests
+        .iter()
+        .find(|r| r.tool() == Some("generate_image"))
+        .unwrap()
+        .body["id"]
+        .clone();
+    let notices: Vec<_> = requests
+        .iter()
+        .filter(|r| r.rpc_method() == Some("notifications/cancelled"))
+        .collect();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].body["params"]["requestId"], call_id);
+    assert_eq!(notices[0].session.as_deref(), Some("fake-session-1"));
+
+    // Cancelled before sending: nothing reaches the server.
+    let fake = paid_fake();
+    let c = mcp_client(&fake, token("t1"));
+    c.initialize(&CancelToken::new()).unwrap();
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    assert!(
+        c.call_tool(&allow::GENERATE_IMAGE, image_args(), &cancel)
+            .is_err()
+    );
+    assert!(
+        fake.requests()
+            .iter()
+            .all(|r| r.rpc_method() != Some("notifications/cancelled"))
+    );
+    assert!(fake.calls_to("generate_image").is_empty());
+}
+
 /// R1: a `404` to `notifications/initialized` ends the handshake. It must not
 /// start another one (which recursed until the stack overflowed).
 #[test]

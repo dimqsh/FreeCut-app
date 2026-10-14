@@ -295,7 +295,30 @@ fn an_answer_after_a_cancel_reaches_the_late_queue() {
         vec!["5c6f0d1e-2b3a-4c4d-8e5f-6a7b8c9d0e1f"]
     );
     assert!(late[0].complete);
-    assert_eq!(server.count.load(Ordering::SeqCst), 3);
+    // One paid call, and then the cancel notice for it (F8).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let method = |b: &Value| b["method"].as_str().unwrap_or_default().to_owned();
+    while Instant::now() < deadline
+        && !server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, b)| method(b) == "notifications/cancelled")
+    {
+        thread::sleep(Duration::from_millis(50));
+    }
+    let requests = server.requests.lock().unwrap();
+    let calls: Vec<_> = requests
+        .iter()
+        .filter(|(_, b)| method(b) == "tools/call")
+        .collect();
+    assert_eq!(calls.len(), 1);
+    let notice = requests
+        .iter()
+        .find(|(_, b)| method(b) == "notifications/cancelled")
+        .expect("a cancel notice");
+    assert_eq!(notice.1["params"]["requestId"], calls[0].1["id"]);
 }
 
 #[test]

@@ -813,10 +813,26 @@ impl McpClient {
         }
         tracing::trace!(target: WIRE_TARGET, method = out.method, body = %redact::body(&request.body), "mcp request");
         let started = Instant::now();
-        let response = self
-            .transport
-            .send(request, cancel)
-            .map_err(McpError::Transport)?;
+        // A cancel after the request may have left: tell the server (§4.4).
+        let tell_cancelled = |err: &McpError| {
+            let after_sending = matches!(
+                err,
+                McpError::Cancelled {
+                    send: SendState::MaybeSent
+                }
+            ) || matches!(err, McpError::Transport(e) if e.kind == TransportErrorKind::Cancelled && e.send == SendState::MaybeSent);
+            if after_sending && out.kind == Kind::Request && !is_initialize {
+                self.notify_cancelled(id);
+            }
+        };
+        let response = match self.transport.send(request, cancel) {
+            Ok(response) => response,
+            Err(e) => {
+                let err = McpError::Transport(e);
+                tell_cancelled(&err);
+                return Err(err);
+            }
+        };
         tracing::debug!(
             method = out.method,
             status = response.status,
@@ -838,7 +854,9 @@ impl McpClient {
                         late,
                         session: session_header.clone(),
                     };
-                    let result = self.read_answer(response, id, resume, cancel)?;
+                    let result = self
+                        .read_answer(response, id, resume, cancel)
+                        .inspect_err(|e| tell_cancelled(e))?;
                     Ok(Answer {
                         result,
                         session: session_header,
@@ -965,6 +983,41 @@ impl McpClient {
                     }
                 }
             }
+        }
+    }
+
+    /// Sends `notifications/cancelled` for request `id` after a local cancel
+    /// (§4.4, review F8): best effort, on a fresh token, with the short
+    /// limits of a session close. The server may already have acted; this
+    /// changes nothing about how the call is classified.
+    fn notify_cancelled(&self, id: i64) {
+        let fresh = CancelToken::new();
+        let Ok(token) = self.tokens.bearer(TokenPurpose::Ordinary, &fresh) else {
+            return;
+        };
+        let message = jsonrpc::notification(
+            "notifications/cancelled",
+            Some(json!({ "requestId": id, "reason": "cancelled in FreeCut" })),
+        );
+        let (session, protocol) = {
+            let s = self.lock();
+            (s.id.clone(), s.protocol.clone())
+        };
+        let mut request = HttpRequest::post_json(
+            self.endpoint.clone(),
+            message.to_string().into_bytes(),
+            CallLimits::CLOSE,
+        )
+        .header("accept", "application/json, text/event-stream")
+        .with_bearer(token);
+        if let Some(version) = protocol {
+            request = request.header("mcp-protocol-version", version);
+        }
+        if let Some(sid) = session {
+            request = request.header("mcp-session-id", sid);
+        }
+        if let Err(e) = self.transport.send(request, &fresh) {
+            tracing::debug!(error = %e, "could not tell the server about a cancel");
         }
     }
 
