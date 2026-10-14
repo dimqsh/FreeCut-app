@@ -39,3 +39,7 @@ jobs:
       - run: cargo test --workspace
       - name: Audio mixer builds without FFmpeg
         run: cargo test -p freecut-audio --no-default-features
+      - name: Cloud transport (http feature; tests use 127.0.0.1 only)
+        run: |
+          cargo clippy -p freecut-cloud --all-targets --features http -- -D warnings
+          cargo test -p freecut-cloud --features http
