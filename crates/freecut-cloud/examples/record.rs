@@ -546,10 +546,14 @@ fn refusal(url: &str, body: &[u8]) -> Option<String> {
     if body.is_empty() {
         return None;
     }
-    if String::from_utf8_lossy(body).contains("get_cost") {
+    let parsed = serde_json::from_slice::<Value>(body);
+    // In the raw text, and in every key and string of the parsed body, JSON
+    // held in strings included, so an escaped spelling cannot pass (N4).
+    if String::from_utf8_lossy(body).contains("get_cost")
+        || parsed.as_ref().is_ok_and(names_get_cost)
+    {
         return Some("a cost check".into());
     }
-    let parsed = serde_json::from_slice::<Value>(body);
     if !url.starts_with(ENDPOINT) {
         // Sign-in: a form or a registration document, never JSON-RPC.
         return match parsed {
@@ -585,6 +589,24 @@ fn refusal(url: &str, body: &[u8]) -> Option<String> {
             }
         }
         Some(other) => Some(format!("method {other}, which the recorder does not send")),
+    }
+}
+
+/// Whether any key or string in `value`, or in JSON that a string holds,
+/// names `get_cost`.
+fn names_get_cost(value: &Value) -> bool {
+    match value {
+        Value::String(s) => {
+            s.contains("get_cost")
+                || serde_json::from_str::<Value>(s).is_ok_and(|inner| {
+                    (inner.is_object() || inner.is_array()) && names_get_cost(&inner)
+                })
+        }
+        Value::Array(items) => items.iter().any(names_get_cost),
+        Value::Object(map) => map
+            .iter()
+            .any(|(k, v)| k.contains("get_cost") || names_get_cost(v)),
+        _ => false,
     }
 }
 
@@ -1441,6 +1463,21 @@ mod tests {
                     .as_bytes()
             ),
             None
+        );
+    }
+
+    /// N4: `get_cost` is refused however it is written: as an escaped key,
+    /// or inside parameters sent as a JSON string.
+    #[test]
+    fn get_cost_is_refused_however_it_is_written() {
+        let escaped = br#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"models_explore","arguments":{"action":"list","get\u005fcost":true}}}"#;
+        assert!(refusal(ENDPOINT, escaped).is_some());
+        let as_string = json!({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": "models_explore", "arguments":
+                {"action": "list", "params": "{\"get\\u005fcost\": true}"}}});
+        assert!(
+            refusal(ENDPOINT, as_string.to_string().as_bytes()).is_some(),
+            "{as_string}"
         );
     }
 
