@@ -993,6 +993,9 @@ README).
     calls into `freecut-cloud`. Test: the UI thread's cancel path returns without a call into
     the client.
   - **One `PreflightGuard` per app run**, shared by every provider the worker creates (R6).
+  - **The catalogue reaches the UI only through the provider**: `catalogue()` from the service,
+    or `provider::higgsfield::catalogue_from_cache` for the disk cache. Both apply the reviewed
+    list; `Catalogue::from_listings` alone does not (N1).
   - **Save refused tokens before quitting**: call `TokenManager::persist_unsaved()` and, if it
     fails, tell the user the sign-in may need repeating (R18).
   - **One `TokenManager` per provider id per app run**, the same `Arc<dyn TokenSource>` for every

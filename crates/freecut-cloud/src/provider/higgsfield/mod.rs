@@ -42,6 +42,21 @@ pub const VARIANTS_COVERED_BY_QUOTE: u8 = 1;
 const CATALOGUE_TYPES: &[&str] = &["image", "video", "audio"];
 const MAX_CATALOGUE_PAGES: usize = 10;
 
+/// The catalogue rebuilt from cached `models_explore` listings (§6.2's disk
+/// cache), with the reviewed list applied as [`GenerationProvider::catalogue`]
+/// applies it: whatever the app shows comes through one of the two (review
+/// N1).
+///
+/// # Errors
+/// A listing that cannot be read.
+pub fn catalogue_from_cache(
+    listings: &[Value],
+) -> Result<Catalogue, crate::catalogue::CatalogueError> {
+    let mut catalogue = Catalogue::from_listings(listings)?;
+    reviewed::restrict_to_reviewed(&mut catalogue);
+    Ok(catalogue)
+}
+
 /// The sign-in policy for Higgsfield.
 pub fn auth_policy() -> AuthPolicy {
     AuthPolicy {

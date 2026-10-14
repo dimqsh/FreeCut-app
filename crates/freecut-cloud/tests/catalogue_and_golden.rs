@@ -431,3 +431,21 @@ fn every_reviewed_model_is_a_plain_image_or_video_generator() {
     assert_eq!(ids.len(), REVIEWED_MODELS.len(), "no duplicates");
     assert!(ids.contains(DEFAULT_IMAGE_MODEL) && ids.contains(DEFAULT_VIDEO_MODEL));
 }
+
+/// N1: a catalogue rebuilt from cached listings (§6.2's disk cache) offers
+/// the reviewed models only, as one fetched from the service does.
+#[test]
+fn a_cached_catalogue_offers_only_reviewed_models() {
+    let listings = [
+        fixture_json("models_explore-list-image.json"),
+        fixture_json("models_explore-list-video.json"),
+        fixture_json("models_explore-list-audio.json"),
+    ];
+    let cached = freecut_cloud::provider::higgsfield::catalogue_from_cache(&listings).unwrap();
+    let reviewed: BTreeSet<String> = reviewed_ids().into_iter().map(str::to_owned).collect();
+    assert_eq!(visible_ids(&cached), reviewed);
+    assert_eq!(
+        cached.get("nano_banana_2_shots").unwrap().hidden,
+        Some(HiddenReason::NotReviewed)
+    );
+}
