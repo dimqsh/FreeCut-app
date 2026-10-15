@@ -50,7 +50,13 @@ jobs:
       - name: Build Windows x64 release
         run: cargo build -p freecut-app --release --target x86_64-pc-windows-msvc --locked
       - name: Package portable application
-        run: python scripts/package_windows.py --ffmpeg "$env:FFMPEG_DIR"
+        run: |
+          # The Rust build cache may contain an earlier package. Discard only
+          # generated CI outputs so provenance always comes from this build.
+          foreach ($generated in 'target/windows-dist','target/windows-check') {
+            if (Test-Path $generated) { Remove-Item $generated -Recurse -Force }
+          }
+          python scripts/package_windows.py --ffmpeg "$env:FFMPEG_DIR"
       - name: Verify WARP startup under memory limit
         run: |
           ./scripts/check_windows_cpu.ps1
