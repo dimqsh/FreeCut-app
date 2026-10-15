@@ -53,6 +53,9 @@ $start.RedirectStandardError = $true
 $start.Environment['APPDATA'] = Join-Path $output 'profile'
 $start.Environment['FREECUT_LOW_MEMORY'] = '1'
 $start.Environment['WGPU_BACKEND'] = 'dx12'
+# Prove the package runs without the development FFmpeg directory or tools.
+$start.Environment['PATH'] = "$env:SystemRoot/System32;$env:SystemRoot"
+$start.Environment.Remove('FFMPEG_DIR') | Out-Null
 $process = New-Object Diagnostics.Process
 $process.StartInfo = $start
 $result = $null
@@ -84,6 +87,7 @@ try {
         working_set_bytes = $process.WorkingSet64
         peak_working_set_bytes = $process.PeakWorkingSet64
         cpu_affinity_mask = 3
+        isolated_runtime_path = $true
         window_title = $process.MainWindowTitle
         window_created = $true
         limitations = @('Hosted Windows Server runner, not old physical hardware', 'Startup/Home only under the Job Object limit; editing/export covered by separate compact tests', 'Windows 7/8 and 32-bit Windows not validated')

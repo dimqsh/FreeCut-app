@@ -92,7 +92,7 @@ jobs:
           if-no-files-found: warn
   draft-release:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_run != '' }}
-    runs-on: ubuntu-latest
+    runs-on: windows-2022
     permissions:
       actions: read
       contents: write
@@ -100,14 +100,32 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - uses: actions/download-artifact@v4
         with:
           name: FreeCut-windows-x64
           run-id: ${{ inputs.artifact_run }}
           github-token: ${{ github.token }}
           path: verified-package
+      - name: Recheck both packages without development tools on PATH
+        shell: pwsh
+        run: |
+          $portable = (Get-ChildItem verified-package/windows-dist/*portable.zip)[0].FullName
+          Expand-Archive $portable verified-portable
+          $package = (Get-ChildItem verified-portable -Directory)[0].FullName
+          ./scripts/check_windows_cpu.ps1 -Package $package
+          Copy-Item target/windows-check/cpu-result.json verified-package/windows-check/portable-cpu-result.json -Force
+          $installer = (Get-ChildItem verified-package/windows-dist/*setup.exe)[0].FullName
+          $installed = Join-Path $env:RUNNER_TEMP 'FreeCut-installed-check'
+          $p = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$installed") -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode)" }
+          ./scripts/check_windows_cpu.ps1 -Package $installed
+          Copy-Item target/windows-check/cpu-result.json verified-package/windows-check/installed-cpu-result.json -Force
       - name: Stage verified files in a draft Release
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE_RUN: ${{ inputs.artifact_run }}
-        run: python3 scripts/stage_windows_release.py --run-id "$PACKAGE_RUN" --artifacts verified-package --repo "$GITHUB_REPOSITORY"
+        shell: pwsh
+        run: python scripts/stage_windows_release.py --run-id "$env:PACKAGE_RUN" --artifacts verified-package --repo "$env:GITHUB_REPOSITORY"
