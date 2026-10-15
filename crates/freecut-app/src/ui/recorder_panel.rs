@@ -1692,7 +1692,11 @@ mod tests {
         assert!(panel.locks_edits(), "edits wait during the countdown too");
         assert_eq!(panel.button_text().as_deref(), Some("3"));
         panel.cancel();
-        let events = pump(&mut panel, |p, _| p.take().is_none());
+        // Take completion and the writer's state notification can arrive in
+        // separate polls. Wait for both parts of the cancellation to settle.
+        let events = pump(&mut panel, |p, _| {
+            p.take().is_none() && p.phase() == &Phase::Ready
+        });
         assert!(
             !events
                 .iter()

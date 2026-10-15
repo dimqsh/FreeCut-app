@@ -55,7 +55,12 @@ jobs:
           echo "$ffmpeg_root/bin" >> "$GITHUB_PATH"
       - name: Install FFmpeg development libraries (macOS)
         if: runner.os == 'macOS'
-        run: brew install ffmpeg pkg-config
+        run: |
+          brew install ffmpeg pkg-config
+          # ffmpeg-sys caches a versioned Cellar link path. Pass that physical
+          # prefix as a Cargo input so Homebrew upgrades invalidate the build.
+          ffmpeg_root="$(cd "$(brew --prefix ffmpeg)" && pwd -P)"
+          echo "FFMPEG_DIR=$ffmpeg_root" >> "$GITHUB_ENV"
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - name: Install pinned FFmpeg development libraries (Windows)
