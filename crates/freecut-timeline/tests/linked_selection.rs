@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use common::*;
 use freecut_timeline::Committed;
-use freecut_timeline::edit::{Edge, EditRequest, InsertTarget, MoveReq, sync_offsets};
+use freecut_timeline::edit::{
+    Edge, EditRequest, InsertTarget, MoveReq, Notice, TrimReq, Unavailable, sync_offsets,
+};
 use freecut_timeline::ids::{ClipId, GroupId, LinkId, MediaId, SeqId, TrackId};
 use freecut_timeline::model::{
     Clip, ClipContent, MediaKind, Sequence, SequenceFlags, Track, TrackFlags, TrackHeader,
@@ -236,6 +238,7 @@ fn moving_a_detached_video_with_its_sound_keeps_them_in_sync() {
             clips: both.iter().copied().collect(),
             delta: f(23),
             track_shift: 0,
+            followers: Vec::new(),
         }))
         .unwrap();
         assert_eq!(fx.doc().clip(b).unwrap().start(), f(0));
@@ -243,4 +246,142 @@ fn moving_a_detached_video_with_its_sound_keeps_them_in_sync() {
         assert_eq!(fx.doc().clip(sound).unwrap().start(), f(20));
         assert!(sync_offsets(fx.doc(), seq).is_empty(), "follow {follow}");
     }
+}
+
+fn trim(fx: &Fixture, clip: ClipId, edge: Edge, delta: i64, partners: Vec<ClipId>) -> EditRequest {
+    EditRequest::Trim(TrimReq {
+        seq: fx.seq_id(),
+        clip,
+        edge,
+        delta: f(delta),
+        ripple: false,
+        partners,
+    })
+}
+
+/// Main track: A 0+10 (source 0) and B 10+10 (source 30), A's sound
+/// detached onto A0.
+fn main_with_sound(fx: &mut Fixture) -> (ClipId, ClipId, ClipId) {
+    let main = fx.main();
+    let ids = fx.insert(
+        InsertTarget::Track(main),
+        0,
+        &[(VIDEO_100, 0, 10), (VIDEO_100, 30, 10)],
+    );
+    let sound = detach(fx, ids[0]);
+    (ids[0], ids[1], sound)
+}
+
+#[test]
+fn an_in_trim_on_the_magnetic_main_track_trims_the_linked_sound_in_place() {
+    for follow in [true, false] {
+        let mut fx = Fixture::new();
+        if !follow {
+            fx.follow_off();
+        }
+        let (a, b, sound) = main_with_sound(&mut fx);
+        let seq = fx.seq_id();
+        assert_eq!(linked_edges(fx.seq(), a, Edge::In), vec![sound]);
+        let n = history_len(&fx);
+        fx.apply(trim(&fx, a, Edge::In, 4, vec![sound])).unwrap();
+        assert_eq!(
+            fx.render(),
+            format!(
+                "V0*: {}@0+6[4] {}@6+10[30]\nA0: {}@0+6[4]",
+                a.get(),
+                b.get(),
+                sound.get()
+            ),
+            "follow {follow}"
+        );
+        assert!(sync_offsets(fx.doc(), seq).is_empty(), "follow {follow}");
+        assert_eq!(history_len(&fx), n + 1, "one entry");
+        // Dragging the sound's In edge trims the video in place too.
+        fx.editor.undo().unwrap();
+        fx.apply(trim(&fx, sound, Edge::In, 2, vec![a])).unwrap();
+        assert_eq!(fx.doc().clip(sound).unwrap().start(), f(0));
+        assert_eq!(fx.doc().clip(a).unwrap().duration(), f(8));
+        assert!(sync_offsets(fx.doc(), seq).is_empty(), "follow {follow}");
+    }
+}
+
+#[test]
+fn an_out_trim_on_the_magnetic_main_track_trims_the_linked_sound_with_it() {
+    for follow in [true, false] {
+        let mut fx = Fixture::new();
+        if !follow {
+            fx.follow_off();
+        }
+        let (a, b, sound) = main_with_sound(&mut fx);
+        let seq = fx.seq_id();
+        fx.apply(trim(&fx, a, Edge::Out, -3, vec![sound])).unwrap();
+        assert_eq!(
+            fx.render(),
+            format!(
+                "V0*: {}@0+7[0] {}@7+10[30]\nA0: {}@0+7[0]",
+                a.get(),
+                b.get(),
+                sound.get()
+            ),
+            "follow {follow}"
+        );
+        assert!(sync_offsets(fx.doc(), seq).is_empty(), "follow {follow}");
+    }
+}
+
+#[test]
+fn a_partner_without_room_is_skipped_and_reported() {
+    let mut fx = Fixture::new();
+    let (a, _, sound) = main_with_sound(&mut fx);
+    // Music right after the sound: the sound can't grow into it.
+    let track = fx.doc().find_clip(sound).unwrap().track;
+    fx.insert(InsertTarget::Track(track), 10, &[(AUDIO_200, 0, 5)]);
+    fx.apply(trim(&fx, a, Edge::In, 4, vec![sound])).unwrap();
+    let c = fx.apply(trim(&fx, a, Edge::In, -2, vec![sound])).unwrap();
+    let Committed::Applied { notices, .. } = c else {
+        panic!("expected a change")
+    };
+    assert!(
+        notices.contains(&Notice::Skipped(vec![(sound, Unavailable::NoRoom)])),
+        "{notices:?}"
+    );
+}
+
+#[test]
+fn only_the_clicked_member_changes_track_its_partners_keep_theirs() {
+    let mut fx = Fixture::new();
+    let (a, _, sound) = main_with_sound(&mut fx);
+    let seq = fx.seq_id();
+    let sound_track = fx.doc().find_clip(sound).unwrap().track;
+    // Main → a new overlay track: the sound stays on A0.
+    fx.apply(EditRequest::Move(MoveReq {
+        seq,
+        clips: vec![a, sound],
+        delta: f(0),
+        track_shift: 1,
+        followers: vec![sound],
+    }))
+    .unwrap();
+    let a_track = fx.doc().find_clip(a).unwrap().track;
+    assert_ne!(a_track, fx.main());
+    assert_eq!(fx.doc().find_clip(sound).unwrap().track, sound_track);
+    assert!(sync_offsets(fx.doc(), seq).is_empty());
+    // Back down onto the main track with music on A1: the sound stays on
+    // A0 and follows the video's change in time.
+    fx.insert(InsertTarget::NewTrack, 40, &[(AUDIO_200, 0, 5)]);
+    fx.apply(EditRequest::Move(MoveReq {
+        seq,
+        clips: vec![a, sound],
+        delta: f(0),
+        track_shift: -1,
+        followers: vec![sound],
+    }))
+    .unwrap();
+    assert_eq!(fx.doc().find_clip(a).unwrap().track, fx.main());
+    assert_eq!(fx.doc().find_clip(sound).unwrap().track, sound_track);
+    assert!(sync_offsets(fx.doc(), seq).is_empty(), "{}", fx.render());
+}
+
+fn history_len(fx: &Fixture) -> usize {
+    fx.editor.history().len()
 }

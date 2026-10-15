@@ -411,6 +411,7 @@ fn trims_and_splits_keep_every_key_and_the_sound() {
         edge: Edge::In,
         delta: f(15),
         ripple: false,
+        partners: Vec::new(),
     }))
     .unwrap();
     assert_eq!(
@@ -445,6 +446,7 @@ fn trims_and_splits_keep_every_key_and_the_sound() {
         edge: Edge::In,
         delta: f(-15),
         ripple: false,
+        partners: Vec::new(),
     }))
     .unwrap();
     assert_eq!(settings(&fx, a).gain, envelope);

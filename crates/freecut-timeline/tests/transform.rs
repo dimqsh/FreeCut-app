@@ -255,6 +255,7 @@ fn split_trim_move_and_detach_keep_the_transform() {
         edge: freecut_timeline::edit::Edge::Out,
         delta: f(-3),
         ripple: false,
+        partners: Vec::new(),
     }))
     .unwrap();
     assert_eq!(tf(&fx, right), moved());
@@ -264,6 +265,7 @@ fn split_trim_move_and_detach_keep_the_transform() {
         clips: vec![right],
         delta: f(30),
         track_shift: 1,
+        followers: Vec::new(),
     }))
     .unwrap();
     assert_eq!(tf(&fx, right), moved());

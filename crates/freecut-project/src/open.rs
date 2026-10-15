@@ -148,6 +148,12 @@ pub enum OpenWarning {
     /// with *Follow main track* off. Their attachments were cleared; the
     /// items stay where they are.
     AttachmentsCleared { seq: SeqId, clips: usize },
+    /// Colour keyframes of values the clip's colour stack doesn't have (a
+    /// mask that is gone, a LUT's sliders without a LUT, Auto's Strength or
+    /// Match's Intensity without their result; a hand-edited file or a
+    /// foreign writer) were dropped on `clips` clips: no edit leaves them,
+    /// and a new mask, LUT or result would otherwise pick them up.
+    StrayColorKeysDropped { clips: usize },
 }
 
 impl OpenWarning {
@@ -163,7 +169,8 @@ impl OpenWarning {
             | OpenWarning::ValuesClamped { .. }
             | OpenWarning::KeyframesSorted { .. }
             | OpenWarning::MarkersFixed { .. }
-            | OpenWarning::AttachmentsCleared { .. } => true,
+            | OpenWarning::AttachmentsCleared { .. }
+            | OpenWarning::StrayColorKeysDropped { .. } => true,
             OpenWarning::Migrated { .. }
             | OpenWarning::UnknownFields { .. }
             | OpenWarning::MissingStreams { .. } => false,
@@ -306,6 +313,7 @@ fn finish(parts: Parts, mut warnings: Vec<OpenWarning>) -> Result<Opened, OpenEr
         clamped_clips,
         sorted_clips,
         fixed_marker_lists,
+        stray_color_clips,
     } = parts;
     if clamped_clips > 0 {
         warnings.push(OpenWarning::ValuesClamped {
@@ -320,6 +328,11 @@ fn finish(parts: Parts, mut warnings: Vec<OpenWarning>) -> Result<Opened, OpenEr
     if fixed_marker_lists > 0 {
         warnings.push(OpenWarning::MarkersFixed {
             lists: fixed_marker_lists,
+        });
+    }
+    if stray_color_clips > 0 {
+        warnings.push(OpenWarning::StrayColorKeysDropped {
+            clips: stray_color_clips,
         });
     }
 
@@ -456,9 +469,11 @@ fn missing_streams(document: &Document) -> Vec<ClipId> {
 ///
 /// Ids that only remain as references count too, so they are never handed
 /// out again: the link of a detached video whose audio clips are gone (it
-/// still names that sound, TL-030), and the parent of an extracted audio
+/// still names that sound, TL-030), the parent of an extracted audio
 /// item that was removed (a new item with that id would look like its
-/// parent, AU-004).
+/// parent, AU-004), and the clip or media a colour match was measured
+/// against (CL-020: the reference may be gone, and a new clip under its id
+/// would be taken for it).
 fn max_id(library: &[std::sync::Arc<MediaItem>], sequences: &[SeqParts]) -> u64 {
     let mut max = 0;
     for item in library {
@@ -480,7 +495,8 @@ fn max_id(library: &[std::sync::Arc<MediaItem>], sequences: &[SeqParts]) -> u64 
                     .max(markers(&clip.markers))
                     .max(clip.group.map_or(0, |g| g.get()))
                     .max(clip.link.map_or(0, |l| l.get()))
-                    .max(clip.audio.detached().map_or(0, |l| l.get()));
+                    .max(clip.audio.detached().map_or(0, |l| l.get()))
+                    .max(clip.match_reference_id().unwrap_or(0));
             }
         }
     }

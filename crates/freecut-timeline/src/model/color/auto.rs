@@ -195,9 +195,10 @@ impl AutoCorrection {
         scaled_offset(self.offsets.get(id), self.strength)
     }
 
-    /// Whether it changes any slider (offsets not all 0, Strength above 0).
+    /// Whether it changes any slider: some offset still adds something at
+    /// its Strength (a small offset at a low Strength rounds to 0).
     pub fn changes(&self) -> bool {
-        self.strength > 0 && !self.offsets.is_zero()
+        AutoOffsets::PARAMS.iter().any(|id| self.added(*id) != 0)
     }
 }
 
@@ -224,6 +225,18 @@ pub enum MatchRef {
     },
     /// A frame of a library item (an image file, or a video at `at`).
     Media { media: MediaId, at: Tick },
+}
+
+impl MatchRef {
+    /// The raw id it names (a clip or a media item). It stays reserved
+    /// while the reference exists, even when that item is gone, so a new
+    /// item never takes its place.
+    pub const fn raw_id(&self) -> u64 {
+        match self {
+            MatchRef::Clip { clip, .. } => clip.get(),
+            MatchRef::Media { media, .. } => media.get(),
+        }
+    }
 }
 
 /// A colour match (CL-020): out = gain · in + offset per channel of

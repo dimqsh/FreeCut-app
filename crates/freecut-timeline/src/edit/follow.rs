@@ -44,7 +44,14 @@ pub(super) fn follow_owners(tx: &mut Tx<'_>) -> Result<(), EditError> {
             .filter(|(s, _)| *s == seq_id)
             .map(|(_, t)| *t)
             .collect();
-        let touched = touched_clips(base, work_seq, &tracks);
+        let mut touched = touched_clips(base, work_seq, &tracks);
+        let known: BTreeSet<ClipId> = touched.iter().copied().collect();
+        for id in tx.placed_ids() {
+            let here = tx.work().find_clip(*id).is_some_and(|l| l.seq == seq_id);
+            if here && !known.contains(id) {
+                touched.push(*id);
+            }
+        }
         let main_changed = base_seq
             .main_track()
             .is_some_and(|m| tracks.contains(&m.id));

@@ -98,6 +98,7 @@ fn mv(fx: &mut Fixture, clips: Vec<ClipId>, frames: i64) {
         clips,
         delta: f(frames),
         track_shift: 0,
+        followers: Vec::new(),
     }))
     .unwrap();
 }
@@ -151,6 +152,7 @@ fn ripple_trims_and_cut_aways_keep_the_anchor_frame() {
         edge: Edge::In,
         delta: f(2),
         ripple: false,
+        partners: Vec::new(),
     }))
     .unwrap();
     assert_eq!(start(&fx, t), f(11));

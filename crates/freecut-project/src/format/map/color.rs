@@ -456,6 +456,8 @@ fn read_masks(
                 };
             }
             (MaskShapeKind::Rectangle, None, None) | (MaskShapeKind::Band, None, None) => {}
+            // A rectangle takes a roundness, so a width is what's wrong.
+            (MaskShapeKind::Rectangle, _, Some(_)) => return Err(shape_only("width")),
             (_, Some(_), _) => return Err(shape_only("roundness")),
             (_, _, Some(_)) => return Err(shape_only("width")),
             _ => {}
@@ -485,17 +487,24 @@ fn read_masks(
         let fixed = raw.clamped();
         *clamped |= fixed != raw;
         masks.push(fixed);
-        extras.put(owner, part(&format!("masks.{i}")), dto.extra);
+        // Filed by id, which reordering and removing masks keep.
+        extras.put(owner, mask_path(id), dto.extra);
     }
     stack.masks = masks;
     Ok(())
 }
 
+/// Where a colour mask's unknown keys are filed: by its id, so a mask
+/// keeps them when another is removed or the list is reordered. A mask
+/// added later under the id of a removed one gets that one's keys back.
+fn mask_path(id: u16) -> String {
+    part(&format!("masks@{id}"))
+}
+
 fn write_masks(masks: &[ColorMask], give: &Give<'_>) -> Vec<ColorMaskDto> {
     masks
         .iter()
-        .enumerate()
-        .map(|(i, m)| {
+        .map(|m| {
             let kind = m.mask.kind();
             let plain = Mask::new(kind);
             let pair = |p: MaskPoint| [i64::from(p.x), i64::from(p.y)];
@@ -526,7 +535,7 @@ fn write_masks(masks: &[ColorMask], give: &Give<'_>) -> Vec<ColorMaskDto> {
                 width,
                 expand: (m.expand != 0).then_some(i64::from(m.expand)),
                 mode: (m.mode != MaskCombine::default()).then(|| m.mode.as_str().to_string()),
-                extra: give.at(&part(&format!("masks.{i}"))),
+                extra: give.at(&mask_path(m.id)),
             }
         })
         .collect()
@@ -747,7 +756,10 @@ pub(super) fn write_color(stack: Option<&ColorStack>, give: &Give<'_>) -> Option
         *field = (v != id.spec().default).then_some(i64::from(v));
     }
     let light_empty = stack.section_is_default(Section::Light) && light.extra.is_empty();
-    let balance_empty = stack.section_is_default(Section::Color) && balance.extra.is_empty();
+    // Skin protection's unknown keys keep the object even at its defaults.
+    let balance_empty = stack.section_is_default(Section::Color)
+        && balance.extra.is_empty()
+        && balance.skin.is_none();
     let dto = ColorDto {
         auto: stack.auto.as_ref().map(|a| write_auto(a, give)),
         matched: stack.match_xf.as_ref().map(|m| write_match(m, give)),

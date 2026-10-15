@@ -19,7 +19,7 @@ use freecut_media::color::HdrTransfer;
 use freecut_render::FontRegistry;
 use freecut_render::text::ScanState;
 use freecut_timeline::edit::AudioEdit;
-use freecut_timeline::edit::{Cut, DeleteReq, EditRequest, SplitReq, SplitTargets};
+use freecut_timeline::edit::{Cut, DeleteReq, EditRequest};
 use freecut_timeline::history::Coalesce;
 use freecut_timeline::ids::MediaId;
 use freecut_timeline::model::{ProjectSettings, Sequence};
@@ -1308,19 +1308,23 @@ impl FreeCutApp {
         self.jobs.spawn(move || Done::Saved(serial, job.run()));
     }
 
+    /// *Split at playhead* (TL-023): the selection, or with nothing
+    /// selected the main-track clip under the playhead (and its linked
+    /// partners, TL-057).
     fn split(&mut self) {
+        self.split_with(false);
+    }
+
+    /// *Split all* (`Mod+Shift+B`, TL-023): every clip under the playhead
+    /// on unlocked tracks.
+    fn split_all(&mut self) {
+        self.split_with(true);
+    }
+
+    fn split_with(&mut self, all: bool) {
+        let linked = self.timeline.linked_selection;
         let Some(p) = &mut self.project else { return };
-        let targets = if p.selection.is_empty() {
-            SplitTargets::AllTracks
-        } else {
-            SplitTargets::Clips(p.selection.clone())
-        };
-        let req = EditRequest::Split(SplitReq {
-            seq: p.doc().root(),
-            at: p.playhead,
-            targets,
-        });
-        if let Err(e) = p.apply(&req, Coalesce::Never) {
+        if let Err(e) = p.split_at_playhead(all, linked) {
             self.say(e);
         }
     }
@@ -1329,8 +1333,9 @@ impl FreeCutApp {
     /// playhead (TL-026). During playback it acts at the frame being shown
     /// and playback goes on from wherever the playhead lands.
     fn cut_away(&mut self, cut: Cut, ripple_others: bool) {
+        let linked = self.timeline.linked_selection;
         let Some(p) = &mut self.project else { return };
-        match p.cut_away(cut, ripple_others) {
+        match p.cut_away(cut, ripple_others, linked) {
             Ok(true) => self.seeked(),
             Ok(false) => {}
             Err(e) => self.say(e),
@@ -1885,8 +1890,12 @@ impl FreeCutApp {
         if pressed(cmd(Key::E)) {
             self.open_export();
         }
-        // UI-031: `Mod+B` splits (plain `S` belongs to hover skim, TL-014).
-        if pressed(cmd(Key::B)) {
+        // UI-031: `Mod+B` splits (plain `S` belongs to hover skim, TL-014);
+        // `Mod+Shift+B` splits every track. Shift first: a shortcut match
+        // ignores extra modifiers.
+        if pressed(cmd_shift(Key::B)) {
+            self.split_all();
+        } else if pressed(cmd(Key::B)) {
             self.split();
         }
         if pressed(cmd_shift(Key::M)) {
@@ -2342,8 +2351,17 @@ impl FreeCutApp {
                 self.redo();
             }
             ui.separator();
-            if ui.button("Split at Playhead").clicked() {
+            if ui
+                .add(egui::Button::new("Split at Playhead").shortcut_text(shortcut_label("B")))
+                .clicked()
+            {
                 self.split();
+            }
+            if ui
+                .add(egui::Button::new("Split All Tracks").shortcut_text(shift_shortcut_label("B")))
+                .clicked()
+            {
+                self.split_all();
             }
             if ui.button("Delete").clicked() {
                 self.delete(false);
@@ -2442,7 +2460,8 @@ impl FreeCutApp {
             }
         }
         ui.separator();
-        let cut = self.project.as_ref().map(Project::cut_available);
+        let linked = self.timeline.linked_selection;
+        let cut = self.project.as_ref().map(|p| p.cut_available(linked));
         let can_cut = matches!(cut, Some(Ok(())));
         if item(ui, can_cut, "Cut Away Before Playhead", "Q") {
             self.cut_away(Cut::Head, false);

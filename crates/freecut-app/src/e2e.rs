@@ -228,6 +228,7 @@ fn new_project_import_edit_preview_save_and_reopen() {
                 clips: right.clone(),
                 delta: Tick::ZERO,
                 track_shift: 2,
+                followers: Vec::new(),
             }),
             Coalesce::Never,
         )
@@ -1354,6 +1355,7 @@ fn a_two_stream_file_switches_streams_mixes_them_and_adds_one_as_a_clip() {
                 clips: vec![added],
                 delta: Tick::from_raw(3 * frame.raw()),
                 track_shift: 0,
+                followers: Vec::new(),
             }),
             Coalesce::Never,
         )

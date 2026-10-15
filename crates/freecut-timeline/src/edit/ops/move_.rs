@@ -13,12 +13,17 @@ use crate::time::{Tick, TimeRange};
 
 /// Moves clips by `delta` in time and `track_shift` tracks up (negative:
 /// down). Relative offsets between the clips are preserved.
+///
+/// `followers` are clips of `clips` that keep their track and only shift
+/// in time: the linked partners of the dragged clip (TL-057: only the
+/// clicked member changes track). Ids not in `clips` are ignored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoveReq {
     pub seq: SeqId,
     pub clips: Vec<ClipId>,
     pub delta: Tick,
     pub track_shift: i32,
+    pub followers: Vec<ClipId>,
 }
 
 /// Where one moving clip ends up.
@@ -80,7 +85,12 @@ pub(crate) fn move_clips(mut tx: Tx<'_>, req: &MoveReq) -> Result<Plan, EditErro
             .track_at(m.loc.slot)
             .ok_or(EditError::StaleTrack(m.loc.track))?;
         policy::require_unlocked(source, m.loc.slot)?;
-        let dest = destination(&seq, m, req.track_shift, magnet)?;
+        let shift = if req.followers.contains(&m.clip.id) {
+            0
+        } else {
+            req.track_shift
+        };
+        let dest = destination(&seq, m, shift, magnet)?;
         dests.push(dest);
     }
 
@@ -222,6 +232,9 @@ pub(crate) fn move_clips(mut tx: Tx<'_>, req: &MoveReq) -> Result<Plan, EditErro
         }
     }
     tx.select(moving.iter().map(|m| m.clip.id).collect());
+    // Every moving clip is where the move put it, even one that kept its
+    // place: attached-item following must not move it again.
+    tx.placed(moving.iter().map(|m| m.clip.id));
     tx.finish(label)
 }
 

@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use crate::ids::ClipId;
-use crate::model::{MarkerScope, Sequence, marker_points};
+use crate::model::{MarkerRef, MarkerScope, Sequence, marker_points_except};
 use crate::time::Tick;
 
 /// What a snap target is. Declaration order is the tie-break priority.
@@ -39,6 +39,25 @@ impl SnapIndex {
     /// markers and the shown markers of clips not in `exclude`, TL-037), plus
     /// the playhead, 0 and the end.
     pub fn build(seq: &Sequence, playhead: Option<Tick>, exclude: &BTreeSet<ClipId>) -> SnapIndex {
+        SnapIndex::build_except(seq, playhead, exclude, None)
+    }
+
+    /// [`SnapIndex::build`] without the start and end of marker `dragged`,
+    /// for dragging it (TL-028 leaves the dragged items out).
+    pub fn build_for_marker(
+        seq: &Sequence,
+        playhead: Option<Tick>,
+        dragged: MarkerRef,
+    ) -> SnapIndex {
+        SnapIndex::build_except(seq, playhead, &BTreeSet::new(), Some(dragged))
+    }
+
+    fn build_except(
+        seq: &Sequence,
+        playhead: Option<Tick>,
+        exclude: &BTreeSet<ClipId>,
+        marker: Option<MarkerRef>,
+    ) -> SnapIndex {
         let mut points = Vec::new();
         let mut end = Tick::ZERO;
         for (_, track) in seq.tracks() {
@@ -49,9 +68,14 @@ impl SnapIndex {
             }
         }
         points.extend(
-            marker_points(seq, MarkerScope::AllTracks, |id| exclude.contains(&id))
-                .into_iter()
-                .map(|(t, _)| (t, SnapKind::Marker)),
+            marker_points_except(
+                seq,
+                MarkerScope::AllTracks,
+                |id| exclude.contains(&id),
+                marker,
+            )
+            .into_iter()
+            .map(|(t, _)| (t, SnapKind::Marker)),
         );
         points.push((Tick::ZERO, SnapKind::Bound));
         points.push((end, SnapKind::Bound));
@@ -74,6 +98,10 @@ impl SnapIndex {
     /// Snaps a block whose reference times are `edges` (block start and end
     /// for moves, one edge for trims, one time for the playhead) after moving
     /// it by `delta`. `threshold` is inclusive, in ticks.
+    ///
+    /// A moved edge never snaps back to where it started: a target there
+    /// (a magnetic neighbour that moves with the ripple, or the dragged
+    /// item itself) would only make small drags stick.
     pub fn snap(&self, edges: &[Tick], delta: Tick, threshold: u64) -> Option<Snap> {
         let mut best: Option<(u64, SnapKind, usize, Tick)> = None;
         for (ei, &edge) in edges.iter().enumerate() {
@@ -81,9 +109,12 @@ impl SnapIndex {
                 continue;
             };
             let i = self.points.partition_point(|&(t, _)| t < want);
-            let lo = i.saturating_sub(1);
-            let hi = (i + 1).min(self.points.len());
+            let lo = i.saturating_sub(2);
+            let hi = (i + 2).min(self.points.len());
             for &(t, kind) in &self.points[lo..hi] {
+                if t == edge && delta != Tick::ZERO {
+                    continue;
+                }
                 let dist = t.abs_diff(want);
                 if dist <= threshold {
                     let candidate = (dist, kind, ei, t);
@@ -145,6 +176,19 @@ mod tests {
     fn threshold_is_inclusive_and_misses_return_none() {
         assert!(index().snap(&[t(150)], t(0), 10).is_none());
         assert_eq!(index().snap(&[t(190)], t(0), 10).unwrap().delta, t(10));
+    }
+
+    #[test]
+    fn a_moved_edge_never_snaps_back_to_where_it_started() {
+        let idx = SnapIndex::from_points(vec![(t(10), SnapKind::ClipEdge)]);
+        assert_eq!(idx.snap(&[t(10)], t(2), 4), None);
+        assert_eq!(idx.snap(&[t(10)], t(-3), 4), None);
+        // The next target over still catches it.
+        let idx =
+            SnapIndex::from_points(vec![(t(10), SnapKind::ClipEdge), (t(13), SnapKind::Marker)]);
+        assert_eq!(idx.snap(&[t(10)], t(2), 4).unwrap().delta, t(3));
+        // Unmoved, the edge sits on its own target.
+        assert_eq!(idx.snap(&[t(10)], t(0), 4).unwrap().delta, t(0));
     }
 
     #[test]

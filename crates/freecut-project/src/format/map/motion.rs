@@ -189,9 +189,21 @@ fn key_path(prop: PropPath, at: Tick) -> String {
     format!("keys[{prop}]@{}", at.raw())
 }
 
+/// What reading a clip's keys found besides the keys.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct KeysRead {
+    /// A key track had to be sorted by time.
+    pub(super) sorted: bool,
+    /// A colour key track named a value the clip's stack doesn't have (a
+    /// mask that is gone, a LUT's slider without a LUT, Strength or
+    /// Intensity without their result) and was dropped: no edit leaves
+    /// one, and a new mask, LUT or result would pick it up.
+    pub(super) stray: bool,
+}
+
 /// `clip`'s keys as stored, checked against the clip (already read without
-/// keys), and whether any key track had to be sorted by time. Values
-/// brought into range set `clamped`.
+/// keys), and what [`KeysRead`] reports. Values brought into range set
+/// `clamped`.
 pub(super) fn read_keys(
     dto: ClipKeysDto,
     at: &At,
@@ -199,27 +211,38 @@ pub(super) fn read_keys(
     owner: Owner,
     extras: &mut Extras,
     clamped: &mut bool,
-) -> Result<(ClipKeys, bool), OpenError> {
+) -> Result<(ClipKeys, KeysRead), OpenError> {
     let origin = tick(dto.origin, &at.key("origin"))?;
     extras.put(owner, "keys", dto.extra);
     let mut seen = BTreeSet::new();
     let mut tracks = Vec::with_capacity(dto.tracks.len());
-    let mut sorted = false;
+    let mut found = KeysRead::default();
     for (i, track) in dto.tracks.into_iter().enumerate() {
         let track_at = at.key("tracks").index(i);
-        let (prop, keys, track_sorted) =
-            read_track(track, &track_at, clip, owner, extras, clamped)?;
-        if !seen.insert(prop) {
+        let read = read_track(track, &track_at, clip, owner, extras, clamped)?;
+        if !seen.insert(read.prop) {
             return Err(track_at.key("prop").bad(format!(
-                "`{prop}` is listed twice; each property has one key list"
+                "`{}` is listed twice; each property has one key list",
+                read.prop
             )));
         }
-        sorted |= track_sorted;
-        tracks.push((prop, keys));
+        found.sorted |= read.sorted;
+        match read.keys {
+            Some(keys) => tracks.push((read.prop, keys)),
+            None => found.stray = true,
+        }
     }
     // Every rule `from_parts` checks was checked above with a path.
     let keys = ClipKeys::from_parts(origin, tracks).map_err(|e| at.bad(e))?;
-    Ok((keys, sorted))
+    Ok((keys, found))
+}
+
+/// One key track as read: `keys` is `None` for a stray colour track that
+/// is dropped ([`KeysRead::stray`]).
+struct TrackRead {
+    prop: PropPath,
+    keys: Option<Vec<Keyframe<PropValue>>>,
+    sorted: bool,
 }
 
 fn read_track(
@@ -229,7 +252,7 @@ fn read_track(
     owner: Owner,
     extras: &mut Extras,
     clamped: &mut bool,
-) -> Result<(PropPath, Vec<Keyframe<PropValue>>, bool), OpenError> {
+) -> Result<TrackRead, OpenError> {
     let prop_at = at.key("prop");
     let (prop, kind) = match PropPath::parse(&dto.prop).and_then(|p| Some((p, p.kind()?))) {
         Some(found) => found,
@@ -259,6 +282,17 @@ fn read_track(
         };
         return Err(prop_at.bad(format!("`{prop}` takes keyframes only on {only}")));
     }
+    let colour = matches!(
+        prop,
+        PropPath::Color(_) | PropPath::ColorPuck(_) | PropPath::ColorMask { .. }
+    );
+    if colour && prop.get(clip).is_none() {
+        return Ok(TrackRead {
+            prop,
+            keys: None,
+            sorted: false,
+        });
+    }
     let keys_at = at.key("keys");
     if dto.keys.is_empty() {
         return Err(keys_at.bad(format!(
@@ -271,6 +305,7 @@ fn read_track(
         let (raw, value_extra) = read_value(kind, k.value, &key_at.key("value"), clamped)?;
         // As an edit would hold it; a property the clip's style lacks right
         // now (a stop beyond the gradient's) keeps its value as stored.
+        // (Colour values the stack lacks were dropped above.)
         let value = match prop.clamp_value(clip, raw) {
             Some(fixed) => {
                 *clamped |= fixed != raw;
@@ -306,7 +341,11 @@ fn read_track(
             key
         })
         .collect();
-    Ok((prop, keys, sorted))
+    Ok(TrackRead {
+        prop,
+        keys: Some(keys),
+        sorted,
+    })
 }
 
 /// An integer of at most 64 bits; fractions, strings and wider numbers are

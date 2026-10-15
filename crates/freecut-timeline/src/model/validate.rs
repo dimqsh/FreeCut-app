@@ -143,6 +143,13 @@ impl Document {
                     relation_ids.extend(clip.group.map(GroupId::get));
                     relation_ids.extend(clip.link.map(LinkId::get));
                     relation_ids.extend(clip.audio.detached().map(LinkId::get));
+                    // A match reference may name a clip that is gone; its
+                    // id stays reserved (CL-020).
+                    if let Some(raw) = clip.match_reference_id()
+                        && above(raw)
+                    {
+                        out.push(InvariantViolation::IdAboveHighWater(raw));
+                    }
                 }
             }
             for raw in entity {
@@ -441,17 +448,20 @@ fn check_audio(clip: &Clip, out: &mut Vec<InvariantViolation>) {
 }
 
 /// Keys only on properties the content has a place for (transform keys on
-/// visual clips, text keys on text clips), each value of its property's
-/// kind (TR-027); animations only on visual clips, within the slot policy
-/// of the clip's kind and in range (FX-018, FX-019).
+/// visual clips, text keys on text clips, colour keys on clips that take
+/// colour and only for a value the stack has now: a mask that exists and
+/// has the value, the LUT's sliders with a LUT, Strength and Intensity with
+/// their result), each value of its property's kind (TR-027); animations
+/// only on visual clips, within the slot policy of the clip's kind and in
+/// range (FX-018, FX-019).
 fn check_motion(clip: &Clip, out: &mut Vec<InvariantViolation>) {
     let text = clip.content.text().is_some();
     let keys_ok = clip.keys.tracks().iter().all(|t| {
         let fits = match t.prop() {
             PropPath::Transform(_) => clip.content.is_visual(),
             PropPath::Text(_) | PropPath::FillStopColor(_) | PropPath::Reveal => text,
-            PropPath::Color(_) | PropPath::ColorPuck(_) | PropPath::ColorMask { .. } => {
-                clip.content.takes_color()
+            p @ (PropPath::Color(_) | PropPath::ColorPuck(_) | PropPath::ColorMask { .. }) => {
+                p.get(clip).is_some()
             }
         };
         let kind = t.prop().kind();

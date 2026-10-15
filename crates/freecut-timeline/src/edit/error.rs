@@ -1,7 +1,7 @@
 //! Edit errors.
 
 use crate::ids::{ClipId, MarkerId, MediaId, SeqId, TrackId};
-use crate::model::InvariantViolation;
+use crate::model::{InvariantViolation, Section};
 use crate::time::{Tick, TimeError};
 
 /// Why a planned edit was refused. A refused edit leaves the document
@@ -63,6 +63,10 @@ pub enum EditError {
     /// adjustments.
     #[error("none of the selected clips takes colour adjustments")]
     NoColorClip,
+    /// CL-019: **Apply to sliders** would change the picture, because this
+    /// section (Auto, or Light or Color taking an offset) is switched off.
+    #[error("switch the {section:?} section on to apply Auto to the sliders")]
+    SectionSwitchedOff { section: Section },
     #[error("the volume has keyframes: change the keyframes instead")]
     VolumeKeyframed,
     #[error("none of the selected clips has a volume keyframe at {at:?}")]

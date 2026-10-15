@@ -2255,6 +2255,7 @@ fn request(editor: &Editor, op: &Op) -> Option<EditRequest> {
             clips: vec![pick_clip(*pick)?],
             delta: frames(i64::from(*delta)),
             track_shift: i32::from(*shift),
+            followers: Vec::new(),
         }),
         Op::Split { pick, at } => {
             let id = pick_clip(*pick)?;
@@ -2277,6 +2278,7 @@ fn request(editor: &Editor, op: &Op) -> Option<EditRequest> {
             edge: if *out { Edge::Out } else { Edge::In },
             delta: frames(i64::from(*delta)),
             ripple: *ripple,
+            partners: Vec::new(),
         }),
         Op::Delete { pick, ripple } => EditRequest::Delete(DeleteReq {
             seq,

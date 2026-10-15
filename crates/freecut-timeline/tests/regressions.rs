@@ -120,6 +120,7 @@ mod f02_gesture_split_and_partial_cancel_after_save {
                 clips: ids.clone(),
                 delta: f(d),
                 track_shift: 0,
+                followers: Vec::new(),
             });
             let plan = fx.editor.plan(&fx.ctx(), &req).unwrap();
             fx.editor
@@ -163,6 +164,7 @@ mod f03_noncontiguous_main_members_allowed_off_main {
             clips: vec![ids[0], ids[2]],
             delta: f(0),
             track_shift: 1,
+            followers: Vec::new(),
         });
         let result = fx.apply(req);
         println!("after:\n{}", fx.render());
@@ -230,6 +232,7 @@ mod f05_move_not_quantized_to_grid_after_rate_change {
                     clips: ids.clone(),
                     delta: r30.frames(1).unwrap(),
                     track_shift: 0,
+                    followers: Vec::new(),
                 }),
             )
             .unwrap();
@@ -303,6 +306,7 @@ mod f07_autosave_mid_gesture_defeats_cancel {
             edge: Edge::Out,
             delta: f(frames),
             ripple: false,
+            partners: Vec::new(),
         });
         let plan = fx.editor.plan(&fx.ctx(), &trim).unwrap();
         fx.editor
@@ -369,6 +373,7 @@ mod f08_cancel_gesture_not_traceless {
             edge: Edge::Out,
             delta: f(2),
             ripple: false,
+            partners: Vec::new(),
         });
         let plan = fx.editor.plan(&fx.ctx(), &req).unwrap();
         fx.editor
@@ -454,6 +459,7 @@ mod f09_plan_staleness_not_bound_to_editor {
             edge: Edge::Out,
             delta: f(-2),
             ripple: false,
+            partners: Vec::new(),
         });
         let plan = a.editor.plan(&a.ctx(), &req).unwrap();
         let b_before = b.doc().clone();
@@ -490,6 +496,7 @@ mod f11_stale_gesture_id_closes_open_gesture {
             edge: Edge::Out,
             delta: f(2),
             ripple: false,
+            partners: Vec::new(),
         });
         let plan = fx.editor.plan(&fx.ctx(), &trim).unwrap();
         fx.editor
@@ -527,6 +534,7 @@ mod f12_merge_across_undo_after_empty_pop {
             clips: vec![clip],
             delta: f(frames),
             track_shift: 0,
+            followers: Vec::new(),
         });
         let plan = fx.editor.plan(&fx.ctx(), &req).unwrap();
         fx.editor
@@ -756,6 +764,7 @@ mod f14_redo_drops_post_op_selection {
             edge: Edge::Out,
             delta: f(-2),
             ripple: false,
+            partners: Vec::new(),
         });
         let plan = fx.editor.plan(&fx.ctx(), &req).unwrap();
         fx.editor
@@ -791,6 +800,7 @@ mod f14_redo_drops_post_op_selection {
             edge: Edge::Out,
             delta: f(-2),
             ripple: false,
+            partners: Vec::new(),
         });
         let plan = fx.editor.plan(&fx.ctx(), &req).unwrap();
         if let freecut_timeline::Committed::Applied {
@@ -1000,6 +1010,7 @@ mod f18_ripple_trim_overflow_reported_as_internal_bug {
                 edge: Edge::Out,
                 delta: f(10),
                 ripple: true,
+                partners: Vec::new(),
             }))
             .unwrap_err();
         assert_eq!(err, EditError::Time(TimeError::Overflow), "got {err:?}");
@@ -1033,6 +1044,7 @@ mod f19_zero_delta_trim_changes_off_grid_edge {
                 edge,
                 delta: Tick::ZERO,
                 ripple: false,
+                partners: Vec::new(),
             });
             let plan = fx
                 .editor
@@ -1068,6 +1080,7 @@ mod f20_noncontiguous_main_members_allowed_when_leaving_main {
             clips: vec![ids[0], ids[2]],
             delta: f(0),
             track_shift: 1,
+            followers: Vec::new(),
         });
         let res = fx.apply(req);
         if res.is_ok() {
@@ -1280,108 +1293,8 @@ mod f23_commit_accepts_plans_from_other_documents {
     }
 }
 
-#[allow(unused_imports, dead_code)]
-mod f25_main_track_single_clip_ops_quadratic {
-    //! `Change::ShiftClips` apply calls the linear `Track::position_of` once per shifted id, so applying a shift of k clips on an n-clip track costs O(k*n)
-
-    use super::common::*;
-    use freecut_timeline::CommitMeta;
-    use freecut_timeline::edit::{Edge, EditRequest, InsertReq, InsertTarget, NewClip, TrimReq};
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn a_one_clip_trim_on_the_main_track_scales_linearly() {
-        fn time(n: usize) -> Duration {
-            let mut fx = Fixture::new();
-            let req = EditRequest::Insert(InsertReq {
-                seq: fx.seq_id(),
-                target: InsertTarget::Track(fx.main()),
-                at: f(0),
-                clips: (0..n).map(|_| NewClip::image(VIDEO_100, f(1))).collect(),
-            });
-            let plan = fx.editor.plan(&fx.ctx(), &req).unwrap();
-            fx.editor.commit(plan, CommitMeta::default()).unwrap();
-            let first = fx.seq().main_track().unwrap().clips()[0].id;
-            let trim = EditRequest::Trim(TrimReq {
-                seq: fx.seq_id(),
-                clip: first,
-                edge: Edge::Out,
-                delta: f(1),
-                ripple: false,
-            });
-            (0..3)
-                .map(|_| {
-                    let t = Instant::now();
-                    fx.editor.plan(&fx.ctx(), &trim).unwrap();
-                    t.elapsed()
-                })
-                .min()
-                .unwrap()
-        }
-        let (small, large) = (time(2_000), time(8_000));
-        let ratio = large.as_secs_f64() / small.as_secs_f64();
-        // 4x the clips: ~4-5x if O(n log n), ~16x if O(n^2). Today: ~14.7x.
-        assert!(
-            ratio < 8.0,
-            "4x the clips cost {ratio:.1}x ({small:?} -> {large:?})"
-        );
-    }
-}
-
-#[allow(unused_imports, dead_code)]
-mod f26_multi_clip_ops_quadratic_no_clip_index {
-    //! `resolve_clips` runs `Sequence::find_clip(id)` for every requested id
-
-    use std::time::{Duration, Instant};
-
-    use super::common::*;
-    use freecut_timeline::CommitMeta;
-    use freecut_timeline::edit::{EditRequest, InsertReq, InsertTarget, MoveReq, NewClip};
-    use freecut_timeline::model::TextClipData;
-
-    #[test]
-    fn select_all_nudge_scales_linearly() {
-        fn time(n: usize) -> Duration {
-            let mut fx = Fixture::new();
-            let req = EditRequest::Insert(InsertReq {
-                seq: fx.seq_id(),
-                target: InsertTarget::NewTrack,
-                at: f(0),
-                clips: (0..n)
-                    .map(|_| NewClip::text(TextClipData::default(), f(1)))
-                    .collect(),
-            });
-            let plan = fx.editor.plan(&fx.ctx(), &req).unwrap();
-            fx.editor.commit(plan, CommitMeta::default()).unwrap();
-            let all = fx.seq().visual_tracks()[1]
-                .clips()
-                .iter()
-                .map(|c| c.id)
-                .collect();
-            let nudge = EditRequest::Move(MoveReq {
-                seq: fx.seq_id(),
-                clips: all,
-                delta: f(1),
-                track_shift: 0,
-            });
-            (0..3)
-                .map(|_| {
-                    let t = Instant::now();
-                    fx.editor.plan(&fx.ctx(), &nudge).unwrap();
-                    t.elapsed()
-                })
-                .min()
-                .unwrap()
-        }
-        let (small, large) = (time(2_000), time(8_000));
-        let ratio = large.as_secs_f64() / small.as_secs_f64();
-        // Today: ~15.6x for 4x the clips.
-        assert!(
-            ratio < 8.0,
-            "4x the clips cost {ratio:.1}x ({small:?} -> {large:?})"
-        );
-    }
-}
+// f25 and f26 (scaling) live in src/regressions.rs, where they count
+// clip lookups instead of timing them.
 
 #[allow(unused_imports, dead_code)]
 mod f27_no_public_document_builders_blocks_m2_load {
@@ -1592,6 +1505,7 @@ mod f29_save_mid_gesture_splits_and_half_cancels {
             edge: Edge::Out,
             delta: f(2),
             ripple: false,
+            partners: Vec::new(),
         });
         let g = fx.editor.begin_gesture();
         let step = |fx: &mut Fixture| {
@@ -1646,6 +1560,7 @@ mod f30_cancel_gesture_drops_redo_stack {
             edge: Edge::Out,
             delta: f(2),
             ripple: false,
+            partners: Vec::new(),
         });
         let plan = fx.editor.plan(&fx.ctx(), &trim).unwrap();
         fx.editor

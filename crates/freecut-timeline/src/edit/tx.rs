@@ -24,6 +24,9 @@ pub(crate) struct Tx<'a> {
     imported: Vec<MediaId>,
     /// Whether [`Tx::finish`] runs the attached-items pass (TL-029).
     follow: bool,
+    /// Clips the op positioned itself, even where they didn't move: the
+    /// attached-items pass leaves them where they are and reattaches them.
+    placed: BTreeSet<ClipId>,
 }
 
 impl<'a> Tx<'a> {
@@ -38,6 +41,7 @@ impl<'a> Tx<'a> {
             selection_after: None,
             imported: Vec::new(),
             follow: true,
+            placed: BTreeSet::new(),
         }
     }
 
@@ -49,6 +53,17 @@ impl<'a> Tx<'a> {
     /// What the edit has touched so far.
     pub(crate) fn scope(&self) -> Scope {
         scope_of(&self.changes)
+    }
+
+    /// Marks `ids` as positioned by the op (a move's partners that keep
+    /// their place, TL-057): the attached-items pass doesn't move them.
+    pub(crate) fn placed(&mut self, ids: impl IntoIterator<Item = ClipId>) {
+        self.placed.extend(ids);
+    }
+
+    /// The clips marked with [`Tx::placed`].
+    pub(crate) fn placed_ids(&self) -> &BTreeSet<ClipId> {
+        &self.placed
     }
 
     /// Skips the attached-items pass: the op recomputed attachments itself.

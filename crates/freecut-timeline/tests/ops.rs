@@ -160,6 +160,7 @@ fn mv(
         clips,
         delta: f(delta),
         track_shift: shift,
+        followers: Vec::new(),
     })
 }
 
@@ -287,6 +288,7 @@ fn trim(
         edge,
         delta: f(delta),
         ripple,
+        partners: Vec::new(),
     })
 }
 
@@ -365,6 +367,7 @@ fn zero_trims_are_no_ops_and_sub_frame_trims_snap_to_frames() {
         edge: Edge::Out,
         delta: tiny,
         ripple: false,
+        partners: Vec::new(),
     });
     assert_eq!(fx.apply(req).unwrap(), Committed::NoOp);
 }

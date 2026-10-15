@@ -648,6 +648,7 @@ fn restore_finds_the_audio_clip_wherever_it_was_moved() {
         clips: vec![a],
         delta: f(12),
         track_shift: -1,
+        followers: Vec::new(),
     }))
     .unwrap();
     // The detached clip went onto the free start of A0, then moved down.

@@ -31,6 +31,10 @@ pub enum MarkerTarget {
     Clip(ClipId),
 }
 
+/// Why *Split at playhead* has nothing to cut with nothing selected
+/// (TL-023).
+pub const NO_CLIP_AT_PLAYHEAD: &str = "No clip at the playhead";
+
 /// How a click picks clips (TL-015, TL-057).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pick {
@@ -156,23 +160,62 @@ impl Project {
 
     // ------------------------------------------------------------ TL-026
 
+    /// The main-track clip under the playhead (on the frame grid).
+    fn main_under_playhead(&self) -> Option<ClipId> {
+        let rate = self.doc().settings().frame_rate;
+        let at = rate.quantize(self.playhead).unwrap_or(self.playhead);
+        let main = self.root()?.main_track()?;
+        main.clip_at(at).map(|c| c.id)
+    }
+
+    /// The main-track clip under the playhead and, with `linked` (TL-057),
+    /// its linked partners and group members that cover the playhead too,
+    /// the main clip first: what Split and the cut-aways act on with
+    /// nothing selected.
+    fn main_with_partners(&self, linked: bool) -> Option<Vec<ClipId>> {
+        let main = self.main_under_playhead()?;
+        let mut out = vec![main];
+        if linked && let Some(seq) = self.root() {
+            let rate = self.doc().settings().frame_rate;
+            let at = rate.quantize(self.playhead).unwrap_or(self.playhead);
+            let rules = Expand {
+                groups: true,
+                links: true,
+            };
+            let covers = |id: &ClipId| {
+                self.doc()
+                    .clip(*id)
+                    .is_some_and(|c| c.range.strictly_contains(at))
+            };
+            out.extend(
+                expand_selection(seq, &BTreeSet::from([main]), rules)
+                    .into_iter()
+                    .filter(|id| *id != main && covers(id)),
+            );
+        }
+        Some(out)
+    }
+
     /// What a cut-away acts on: the selection, or with nothing selected the
-    /// main-track clip under the playhead.
-    pub fn cut_targets(&self) -> TrimTargets {
-        if self.selection.is_empty() {
-            TrimTargets::MainUnderPlayhead
-        } else {
-            TrimTargets::Clips(self.selection.clone())
+    /// main-track clip under the playhead, with its linked partners when
+    /// `linked` (TL-057) so they stay in sync.
+    pub fn cut_targets(&self, linked: bool) -> TrimTargets {
+        if !self.selection.is_empty() {
+            return TrimTargets::Clips(self.selection.clone());
+        }
+        match self.main_with_partners(linked) {
+            Some(clips) if clips.len() > 1 => TrimTargets::Clips(clips),
+            _ => TrimTargets::MainUnderPlayhead,
         }
     }
 
     /// Whether the cut-away buttons and keys can act now; the reason when
     /// they can't (TL-026's tooltips).
-    pub fn cut_available(&self) -> Result<(), &'static str> {
+    pub fn cut_available(&self, linked: bool) -> Result<(), &'static str> {
         trim_to_playhead_available(
             self.doc(),
             self.root_seq(),
-            &self.cut_targets(),
+            &self.cut_targets(linked),
             self.playhead,
         )
         .map_err(unavailable_reason)
@@ -180,20 +223,58 @@ impl Project {
 
     /// Cuts away the part of the targets before (`Head`, Q) or after
     /// (`Tail`, W) the playhead, as one undo entry. `ripple_others` is the
-    /// `Shift` variant that ripples non-main tracks. Returns whether the
-    /// playhead moved (a head cut on the magnetic main track).
-    pub fn cut_away(&mut self, cut: Cut, ripple_others: bool) -> Result<bool, String> {
-        self.cut_available()?;
+    /// `Shift` variant that ripples non-main tracks; `linked` is the
+    /// *Select linked clips together* preference (TL-057). Returns whether
+    /// the playhead moved (a head cut on the magnetic main track).
+    pub fn cut_away(
+        &mut self,
+        cut: Cut,
+        ripple_others: bool,
+        linked: bool,
+    ) -> Result<bool, String> {
+        self.cut_available(linked)?;
         let before = self.playhead;
         let req = EditRequest::TrimToPlayhead {
             seq: self.root_seq(),
-            targets: self.cut_targets(),
+            targets: self.cut_targets(linked),
             at: self.playhead,
             cut,
             ripple_others,
         };
         self.apply(&req, Coalesce::Never)?;
         Ok(self.playhead != before)
+    }
+
+    // ------------------------------------------------------------ TL-023
+
+    /// What *Split at playhead* cuts (TL-023): the selection, or with
+    /// nothing selected the main-track clip under the playhead (with its
+    /// linked partners when `linked`, TL-057). Refused with the reason when
+    /// there is none.
+    pub fn split_targets(&self, linked: bool) -> Result<SplitTargets, &'static str> {
+        if !self.selection.is_empty() {
+            return Ok(SplitTargets::Clips(self.selection.clone()));
+        }
+        self.main_with_partners(linked)
+            .map(SplitTargets::Clips)
+            .ok_or(NO_CLIP_AT_PLAYHEAD)
+    }
+
+    /// *Split at playhead* (`Mod+B`), or with `all` *Split all*
+    /// (`Mod+Shift+B`: every clip under the playhead on unlocked tracks),
+    /// as one `SplitClips` entry.
+    pub fn split_at_playhead(&mut self, all: bool, linked: bool) -> Result<(), String> {
+        let targets = if all {
+            SplitTargets::AllTracks
+        } else {
+            self.split_targets(linked)?
+        };
+        let req = EditRequest::Split(SplitReq {
+            seq: self.root_seq(),
+            at: self.playhead,
+            targets,
+        });
+        self.apply(&req, Coalesce::Never).map(|_| ())
     }
 
     // ------------------------------------------------------------ TL-024
@@ -462,11 +543,14 @@ pub(crate) mod tests {
         let (mut p, [a, b, title]) = talking_head();
         // On a clip's first frame there is nothing before the playhead.
         p.playhead = s(4);
-        assert_eq!(p.cut_available(), Err("Move the playhead inside the clip"));
+        assert_eq!(
+            p.cut_available(true),
+            Err("Move the playhead inside the clip")
+        );
         p.playhead = s(2);
-        assert_eq!(p.cut_available(), Ok(()));
+        assert_eq!(p.cut_available(true), Ok(()));
         let entries = p.editor.history().len();
-        let moved = p.cut_away(Cut::Head, false).unwrap();
+        let moved = p.cut_away(Cut::Head, false, true).unwrap();
         assert!(moved, "Q moves the playhead to the clip's start");
         assert_eq!(p.playhead, Tick::ZERO);
         assert_eq!(range(&p, a), (Tick::ZERO, s(2)), "the head went");
@@ -491,7 +575,7 @@ pub(crate) mod tests {
         let (mut p, [_, b, title]) = talking_head();
         p.selection = vec![title];
         p.playhead = s(2);
-        let moved = p.cut_away(Cut::Tail, false).unwrap();
+        let moved = p.cut_away(Cut::Tail, false, true).unwrap();
         assert!(!moved, "W never moves the playhead");
         assert_eq!(range(&p, title), (s(1), s(2)), "the title lost its tail");
         assert_eq!(range(&p, b), (s(4), s(8)), "an overlay cut doesn't ripple");
@@ -499,10 +583,10 @@ pub(crate) mod tests {
         p.selection.clear();
         p.playhead = s(9);
         assert_eq!(
-            p.cut_available(),
+            p.cut_available(true),
             Err("Select a clip or put the playhead over the main track")
         );
-        assert!(p.cut_away(Cut::Tail, false).is_err());
+        assert!(p.cut_away(Cut::Tail, false, true).is_err());
     }
 
     #[test]
@@ -526,7 +610,7 @@ pub(crate) mod tests {
         p.selection = vec![title];
         p.playhead = s(2);
         assert_eq!(
-            p.cut_available(),
+            p.cut_available(true),
             Err("The selected clip is on a locked track")
         );
     }
@@ -544,6 +628,64 @@ pub(crate) mod tests {
         assert_eq!(range(&p, a), (Tick::ZERO, s(2)));
         assert_eq!(range(&p, title), (s(1), s(2)), "Shift cuts every track");
         assert_eq!(p.editor.history().len(), entries + 1, "one entry");
+    }
+
+    /// Detaches `clip`'s sound and returns the new audio clip; nothing
+    /// stays selected.
+    fn detach(p: &mut Project, clip: ClipId) -> ClipId {
+        let req = EditRequest::DetachAudio {
+            seq: p.doc().root(),
+            clips: vec![clip],
+        };
+        p.apply(&req, Coalesce::Never).unwrap();
+        let sound = p.selection[0];
+        p.selection.clear();
+        sound
+    }
+
+    #[test]
+    fn a_cut_away_with_nothing_selected_cuts_the_linked_sound_too() {
+        let (mut p, [a, _, _]) = talking_head();
+        let sound = detach(&mut p, a);
+        p.playhead = s(2);
+        p.cut_away(Cut::Head, false, true).unwrap();
+        let seq = p.doc().root();
+        let offsets = freecut_timeline::edit::sync_offsets(p.doc(), seq);
+        assert!(offsets.is_empty(), "in sync: {offsets:?}");
+        assert_eq!(range(&p, sound), (Tick::ZERO, s(2)));
+        // With the preference off only the main clip is cut.
+        p.undo().unwrap();
+        p.playhead = s(2);
+        p.cut_away(Cut::Head, false, false).unwrap();
+        assert_eq!(range(&p, sound), (Tick::ZERO, s(4)));
+    }
+
+    #[test]
+    fn split_with_nothing_selected_cuts_the_main_clip_and_split_all_every_track() {
+        let (mut p, [a, _, title]) = talking_head();
+        let sound = detach(&mut p, a);
+        p.playhead = s(2);
+        let entries = p.editor.history().len();
+        p.split_at_playhead(false, true).unwrap();
+        assert_eq!(p.editor.history().len(), entries + 1, "one entry");
+        assert_eq!(range(&p, a), (Tick::ZERO, s(2)), "the main clip is cut");
+        assert_eq!(range(&p, sound), (Tick::ZERO, s(2)), "with its sound");
+        assert_eq!(range(&p, title), (s(1), s(3)), "the title is left alone");
+        p.undo().unwrap();
+        p.selection.clear();
+        p.split_at_playhead(true, true).unwrap();
+        assert_eq!(range(&p, title), (s(1), s(2)), "Split all cuts every track");
+        // Past the main track's end there's nothing to split.
+        p.selection.clear();
+        p.playhead = s(9);
+        assert_eq!(
+            p.split_at_playhead(false, true),
+            Err(NO_CLIP_AT_PLAYHEAD.to_owned())
+        );
+        assert_eq!(
+            crate::ui::timeline_toolbar::split_available(&p, true),
+            Err(NO_CLIP_AT_PLAYHEAD)
+        );
     }
 
     #[test]

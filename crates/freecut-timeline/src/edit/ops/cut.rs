@@ -1,12 +1,13 @@
 //! Cut away the part before or after the playhead (TL-026).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::{Resolved, resolve_clips};
 use crate::edit::policy::{self, MainItem};
 use crate::edit::tx::Tx;
 use crate::edit::{Change, EditError, Label, Notice, OpKind, Plan};
-use crate::ids::{ClipId, SeqId};
+use crate::ids::{ClipId, LinkId, SeqId};
 use crate::model::{Clip, ClipLoc, Document, Sequence, TrackSlot};
 use crate::time::{FrameRate, Tick};
 
@@ -41,6 +42,10 @@ pub enum Unavailable {
     /// The playhead isn't strictly inside the clip (or a part would be
     /// shorter than a frame).
     PlayheadOutside,
+    /// A linked partner (TL-057) can't make the change and stay in sync:
+    /// it would collide with a neighbour, run past its source or be
+    /// shorter than a frame.
+    NoRoom,
 }
 
 /// Whether a cut-away at `at` would act on anything: `Ok` when at least one
@@ -157,21 +162,33 @@ pub(crate) fn trim_to_playhead(
     if eligible.is_empty() {
         return Err(EditError::NothingToTrim);
     }
-    // Links of a main-track clip that ripples: its partners keep in sync by
-    // losing the same content in place.
-    let main_links: Vec<_> = eligible
+    // Links of a main-track clip that ripples, with that clip's start: its
+    // partners keep in sync by losing the content it loses (TL-057).
+    let main_links: BTreeMap<LinkId, Tick> = eligible
         .iter()
         .filter(|r| r.loc.slot.is_main() && magnet)
-        .filter_map(|r| r.clip.link)
+        .filter_map(|r| Some((r.clip.link?, r.clip.start())))
         .collect();
     let mut relayout_main = false;
+    let mut done = 0u32;
     for r in &eligible {
         let clip = &r.clip;
         let main_ripple = r.loc.slot.is_main() && magnet;
-        let in_place =
-            main_ripple || ripple_others || clip.link.is_some_and(|l| main_links.contains(&l));
-        let (after, removed) = match cut {
-            Cut::Head => {
+        let main_start = clip
+            .link
+            .and_then(|l| main_links.get(&l))
+            .copied()
+            .filter(|_| !main_ripple);
+        let in_place = main_ripple || ripple_others || main_start.is_some();
+        let (after, removed) = match (cut, main_start) {
+            (Cut::Head, Some(a0)) => match partner_head_cut(&s, r, at, a0, rate)? {
+                Some(cut) => cut,
+                None => {
+                    skipped.push((clip.id, Unavailable::NoRoom));
+                    continue;
+                }
+            },
+            (Cut::Head, None) => {
                 let d = at.checked_sub(clip.start())?;
                 let after = if in_place {
                     clip.with_head_trimmed_in_place(d)?
@@ -180,11 +197,12 @@ pub(crate) fn trim_to_playhead(
                 };
                 (after, d)
             }
-            Cut::Tail => {
+            (Cut::Tail, _) => {
                 let d = clip.end().checked_sub(at)?;
                 (clip.with_tail_trimmed(d.checked_neg()?)?, d)
             }
         };
+        done += 1;
         tx.push(Change::ReplaceClip {
             seq,
             track: r.loc.track,
@@ -220,8 +238,41 @@ pub(crate) fn trim_to_playhead(
     if !skipped.is_empty() {
         tx.notice(Notice::Skipped(skipped));
     }
+    if done == 0 {
+        return Err(EditError::NothingToTrim);
+    }
     tx.finish(Label {
         op: OpKind::TrimToPlayhead(cut),
-        count: u32::try_from(eligible.len()).unwrap_or(u32::MAX),
+        count: done,
     })
+}
+
+/// A head cut of partner `r` of a main-track clip starting at `a0` that
+/// ripples (TL-057): the partner loses the content the main clip loses
+/// (from `a0` to the playhead) and what follows lands where the main
+/// clip's does, so the pair stays in sync. A partner starting before `a0`
+/// loses the same length in place. `None` when it has no room for that.
+fn partner_head_cut(
+    s: &Sequence,
+    r: &Resolved,
+    at: Tick,
+    a0: Tick,
+    rate: FrameRate,
+) -> Result<Option<(Clip, Tick)>, EditError> {
+    let clip = &r.clip;
+    let d = at.checked_sub(a0)?;
+    if clip.end().checked_sub(at)? < rate.frame_ticks() {
+        return Ok(None);
+    }
+    if clip.start() < a0 {
+        return Ok(Some((clip.with_head_trimmed_in_place(d)?, d)));
+    }
+    let after = clip
+        .with_head_trimmed(at.checked_sub(clip.start())?)?
+        .moved_to(a0)?;
+    let track = s
+        .track_at(r.loc.slot)
+        .ok_or(EditError::StaleTrack(r.loc.track))?;
+    let fits = policy::fits(track, &[after.range], &BTreeSet::from([clip.id]));
+    Ok(fits.then_some((after, d)))
 }

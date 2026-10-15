@@ -92,6 +92,7 @@ fn mv(fx: &mut Fixture, clips: &[ClipId], frames: i64) {
         clips: clips.to_vec(),
         delta: f(frames),
         track_shift: 0,
+        followers: Vec::new(),
     }))
     .unwrap();
 }
@@ -104,6 +105,7 @@ fn trim(fx: &mut Fixture, clip: ClipId, edge: Edge, frames: i64) {
         edge,
         delta: f(frames),
         ripple: false,
+        partners: Vec::new(),
     }))
     .unwrap();
 }
@@ -927,6 +929,7 @@ fn offsets_round_to_the_nearest_frame_with_halves_toward_zero() {
         clips: vec![a],
         delta: Tick::from_raw(f(1).raw() / 2),
         track_shift: 0,
+        followers: Vec::new(),
     }))
     .unwrap();
     fx.set_rate(rate());
@@ -938,6 +941,7 @@ fn offsets_round_to_the_nearest_frame_with_halves_toward_zero() {
         clips: vec![v],
         delta: Tick::from_raw(f(1).raw() * 2),
         track_shift: 0,
+        followers: Vec::new(),
     }))
     .unwrap();
     fx.set_rate(rate());

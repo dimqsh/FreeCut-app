@@ -156,6 +156,9 @@ pub fn read_look(bytes: &[u8]) -> Result<LookFile, LookError> {
     if bytes.len() as u64 > MAX_LOOK_BYTES {
         return Err(LookError::TooLarge);
     }
+    // An editor may have saved it with a byte-order mark, as a project's
+    // reader allows.
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     let value: Value = serde_json::from_slice(bytes).map_err(|e| LookError::Json(e.to_string()))?;
     let Value::Object(mut root) = value else {
         return Err(LookError::NotALook);
@@ -212,10 +215,15 @@ pub fn read_look(bytes: &[u8]) -> Result<LookFile, LookError> {
     let color = root
         .remove("color")
         .unwrap_or_else(|| Value::Object(Map::new()));
-    let (stack, _clamped) = crate::format::map::read_stack(color, "color").map_err(|e| {
-        let text = e.to_string();
-        bad("color", text)
-    })?;
+    let (stack, _clamped) =
+        crate::format::map::read_stack(color, "color").map_err(|e| match e {
+            // In a look's own words: the project reader's say "project".
+            crate::open::OpenError::Json { path, message }
+            | crate::open::OpenError::BadValue { path, message } => {
+                LookError::BadValue { path, message }
+            }
+            other => bad("color", other.to_string()),
+        })?;
     Ok(LookFile {
         name,
         tags,
@@ -296,6 +304,11 @@ pub enum LookLibraryError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("can't make the looks folder {}: {source}", path.display())]
+    CreateFolder {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("can't save the look: {0}")]
     Write(#[from] SaveError),
     #[error("can't remove the look: {0}")]
@@ -332,20 +345,34 @@ impl LookLibrary {
                 });
             }
         };
-        for item in read.into_iter().flatten().flatten() {
+        for (n, item) in read.into_iter().flatten().enumerate() {
+            // CL-026: what can't be read is listed with the reason, never
+            // left out.
+            let item = match item {
+                Ok(item) => item,
+                Err(e) => {
+                    entries.push(LookEntry {
+                        id: format!("unreadable entry {}", n + 1),
+                        path: dir.to_path_buf(),
+                        look: Err(LookError::Io(e.to_string())),
+                    });
+                    continue;
+                }
+            };
             let path = item.path();
             let is_look = path
                 .extension()
                 .and_then(|e| e.to_str())
                 .is_some_and(|e| e.eq_ignore_ascii_case(LOOK_EXTENSION));
-            let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
+            let Some(stem) = path.file_stem() else {
                 continue;
             };
             if !is_look || !path.is_file() {
                 continue;
             }
+            // A name that isn't UTF-8 still lists, under a readable id.
             entries.push(LookEntry {
-                id: id.to_owned(),
+                id: stem.to_string_lossy().into_owned(),
                 look: read_file(&path),
                 path,
             });
@@ -415,7 +442,7 @@ impl LookLibrary {
     pub fn save(&mut self, mut look: LookFile, seed: u64) -> Result<String, LookLibraryError> {
         look.name = self.unique_name(&look.name);
         let bytes = write_look(&look);
-        std::fs::create_dir_all(&self.dir).map_err(|source| LookLibraryError::Read {
+        std::fs::create_dir_all(&self.dir).map_err(|source| LookLibraryError::CreateFolder {
             path: self.dir.clone(),
             source,
         })?;
@@ -459,15 +486,16 @@ impl LookLibrary {
     }
 }
 
-/// One look file, read and parsed.
+/// One look file, read and parsed; never more than one byte past
+/// [`MAX_LOOK_BYTES`], even when the file grows while it is read.
 fn read_file(path: &Path) -> Result<LookFile, LookError> {
-    let size = std::fs::metadata(path)
-        .map_err(|e| LookError::Io(e.to_string()))?
-        .len();
-    if size > MAX_LOOK_BYTES {
-        return Err(LookError::TooLarge);
-    }
-    let bytes = std::fs::read(path).map_err(|e| LookError::Io(e.to_string()))?;
+    use std::io::Read;
+    let io = |e: std::io::Error| LookError::Io(e.to_string());
+    let file = std::fs::File::open(path).map_err(io)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_LOOK_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io)?;
     read_look(&bytes)
 }
 
@@ -552,7 +580,7 @@ mod tests {
         v["color"] = serde_json::json!({ "curves": { "luma": [[0, 0]] } });
         assert!(matches!(
             read_look(&serde_json::to_vec(&v).unwrap()),
-            Err(LookError::BadValue { path, .. }) if path == "color"
+            Err(LookError::BadValue { path, .. }) if path == "color.curves.luma"
         ));
         // Out of range values are clamped, as in projects.
         v["sections"] = serde_json::json!(["light", "masks"]);
@@ -563,6 +591,55 @@ mod tests {
             !clamped.snapshot.sections().is_on(Section::Masks),
             "a look never holds masks"
         );
+    }
+
+    #[test]
+    fn a_byte_order_mark_and_wide_unknown_numbers_are_read() {
+        let look = LookFile::new("A", &graded(), SectionMask::of(&Section::LOOK), 0);
+        let mut bytes = b"\xEF\xBB\xBF".to_vec();
+        bytes.extend(write_look(&look));
+        assert_eq!(read_look(&bytes), Ok(look.clone()));
+        // An unknown key holding a 128-bit integer is dropped, not refused.
+        let text = String::from_utf8(write_look(&look)).unwrap().replacen(
+            "\"color\": {",
+            "\"color\": {\"x_future\": 123456789012345678901234567890, ",
+            1,
+        );
+        assert_eq!(read_look(text.as_bytes()), Ok(look));
+        // A refusal inside the colour object names its path, in a look's
+        // words.
+        let bad = String::from_utf8(write_look(&LookFile::new(
+            "B",
+            &graded(),
+            SectionMask::of(&Section::LOOK),
+            0,
+        )))
+        .unwrap()
+        .replacen("\"color\": {", "\"color\": {\"amount\": \"lots\", ", 1);
+        let err = read_look(bad.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LookError::BadValue { path, .. } if path == "color.amount"),
+            "{err:?}"
+        );
+        assert!(!err.to_string().contains("project"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_name_that_isnt_utf8_is_listed() {
+        use std::os::unix::ffi::OsStrExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(LOOKS_FOLDER);
+        std::fs::create_dir_all(&dir).unwrap();
+        let look = LookFile::new("Caf\u{e9}", &graded(), SectionMask::ALL_ON, 5);
+        let name = std::ffi::OsStr::from_bytes(b"Caf\xE9.fclook");
+        if std::fs::write(dir.join(name), write_look(&look)).is_err() {
+            // The file system insists on UTF-8 names (APFS does).
+            return;
+        }
+        let lib = LookLibrary::open(&dir).unwrap();
+        assert_eq!(lib.entries().len(), 1);
+        assert_eq!(lib.looks().next().unwrap().1, &look);
     }
 
     #[test]

@@ -55,7 +55,7 @@ pub use library::{
     AudioStreamInfo, Fingerprint, GeneratedMediaKind, Library, MediaInfo, MediaItem, MediaOrigin,
     MediaSource, Rotation, StoredPath, VideoStreamInfo,
 };
-pub(crate) use marker::marker_points;
+pub(crate) use marker::marker_points_except;
 pub use marker::{
     MAX_MARKER_NAME_CHARS, MAX_MARKER_NOTE_CHARS, Marker, MarkerOrigin, MarkerRef, MarkerScope,
     Markers, PaletteColor, next_marker, prev_marker,
@@ -208,6 +208,7 @@ impl Document {
     /// Where clip `id` lives. Constant time plus a scan of one sequence's
     /// track list.
     pub fn find_clip(&self, id: ClipId) -> Option<ClipLoc> {
+        crate::probe::visited(1);
         let entry = self.index.get(&id)?;
         let (slot, _) = self.sequence(entry.seq)?.find_track(entry.track)?;
         Some(ClipLoc {
@@ -219,6 +220,7 @@ impl Document {
 
     /// Clip `id`, found through the index and one binary search.
     pub fn clip(&self, id: ClipId) -> Option<&Arc<Clip>> {
+        crate::probe::visited(1);
         let entry = self.index.get(&id)?;
         let (_, track) = self.sequence(entry.seq)?.find_track(entry.track)?;
         let i = track.index_of(entry.start, id)?;
@@ -252,6 +254,8 @@ impl Document {
                     // A detached video keeps its link id after the link
                     // dissolves; it must never be handed out again.
                     max = max.max(clip.audio.detached().map_or(0, |l| l.get()));
+                    // So does the clip or media a colour match names.
+                    max = max.max(clip.match_reference_id().unwrap_or(0));
                     for m in &clip.markers {
                         max = max.max(m.id.get());
                     }

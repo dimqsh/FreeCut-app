@@ -12,14 +12,14 @@
 
 use std::sync::Arc;
 
-use super::props::update_clips;
+use super::props::try_update_clips;
 use crate::edit::tx::Tx;
 use crate::edit::{EditError, OpKind, Plan};
 use crate::ids::{ClipId, SeqId};
 use crate::model::{
     AutoCorrection, AutoOffsets, Clip, ColorMask, ColorMaskParam, ColorParamId, ColorStack, Curve,
-    CurveChannel, HueBand, Keyframe, LutInterp, LutSlot, Mask, MaskCombine, MatchTransform,
-    PropGroup, PropPath, PropValue, Section, SectionSnapshot, SkinScope, WheelId,
+    CurveChannel, HueBand, Keyframe, LutInterp, LutSlot, Mask, MaskCombine, MatchRef,
+    MatchTransform, PropGroup, PropPath, PropValue, Section, SectionSnapshot, SkinScope, WheelId,
 };
 
 /// One change to the colour stacks of clips.
@@ -330,14 +330,47 @@ pub(crate) fn edit_color(
     clips: &[ClipId],
     edit: &ColorEdit,
 ) -> Result<Plan, EditError> {
-    update_clips(
+    // CL-020: a match is measured against something that exists now. A
+    // reference may go away later (its id stays reserved), but an id the
+    // editor never handed out would make the document unsaveable.
+    if let ColorEdit::SetMatch(Some(xf)) = edit {
+        match xf.reference {
+            MatchRef::Clip { clip, .. } => {
+                tx.clip(clip)?;
+            }
+            MatchRef::Media { media, .. } => {
+                if tx.work().library().get(media).is_none() {
+                    return Err(EditError::UnknownMedia(media));
+                }
+            }
+        }
+    }
+    try_update_clips(
         tx,
         seq,
         clips,
         OpKind::EditColor(edit.op()),
         EditError::NoColorClip,
-        |clip| edit.applied_to(clip),
+        |clip| {
+            edit.check(clip)?;
+            Ok(edit.applied_to(clip))
+        },
     )
+}
+
+impl ColorEdit {
+    /// Refuses an edit that would do something other than it says on
+    /// `clip`: **Apply to sliders** while a section it needs is switched
+    /// off would change the picture (CL-019).
+    pub fn check(&self, clip: &Clip) -> Result<(), EditError> {
+        if matches!(self, ColorEdit::ApplyAutoToSliders)
+            && clip.content.takes_color()
+            && let Some(section) = ColorStack::of(clip.color.as_ref()).auto_apply_blocker()
+        {
+            return Err(EditError::SectionSwitchedOff { section });
+        }
+        Ok(())
+    }
 }
 
 /// Auto's Strength key path.

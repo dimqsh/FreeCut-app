@@ -15,6 +15,7 @@ fn nudge(fx: &Fixture, clip: freecut_timeline::ids::ClipId, frames: i64) -> Edit
         clips: vec![clip],
         delta: f(frames),
         track_shift: 0,
+        followers: Vec::new(),
     })
 }
 
@@ -76,6 +77,7 @@ fn a_gesture_is_one_entry_and_can_be_cancelled() {
             edge: Edge::Out,
             delta: f(2),
             ripple: false,
+            partners: Vec::new(),
         });
         commit_with(&mut fx, &req, Coalesce::Gesture(g));
     }

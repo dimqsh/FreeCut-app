@@ -619,6 +619,7 @@ fn splits_keep_every_key_and_trims_keep_keys_on_the_content() {
         edge: Edge::In,
         delta: f(5),
         ripple: false,
+        partners: Vec::new(),
     }))
     .unwrap();
     assert_eq!(fx.doc().clip(right.id).unwrap().keys.origin(), f(25));

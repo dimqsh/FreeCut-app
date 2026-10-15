@@ -379,50 +379,7 @@ fn validate_refuses_a_stack_on_a_text_clip_and_out_of_range_values() {
         limits: Default::default(),
         id_high_water: None,
     };
-    let with = |id: ClipId, stack: ColorStack| {
-        let rebuild = |tracks: &[Arc<Track>]| -> Vec<Arc<Track>> {
-            tracks
-                .iter()
-                .map(|t| {
-                    let clips = t
-                        .clips()
-                        .iter()
-                        .map(|c| {
-                            let mut c = Clip::clone(c);
-                            if c.id == id {
-                                c.color = Some(Arc::new(stack.clone()));
-                            }
-                            Arc::new(c)
-                        })
-                        .collect();
-                    let mut out = Track::from_parts(t.id, t.kind, t.header.clone(), clips);
-                    out.mix = t.mix;
-                    Arc::new(out)
-                })
-                .collect()
-        };
-        let sequences: Vec<_> = doc
-            .sequences()
-            .map(|s| {
-                let mut out = Sequence::from_parts(
-                    s.id,
-                    s.flags,
-                    rebuild(s.visual_tracks()),
-                    rebuild(s.audio_tracks()),
-                );
-                out.master = s.master;
-                out.markers = s.markers.clone();
-                Arc::new(out)
-            })
-            .collect();
-        Document::from_parts(
-            doc.root(),
-            *doc.settings(),
-            doc.library().clone(),
-            sequences,
-        )
-        .unwrap()
-    };
+    let with = |id: ClipId, stack: ColorStack| with_stack(&doc, id, stack);
     let warm = ColorStack::default().with(ColorParamId::Temperature, 10);
     assert!(with(video, warm.clone()).validate(&ctx).is_ok());
     let errs = with(text, warm).validate(&ctx).unwrap_err();
@@ -438,6 +395,107 @@ fn validate_refuses_a_stack_on_a_text_clip_and_out_of_range_values() {
         .validate(&ctx)
         .unwrap_err();
     assert_eq!(errs, vec![InvariantViolation::Color { clip: video }]);
+}
+
+/// `doc` with clip `id`'s stored stack replaced by `stack` (its keys kept).
+fn with_stack(doc: &Document, id: ClipId, stack: ColorStack) -> Document {
+    let rebuild = |tracks: &[Arc<Track>]| -> Vec<Arc<Track>> {
+        tracks
+            .iter()
+            .map(|t| {
+                let clips = t
+                    .clips()
+                    .iter()
+                    .map(|c| {
+                        let mut c = Clip::clone(c);
+                        if c.id == id {
+                            c.color = Some(Arc::new(stack.clone()));
+                        }
+                        Arc::new(c)
+                    })
+                    .collect();
+                let mut out = Track::from_parts(t.id, t.kind, t.header.clone(), clips);
+                out.mix = t.mix;
+                Arc::new(out)
+            })
+            .collect()
+    };
+    let sequences: Vec<_> = doc
+        .sequences()
+        .map(|s| {
+            let mut out = Sequence::from_parts(
+                s.id,
+                s.flags,
+                rebuild(s.visual_tracks()),
+                rebuild(s.audio_tracks()),
+            );
+            out.master = s.master;
+            out.markers = s.markers.clone();
+            Arc::new(out)
+        })
+        .collect();
+    Document::from_parts(
+        doc.root(),
+        *doc.settings(),
+        doc.library().clone(),
+        sequences,
+    )
+    .unwrap()
+}
+
+#[test]
+fn validate_refuses_colour_keys_for_values_the_stack_lacks() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    let ctx = ValidateCtx {
+        limits: Default::default(),
+        id_high_water: None,
+    };
+    let warm = ColorStack::default().with(ColorParamId::Temperature, 10);
+    color(&mut fx, vec![video], ColorEdit::AddMask(ellipse())).unwrap();
+    mask_key(
+        &mut fx,
+        video,
+        mask_prop(1, MaskParam::Center),
+        0,
+        PropValue::MaskPoint(MaskPoint::new(9_000, 0)),
+    );
+    let masked = fx.doc().clone();
+    let errs = with_stack(&masked, video, warm.clone())
+        .validate(&ctx)
+        .unwrap_err();
+    assert_eq!(
+        errs,
+        vec![InvariantViolation::Keys { clip: video }],
+        "mask keys"
+    );
+    color(&mut fx, vec![video], ColorEdit::RemoveMask(1)).unwrap();
+    color(
+        &mut fx,
+        vec![video],
+        ColorEdit::SetLut(Some(lut(1, "a.cube"))),
+    )
+    .unwrap();
+    key(&mut fx, video, ColorParamId::LutIntensity, 0, 0);
+    let errs = with_stack(fx.doc(), video, warm.clone())
+        .validate(&ctx)
+        .unwrap_err();
+    assert_eq!(
+        errs,
+        vec![InvariantViolation::Keys { clip: video }],
+        "LUT keys"
+    );
+    color(&mut fx, vec![video], ColorEdit::SetLut(None)).unwrap();
+    color(&mut fx, vec![video], ColorEdit::SetAuto(Some(auto(12, 10)))).unwrap();
+    key(&mut fx, video, ColorParamId::AutoStrength, 0, 0);
+    let errs = with_stack(fx.doc(), video, warm)
+        .validate(&ctx)
+        .unwrap_err();
+    assert_eq!(
+        errs,
+        vec![InvariantViolation::Keys { clip: video }],
+        "Strength keys"
+    );
 }
 
 #[test]
@@ -1109,6 +1167,42 @@ fn matched(clip: ClipId) -> MatchTransform {
 }
 
 #[test]
+fn a_match_to_something_that_does_not_exist_is_refused() {
+    let mut fx = Fixture::new();
+    let (video, ..) = kinds(&mut fx);
+    let before = fx.editor.document().clone();
+    let never = std::num::NonZeroU64::new(999_999).unwrap();
+    let missing_clip = MatchTransform::identity(MatchRef::Clip {
+        clip: ClipId::from_raw(never),
+        at: f(0),
+        graded: false,
+    });
+    let missing_media = MatchTransform::identity(MatchRef::Media {
+        media: freecut_timeline::ids::MediaId::from_raw(never),
+        at: f(0),
+    });
+    assert!(
+        color(
+            &mut fx,
+            vec![video],
+            ColorEdit::SetMatch(Some(missing_clip))
+        )
+        .is_err()
+    );
+    assert_eq!(
+        color(
+            &mut fx,
+            vec![video],
+            ColorEdit::SetMatch(Some(missing_media))
+        )
+        .unwrap_err(),
+        EditError::UnknownMedia(freecut_timeline::ids::MediaId::from_raw(never))
+    );
+    // Nothing changed: the document stays saveable.
+    assert_eq!(*fx.editor.document(), before);
+}
+
+#[test]
 fn every_k5_edit_applies_undoes_and_redoes() {
     let mut fx = Fixture::new();
     let (video, image, adjust, ..) = kinds(&mut fx);
@@ -1228,6 +1322,86 @@ fn auto_offsets_sit_under_the_sliders() {
         AutoSource::Playhead,
     )));
     assert!(zero.is_identity() && !zero.section_is_default(Section::Auto));
+}
+
+/// What the renderer sees at frames 0, 5 and 10 of `clip`.
+fn seen(fx: &Fixture, clip: ClipId) -> Vec<freecut_timeline::model::BasicAdjust> {
+    let c = fx.doc().clip(clip).unwrap();
+    [0, 5, 10]
+        .into_iter()
+        .map(|t| {
+            ColorStack::of(c.color_at(c.start().checked_add(f(t)).unwrap()).as_ref())
+                .effective_basic()
+        })
+        .collect()
+}
+
+#[test]
+fn apply_to_sliders_keeps_the_picture_or_is_refused() {
+    for mask in 0..8u8 {
+        let (auto_on, light_on, color_on) = (mask & 1 != 0, mask & 2 != 0, mask & 4 != 0);
+        let mut fx = Fixture::new();
+        let (video, ..) = kinds(&mut fx);
+        color(
+            &mut fx,
+            vec![video],
+            ColorEdit::SetParams(vec![(ColorParamId::Temperature, 30)]),
+        )
+        .unwrap();
+        key(&mut fx, video, ColorParamId::Exposure, 0, 10);
+        key(&mut fx, video, ColorParamId::Exposure, 10, 40);
+        color(&mut fx, vec![video], ColorEdit::SetAuto(Some(auto(12, 10)))).unwrap();
+        for (section, on) in [
+            (Section::Auto, auto_on),
+            (Section::Light, light_on),
+            (Section::Color, color_on),
+        ] {
+            if !on {
+                color(
+                    &mut fx,
+                    vec![video],
+                    ColorEdit::SetSectionEnabled(section, false),
+                )
+                .unwrap();
+            }
+        }
+        let before = seen(&fx, video);
+        let blocker = stack(&fx, video).auto_apply_blocker();
+        let what = format!("auto {auto_on} light {light_on} color {color_on}");
+        match color(&mut fx, vec![video], ColorEdit::ApplyAutoToSliders) {
+            Ok(_) => {
+                assert_eq!(blocker, None, "{what}");
+                assert_eq!(seen(&fx, video), before, "{what}: the picture stays");
+                assert_eq!(stack(&fx, video).auto, None, "{what}");
+            }
+            Err(e) => {
+                let section = blocker.expect(&what);
+                assert_eq!(e, EditError::SectionSwitchedOff { section }, "{what}");
+            }
+        }
+        // Only the all-on case applies here: every section takes an offset.
+        assert_eq!(blocker.is_none(), auto_on && light_on && color_on, "{what}");
+    }
+}
+
+#[test]
+fn an_auto_offset_that_rounds_to_nothing_is_the_identity() {
+    let weak = |strength: u8| {
+        ColorStack::default().with_auto(Some(AutoCorrection {
+            strength,
+            ..AutoCorrection::new(
+                AutoOffsets {
+                    exposure: 1,
+                    ..AutoOffsets::default()
+                },
+                AutoStyle::Natural,
+                AutoSource::WholeClip,
+            )
+        }))
+    };
+    assert!(weak(49).is_identity());
+    assert_eq!(weak(49).auto_apply_blocker(), None);
+    assert!(!weak(50).is_identity());
 }
 
 #[test]

@@ -174,3 +174,101 @@ fn validate_rejects_background_and_bubble_both_on() {
     one.style.bubble.on = true;
     assert!(doc_with(one).validate(&vctx(10)).is_ok());
 }
+
+/// F25/F26 from the M1 review: a one-clip ripple trim and a select-all
+/// nudge must cost work linear in the clips moved. The clip lookups count
+/// the clips they visit (`crate::probe`), so the check doesn't depend on
+/// the machine's load: 4x the clips must cost at most about 4x the visits
+/// (quadratic work would cost 16x).
+mod scaling {
+    use super::nz;
+    use crate::Editor;
+    use crate::edit::{
+        Edge, EditCtx, EditRequest, InsertReq, InsertTarget, Limits, MoveReq, NewClip, TrimReq,
+    };
+    use crate::history::HistoryLimits;
+    use crate::ids::{ClipId, IdAlloc, SeqId, TrackId};
+    use crate::model::{Document, ProjectSettings, TextClipData};
+    use crate::time::Tick;
+
+    fn ctx() -> EditCtx {
+        EditCtx {
+            limits: Limits::default(),
+        }
+    }
+
+    /// An editor with `n` one-frame text clips on a text track.
+    fn texts(n: usize) -> (Editor, SeqId, Vec<ClipId>) {
+        let seq = SeqId::from_raw(nz(1));
+        let settings = ProjectSettings::new_default().unwrap();
+        let frame = settings.frame_rate.frame_ticks();
+        let doc = Document::new(seq, TrackId::from_raw(nz(2)), settings);
+        let mut editor = Editor::open(doc, IdAlloc::default(), HistoryLimits::default()).unwrap();
+        let req = EditRequest::Insert(InsertReq {
+            seq,
+            target: InsertTarget::NewTrack,
+            at: Tick::ZERO,
+            clips: (0..n)
+                .map(|_| NewClip::text(TextClipData::default(), frame))
+                .collect(),
+        });
+        let plan = editor.plan(&ctx(), &req).unwrap();
+        editor.commit(plan, crate::CommitMeta::default()).unwrap();
+        let ids = editor.document().sequence(seq).unwrap().visual_tracks()[1]
+            .clips()
+            .iter()
+            .map(|c| c.id)
+            .collect();
+        (editor, seq, ids)
+    }
+
+    /// The clips visited while planning `req`.
+    fn visits(editor: &Editor, req: &EditRequest) -> u64 {
+        crate::probe::take();
+        editor.plan(&ctx(), req).unwrap();
+        crate::probe::take()
+    }
+
+    fn assert_linear(small: u64, large: u64) {
+        assert!(small > 0, "the lookups are counted");
+        assert!(
+            large <= 4 * small + 64,
+            "4x the clips visited {large} clips against {small}"
+        );
+    }
+
+    #[test]
+    fn select_all_nudge_scales_linearly() {
+        let cost = |n| {
+            let (editor, seq, all) = texts(n);
+            let frame = editor.document().settings().frame_rate.frame_ticks();
+            let nudge = EditRequest::Move(MoveReq {
+                seq,
+                clips: all,
+                delta: frame,
+                track_shift: 0,
+                followers: Vec::new(),
+            });
+            visits(&editor, &nudge)
+        };
+        assert_linear(cost(2_000), cost(8_000));
+    }
+
+    #[test]
+    fn a_one_clip_ripple_trim_scales_linearly() {
+        let cost = |n| {
+            let (editor, seq, all) = texts(n);
+            let frame = editor.document().settings().frame_rate.frame_ticks();
+            let trim = EditRequest::Trim(TrimReq {
+                seq,
+                clip: all[0],
+                edge: Edge::Out,
+                delta: frame,
+                ripple: true,
+                partners: Vec::new(),
+            });
+            visits(&editor, &trim)
+        };
+        assert_linear(cost(2_000), cost(8_000));
+    }
+}

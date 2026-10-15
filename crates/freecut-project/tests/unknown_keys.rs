@@ -116,7 +116,48 @@ const OBJECTS: &[&str] = &[
     "/document/sequences/0/visual/0/clips/0/color",
     "/document/sequences/0/visual/0/clips/0/color/light",
     "/document/sequences/0/visual/0/clips/0/color/color",
+    "/document/sequences/0/visual/0/clips/0/color/color/skin",
+    "/document/sequences/0/visual/0/clips/0/color/hsl",
+    "/document/sequences/0/visual/0/clips/0/color/hsl/red",
+    "/document/sequences/0/visual/0/clips/0/color/curves",
+    "/document/sequences/0/visual/0/clips/0/color/wheels",
+    "/document/sequences/0/visual/0/clips/0/color/wheels/shadows",
+    "/document/sequences/0/visual/0/clips/0/color/lut",
+    "/document/sequences/0/visual/0/clips/0/color/lut/skin",
+    "/document/sequences/0/visual/0/clips/0/color/auto",
+    "/document/sequences/0/visual/0/clips/0/color/auto/offsets",
+    "/document/sequences/0/visual/0/clips/0/color/match",
+    "/document/sequences/0/visual/0/clips/0/color/match/reference",
+    "/document/sequences/0/visual/0/clips/0/color/masks/0",
+    "/document/sequences/0/visual/0/clips/0/color/masks/2",
 ];
+
+/// Colour objects that are written only because they hold unknown keys:
+/// each part is otherwise at its defaults, alone or beside other parts.
+#[test]
+fn colour_parts_kept_only_by_unknown_keys_round_trip() {
+    let intro = "/document/sequences/0/visual/0/clips/0";
+    let only_unknown = [
+        ("color", json!({"skin": {"x_future": 1}})),
+        ("hsl", json!({"green": {"x_future": 2}})),
+        ("wheels", json!({"midtones": {"x_future": 3}})),
+    ];
+    for (key, object) in only_unknown {
+        for alone in [true, false] {
+            let mut v = sink_value();
+            let clip = v.pointer_mut(intro).unwrap();
+            if alone {
+                clip.as_object_mut().unwrap().remove("keys");
+                clip["color"] = json!({ key: object.clone() });
+            } else {
+                clip["color"][key] = object.clone();
+            }
+            let opened = decode(&compact(&v)).unwrap();
+            let saved = reencode(&opened);
+            assert_eq!(saved, v, "{key} (alone: {alone})");
+        }
+    }
+}
 
 #[test]
 fn unknown_keys_survive_at_every_object_level() {
@@ -234,6 +275,7 @@ fn unknown_keys_follow_their_clip_through_edits_and_leave_with_it() {
             clips: vec![id(42)],
             delta: fr(10),
             track_shift: 1,
+            followers: Vec::new(),
         }),
     );
     let new_track = editor.document().find_clip(id(42)).unwrap().track;

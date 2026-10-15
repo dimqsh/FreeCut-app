@@ -690,6 +690,7 @@ pub(crate) mod tests {
                     clips: vec![added],
                     delta: Tick::from_raw(3 * frame.raw()),
                     track_shift: 0,
+                    followers: Vec::new(),
                 }),
                 Coalesce::Never,
             )
@@ -722,6 +723,7 @@ pub(crate) mod tests {
                     clips: vec![added],
                     delta: Tick::from_secs(5).unwrap(),
                     track_shift: 0,
+                    followers: Vec::new(),
                 }),
                 Coalesce::Never,
             )

@@ -498,6 +498,7 @@ fn text_moves_between_text_tracks_but_never_onto_video_tracks() {
         clips: vec![b],
         delta: f(30),
         track_shift: -1,
+        followers: Vec::new(),
     }))
     .unwrap();
     assert_eq!(track_of(&fx, b), ta);
@@ -509,6 +510,7 @@ fn text_moves_between_text_tracks_but_never_onto_video_tracks() {
             clips: vec![b],
             delta: f(0),
             track_shift: -1,
+            followers: Vec::new(),
         }))
         .unwrap_err(),
         EditError::KindMismatch {

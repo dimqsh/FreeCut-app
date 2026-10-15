@@ -712,6 +712,7 @@ fn request(fx: &Fixture, op: &Op) -> Option<EditRequest> {
             clips: pick(fx, *p, *count),
             delta: f(*delta),
             track_shift: i32::from(*shift),
+            followers: Vec::new(),
         }),
         Op::Trim {
             pick: p,
@@ -724,6 +725,7 @@ fn request(fx: &Fixture, op: &Op) -> Option<EditRequest> {
             edge: if *out { Edge::Out } else { Edge::In },
             delta: f(*delta),
             ripple: *ripple,
+            partners: Vec::new(),
         }),
         Op::Split { pick: p, at, all } => EditRequest::Split(SplitReq {
             seq,
@@ -1081,6 +1083,7 @@ fn request(fx: &Fixture, op: &Op) -> Option<EditRequest> {
                 clips: vec![*linked.get(usize::from(*p) % linked.len().max(1))?],
                 delta: f(*delta),
                 track_shift: 0,
+                followers: Vec::new(),
             })
         }
         Op::Resync { pick: p, count } => {

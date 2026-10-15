@@ -292,6 +292,7 @@ fn a_split_hands_each_clip_marker_to_the_part_that_shows_it() {
         edge: freecut_timeline::edit::Edge::In,
         delta: f(1),
         ripple: false,
+        partners: Vec::new(),
     }))
     .unwrap();
     let c = fx
@@ -350,6 +351,7 @@ fn ripple_edits_leave_timeline_markers_but_clip_markers_move() {
         clips: vec![b],
         delta: f(0),
         track_shift: 1,
+        followers: Vec::new(),
     }))
     .unwrap();
     let clip = fx.doc().clip(b).unwrap();
@@ -379,6 +381,7 @@ fn markers_on_generated_clips_keep_their_place_through_head_trims() {
         edge: freecut_timeline::edit::Edge::In,
         delta: f(3),
         ripple: false,
+        partners: Vec::new(),
     }))
     .unwrap();
     let clip = fx.doc().clip(text).unwrap();
@@ -419,6 +422,30 @@ fn snapping_reaches_marker_starts_and_range_ends() {
     let points = SnapIndex::from_points(vec![(f(13), SnapKind::Marker)]);
     assert!(points.snap(&[f(13)], Tick::ZERO, 0).is_some());
     let _ = a;
+}
+
+#[test]
+fn a_dragged_marker_is_not_its_own_snap_target() {
+    let mut fx = Fixture::new();
+    main_clips(&mut fx);
+    let seq = fx.seq_id();
+    let t = add(&mut fx, 33, MarkerOwner::Timeline, None);
+    fx.apply(EditRequest::EditMarker {
+        seq,
+        marker: t,
+        patch: MarkerPatch {
+            duration: Some(f(4)),
+            ..MarkerPatch::default()
+        },
+    })
+    .unwrap();
+    let threshold = f(4).raw() as u64;
+    let index = SnapIndex::build_for_marker(fx.seq(), None, t);
+    // A nudge of 2 frames lands 2 frames on, in either direction.
+    assert!(index.snap(&[f(33)], f(2), threshold).is_none());
+    assert!(index.snap(&[f(33)], f(-2), threshold).is_none());
+    // Its range end dragged toward its own start doesn't collapse onto it.
+    assert!(index.snap(&[f(37)], f(-3), threshold).is_none());
 }
 
 #[test]

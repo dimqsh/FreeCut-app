@@ -388,7 +388,7 @@ pub fn show(
         history.undo_label().map(|l| op_name(l.op)),
         history.redo_label().map(|l| op_name(l.op)),
     );
-    let split = split_available(project);
+    let split = split_available(project, view.linked_selection);
     let duration = project
         .doc()
         .sequence(project.doc().root())
@@ -450,7 +450,7 @@ pub fn show(
         out.action = Some(ToolAction::Split);
     }
     if fold.cut_away {
-        let available = project.cut_available();
+        let available = project.cut_available(view.linked_selection);
         for before in [true, false] {
             let tip = match available {
                 Ok(()) if before => format!("Cut away the part before the playhead {}", key("Q")),
@@ -1251,7 +1251,7 @@ fn more_menu(
                 ui.menu_button("Add", |ui| add_menu_items(ui, project, out));
             }
             if !fold.cut_away {
-                let available = project.cut_available();
+                let available = project.cut_available(view.linked_selection);
                 let shift = ui.input(|i| i.modifiers.shift);
                 for (label, k, before) in [
                     ("Cut away before the playhead", "Q", true),
@@ -1347,25 +1347,40 @@ fn zoom_slider(ui: &mut egui::Ui, pps: &mut f32) {
         .widget_info(|| egui::WidgetInfo::slider(true, f64::from(slider_of_zoom(*pps)), "Zoom"));
 }
 
-/// Whether *Split at playhead* would cut anything: a selected clip (or,
-/// with nothing selected, any clip) strictly around the playhead.
-pub fn split_available(project: &Project) -> Result<(), &'static str> {
+/// Whether *Split at playhead* would cut anything (TL-023): a selected
+/// clip, or with nothing selected the main-track clip, strictly around the
+/// playhead on an unlocked track.
+pub fn split_available(project: &Project, linked: bool) -> Result<(), &'static str> {
+    use freecut_timeline::edit::SplitTargets;
     let doc = project.doc();
     let Some(seq) = doc.sequence(doc.root()) else {
         return Err("Nothing to split");
     };
     let at = project.playhead;
-    let inside = |c: &freecut_timeline::model::Clip| c.start() < at && at < c.end();
-    let mut clips = seq.tracks().flat_map(|(_, t)| t.clips().iter());
-    let any = if project.selection.is_empty() {
-        clips.any(|c| inside(c))
-    } else {
-        clips.any(|c| project.selection.contains(&c.id) && inside(c))
+    let ids = match project.split_targets(linked)? {
+        SplitTargets::Clips(ids) => ids,
+        SplitTargets::AllTracks => return Ok(()),
     };
-    if any {
-        Ok(())
+    let mut locked = false;
+    for id in ids {
+        let Some(c) = doc.clip(id) else { continue };
+        if !(c.start() < at && at < c.end()) {
+            continue;
+        }
+        if doc
+            .find_clip(id)
+            .and_then(|loc| seq.track_at(loc.slot))
+            .is_some_and(|t| t.is_locked())
+        {
+            locked = true;
+            continue;
+        }
+        return Ok(());
+    }
+    if locked {
+        Err("The clip at the playhead is on a locked track")
     } else if project.selection.is_empty() {
-        Err("Move the playhead over a clip to split it")
+        Err("Move the playhead over a clip on the main track to split it")
     } else {
         Err("Move the playhead inside the selected clip to split it")
     }

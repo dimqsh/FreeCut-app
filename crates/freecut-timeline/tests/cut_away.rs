@@ -246,6 +246,55 @@ fn a_linked_sound_of_a_rippled_main_clip_stays_in_sync() {
 }
 
 #[test]
+fn a_partner_with_its_own_start_loses_what_the_main_clip_loses() {
+    for follow in [true, false] {
+        let mut fx = Fixture::new();
+        if !follow {
+            fx.follow_off();
+        }
+        let (a, _) = two_on_main(&mut fx);
+        let seq = fx.seq_id();
+        let sound = match fx
+            .apply(EditRequest::DetachAudio {
+                seq,
+                clips: vec![a],
+            })
+            .unwrap()
+        {
+            Committed::Applied { selection, .. } => selection.unwrap()[0],
+            Committed::NoOp => panic!(),
+        };
+        // Alt-trim of the sound alone: 2+8 from source 2, still in sync.
+        fx.apply(EditRequest::Trim(freecut_timeline::edit::TrimReq {
+            seq,
+            clip: sound,
+            edge: freecut_timeline::edit::Edge::In,
+            delta: f(2),
+            ripple: false,
+            partners: Vec::new(),
+        }))
+        .unwrap();
+        assert!(sync_offsets(fx.doc(), seq).is_empty());
+        fx.apply(cut(
+            TrimTargets::Clips(vec![a, sound]),
+            4,
+            Cut::Head,
+            false,
+            &fx,
+        ))
+        .unwrap();
+        assert!(sync_offsets(fx.doc(), seq).is_empty(), "{}", fx.render());
+        let s = fx.doc().clip(sound).unwrap();
+        // Everything after the playhead stays: source 4 on, under the video.
+        assert_eq!(
+            (s.start(), s.duration(), s.content.source().unwrap().start()),
+            (f(0), f(6), f(4)),
+            "follow {follow}"
+        );
+    }
+}
+
+#[test]
 fn the_cut_snaps_to_the_frame_grid() {
     let mut fx = Fixture::new();
     let (a, _) = two_on_main(&mut fx);

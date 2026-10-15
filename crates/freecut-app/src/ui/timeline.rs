@@ -247,6 +247,9 @@ enum Drag {
     },
     Move {
         clips: Vec<ClipId>,
+        /// Linked partners of the dragged clip that keep their track and
+        /// only shift in time (TL-057).
+        followers: Vec<ClipId>,
         start_tick: Tick,
         start_row: usize,
         snap: SnapIndex,
@@ -260,7 +263,7 @@ enum Drag {
         start_tick: Tick,
         snap: SnapIndex,
         edge_at: Tick,
-        /// Linked partners trimmed with it on release (TL-057).
+        /// Linked partners trimmed with it, in the same entry (TL-057).
         partners: Vec<ClipId>,
         request: Option<EditRequest>,
         plan: Option<Result<Plan, String>>,
@@ -1223,7 +1226,7 @@ pub fn show(
         {
             project.markers = BTreeSet::from([flags[i].r]);
             view.drag = drag;
-        } else if r.ruler.contains(pos) {
+        } else if r.ruler.contains(origin) {
             view.drag = Drag::Playhead;
         } else if tool == TimelineTool::Hand {
             view.drag = Drag::Pan {
@@ -1270,7 +1273,7 @@ pub fn show(
                 height: line_span(line.band).1 - line_span(line.band).0,
                 shown: None,
             };
-        } else if let (Some((clip, edge)), Some(live_seq)) = (hit(pos), live_seq) {
+        } else if let (Some((clip, edge)), Some(live_seq)) = (hit(origin), live_seq) {
             if !project.selection.contains(&clip) {
                 project.pick(clip, Pick::Replace, view.linked_selection, alt);
             }
@@ -1294,7 +1297,7 @@ pub fn show(
                     view.drag = Drag::Trim {
                         clip,
                         edge,
-                        start_tick: sc.tick(pos.x),
+                        start_tick: sc.tick(origin.x),
                         snap,
                         edge_at,
                         partners,
@@ -1304,6 +1307,7 @@ pub fn show(
                 }
                 None => {
                     let clips = project.selection.clone();
+                    let followers = move_followers(&live, &clips, clip);
                     exclude.extend(clips.iter().copied());
                     let start = clips
                         .iter()
@@ -1319,7 +1323,8 @@ pub fn show(
                         .unwrap_or(Tick::ZERO);
                     view.drag = Drag::Move {
                         clips,
-                        start_tick: sc.tick(pos.x),
+                        followers,
+                        start_tick: sc.tick(origin.x),
                         start_row: row_index_at(pos.y),
                         snap: SnapIndex::build(live_seq, Some(project.playhead), &exclude),
                         edges: [start, end],
@@ -1375,6 +1380,7 @@ pub fn show(
             Drag::Pan { .. } => {}
             Drag::Move {
                 clips,
+                followers,
                 start_tick,
                 start_row,
                 snap,
@@ -1393,6 +1399,7 @@ pub fn show(
                     clips: clips.clone(),
                     delta,
                     track_shift: shift,
+                    followers: followers.clone(),
                 });
                 if request.as_ref() != Some(&req) {
                     *plan = Some(
@@ -1410,9 +1417,9 @@ pub fn show(
                 start_tick,
                 snap,
                 edge_at,
+                partners,
                 request,
                 plan,
-                ..
             } => {
                 let mut delta = pointer_tick.checked_sub(*start_tick).unwrap_or(Tick::ZERO);
                 if snapping && let Some(s) = snap.snap(&[*edge_at], delta, threshold) {
@@ -1424,6 +1431,7 @@ pub fn show(
                     edge: *edge,
                     delta,
                     ripple: false,
+                    partners: partners.clone(),
                 });
                 if request.as_ref() != Some(&req) {
                     *plan = Some(
@@ -1504,11 +1512,9 @@ pub fn show(
                 }
             }
             Drag::Trim {
-                request: Some(req),
-                partners,
-                ..
+                request: Some(req), ..
             } => {
-                if let Err(e) = commit_trim(project, &req, &partners) {
+                if let Err(e) = project.apply(&req, Coalesce::Never) {
                     out.status = Some(e);
                 }
             }
@@ -1909,33 +1915,27 @@ fn marker_menu(ui: &mut egui::Ui, project: &mut Project, m: MarkerRef, out: &mut
     }
 }
 
-/// Commits a trim, and with linked partners (TL-057) trims each of them by
-/// the same amount in the same undo entry.
-fn commit_trim(
-    project: &mut Project,
-    req: &EditRequest,
-    partners: &[ClipId],
-) -> Result<(), String> {
-    let EditRequest::Trim(main) = req else {
-        return project.apply(req, Coalesce::Never).map(|_| ());
+/// The clips of a move that keep their track (TL-057: only the clicked
+/// member changes track): selected clips in the other lane from the
+/// dragged `clip` that are linked to a selected clip in its lane. They
+/// still shift in time with the move.
+fn move_followers(doc: &Document, clips: &[ClipId], clip: ClipId) -> Vec<ClipId> {
+    let lane = |id: ClipId| doc.find_clip(id).map(|loc| loc.slot.lane);
+    let link = |id: ClipId| doc.clip(id).and_then(|c| c.link);
+    let Some(home) = lane(clip) else {
+        return Vec::new();
     };
-    if partners.is_empty() {
-        return project.apply(req, Coalesce::Never).map(|_| ());
-    }
-    let gesture = project.begin_gesture();
-    let result = project.apply(req, Coalesce::Gesture(gesture)).map(|_| ());
-    if result.is_ok() {
-        for partner in partners {
-            let req = EditRequest::Trim(TrimReq {
-                clip: *partner,
-                ..main.clone()
-            });
-            // A partner the trim can't reach stays as it is.
-            let _ = project.apply(&req, Coalesce::Gesture(gesture));
-        }
-    }
-    project.end_gesture(gesture);
-    result
+    let led: BTreeSet<_> = clips
+        .iter()
+        .filter(|id| lane(**id) == Some(home))
+        .filter_map(|id| link(*id))
+        .collect();
+    clips
+        .iter()
+        .copied()
+        .filter(|id| lane(*id).is_some_and(|l| l != home))
+        .filter(|id| link(*id).is_some_and(|l| led.contains(&l)))
+        .collect()
 }
 
 /// Starts dragging marker flag `f` (its start, or a range's end), from
@@ -4007,6 +4007,75 @@ pub(crate) mod tests {
         assert_eq!(project.editor.history().len(), entries + 1);
         let offsets = freecut_timeline::edit::sync_offsets(project.doc(), project.doc().root());
         assert!(!offsets.contains_key(&sound), "still in sync: {offsets:?}");
+    }
+
+    /// TL-028: a small trim on the magnetic main track isn't caught by
+    /// the next clip's start, which moves with the ripple anyway.
+    #[test]
+    fn a_small_trim_on_the_magnetic_main_track_doesnt_stick() {
+        use crate::timeline_commands::tests::talking_head;
+        let (mut project, [a, b, _]) = talking_head();
+        let mut view = TimelineView::default();
+        assert!(view.snapping);
+        let waves = Waveforms::new(|| {});
+        let mut frames = Frames::new();
+        let (rect, _) = timeline_frame(&mut frames, &mut project, &mut view, &waves, Vec::new());
+        let edge = clip_point(&project, &view, rect, a, secs(4.0)) - Vec2::new(2.0, 0.0);
+        // 7 points at the default zoom: inside the 8-point snap distance.
+        drag(
+            &mut frames,
+            &mut project,
+            &mut view,
+            &waves,
+            edge,
+            edge - Vec2::new(7.0, 0.0),
+        );
+        let end = project.doc().clip(a).unwrap().end();
+        assert!(end < secs(4.0), "the edge moved: {end:?}");
+        assert_eq!(project.doc().clip(b).unwrap().start(), end, "b closed up");
+    }
+
+    /// TL-057: dragging the In edge of a main-track clip trims its linked
+    /// sound in place too, in one entry, so the pair stays in sync.
+    #[test]
+    fn an_edge_drag_trims_the_linked_sound_in_sync() {
+        use crate::timeline_commands::tests::talking_head;
+        let (mut project, [a, _, _]) = talking_head();
+        let req = EditRequest::DetachAudio {
+            seq: project.doc().root(),
+            clips: vec![a],
+        };
+        project.apply(&req, Coalesce::Never).unwrap();
+        let sound = project.selection[0];
+        project.selection.clear();
+        // Away from the playhead's own grab.
+        project.playhead = secs(6.0);
+        let mut view = TimelineView {
+            snapping: false,
+            ..TimelineView::default()
+        };
+        let waves = Waveforms::new(|| {});
+        let mut frames = Frames::new();
+        let (rect, _) = timeline_frame(&mut frames, &mut project, &mut view, &waves, Vec::new());
+        let edge = clip_point(&project, &view, rect, a, Tick::ZERO) + Vec2::new(5.0, 0.0);
+        let entries = project.editor.history().len();
+        drag(
+            &mut frames,
+            &mut project,
+            &mut view,
+            &waves,
+            edge,
+            edge + Vec2::new(30.0, 0.0),
+        );
+        assert_eq!(project.editor.history().len(), entries + 1, "one entry");
+        let (v, s) = (
+            project.doc().clip(a).unwrap(),
+            project.doc().clip(sound).unwrap(),
+        );
+        assert!(v.duration() < secs(4.0), "the video was trimmed");
+        assert_eq!((s.start(), s.duration()), (v.start(), v.duration()));
+        let offsets = freecut_timeline::edit::sync_offsets(project.doc(), project.doc().root());
+        assert!(offsets.is_empty(), "in sync: {offsets:?}");
     }
 
     #[test]

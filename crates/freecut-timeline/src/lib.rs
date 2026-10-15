@@ -18,6 +18,7 @@ pub mod mix;
 pub mod model;
 pub mod motion;
 pub mod plan;
+mod probe;
 pub mod select;
 pub mod snap;
 pub mod time;

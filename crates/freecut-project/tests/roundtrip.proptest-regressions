@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4a6affd0b2f15e3e02653ef13b3ef3273676b1754e6d5296866810693ccc2215 # shrinks to plan = DocPlan { settings: ProjectSettings { width: 2, height: 2, frame_rate: FrameRate { num: 24000, den: 1001, frame: 29429400 }, sample_rate: SampleRate(44100), match_first_clip: false }, media: [MediaSpec { kind: 3, frames: 1, absolute: "", relative: None, fingerprint: None, display_name: None, rotation: 0, start: 0, tagged: false }], ops: [Insert { asset: 0, src: 0, len: 1, at: 0, track: 0 }, ColorK5 { pick: 0, edit: 11, a: -2820, b: 0 }] }

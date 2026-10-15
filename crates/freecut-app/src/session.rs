@@ -638,6 +638,7 @@ pub fn describe_edit_error(err: &EditError) -> String {
             "That stream already plays on a linked clip; choosing it here would play it twice"
                 .to_owned()
         }
+        EditError::SectionSwitchedOff { section } => auto_apply_reason(*section),
         other => {
             let text = other.to_string();
             let mut chars = text.chars();
@@ -646,6 +647,15 @@ pub fn describe_edit_error(err: &EditError) -> String {
             })
         }
     }
+}
+
+/// Why **Apply to sliders** can't apply (CL-019): `section` is switched
+/// off, so moving Auto's offsets would change the picture.
+pub fn auto_apply_reason(section: freecut_timeline::model::Section) -> String {
+    format!(
+        "Switch {} on first: applying Auto now would change the picture",
+        crate::ui::look::section_label(section)
+    )
 }
 
 /// The name of an edit, for the Edit menu ("Undo Detach Audio").
@@ -752,6 +762,7 @@ pub fn unavailable_reason(why: Unavailable) -> &'static str {
         Unavailable::NoTarget => "Select a clip or put the playhead over the main track",
         Unavailable::LockedTrack => "The selected clip is on a locked track",
         Unavailable::PlayheadOutside => "Move the playhead inside the clip",
+        Unavailable::NoRoom => "A linked clip has no room for the change",
         _ => "This clip can't be changed now",
     }
 }
@@ -771,6 +782,7 @@ fn skipped_summary(skipped: &[(ClipId, Unavailable)]) -> Option<String> {
         let reason = match first {
             Unavailable::LockedTrack => "on a locked track",
             Unavailable::PlayheadOutside => "the playhead isn't inside",
+            Unavailable::NoRoom => "no room to stay in sync",
             _ => "nothing to cut",
         };
         format!("{what} ({reason})")
@@ -792,6 +804,10 @@ fn open_notes(warnings: &[OpenWarning]) -> Vec<String> {
             )),
             OpenWarning::KeyframesSorted { clips } => Some(format!(
                 "Volume keyframes of {clips} clip(s) were out of order and were sorted"
+            )),
+            OpenWarning::StrayColorKeysDropped { clips } => Some(format!(
+                "Colour keyframes of {clips} clip(s) named a mask, LUT or result the clip \
+                 doesn't have and were removed"
             )),
             _ => None,
         })

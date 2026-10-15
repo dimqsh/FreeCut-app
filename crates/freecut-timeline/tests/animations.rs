@@ -278,6 +278,7 @@ fn trimming_below_in_plus_out_scales_them_and_keeps_the_stored_values() {
         edge: Edge::Out,
         delta: f(-35),
         ripple: false,
+        partners: Vec::new(),
     }))
     .unwrap();
     let c = fx.doc().clip(clip).unwrap();

@@ -254,8 +254,22 @@ pub(crate) fn marker_points(
     scope: MarkerScope,
     skip: impl Fn(ClipId) -> bool,
 ) -> Vec<(Tick, bool)> {
+    marker_points_except(seq, scope, skip, None)
+}
+
+/// [`marker_points`] without the points of marker `except` (the one being
+/// dragged, TL-028).
+pub(crate) fn marker_points_except(
+    seq: &Sequence,
+    scope: MarkerScope,
+    skip: impl Fn(ClipId) -> bool,
+    except: Option<MarkerRef>,
+) -> Vec<(Tick, bool)> {
     let mut out: Vec<(Tick, bool)> = Vec::new();
     for m in &seq.markers {
+        if except == Some(MarkerRef::Timeline(m.id)) {
+            continue;
+        }
         out.push((m.at.start(), true));
         if !m.at.is_point() {
             out.push((m.at.end(), false));
@@ -273,6 +287,9 @@ pub(crate) fn marker_points(
                 continue;
             }
             for m in &clip.markers {
+                if except == Some(MarkerRef::Clip(clip.id, m.id)) {
+                    continue;
+                }
                 let Some(start) = clip.marker_start(m) else {
                     continue;
                 };

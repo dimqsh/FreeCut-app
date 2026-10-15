@@ -56,6 +56,7 @@ fn single_clip_ops_on_ten_thousand_main_track_clips() {
                 edge: Edge::Out,
                 delta: f(-1),
                 ripple: false,
+                partners: Vec::new(),
             }),
         ),
         (
@@ -65,6 +66,7 @@ fn single_clip_ops_on_ten_thousand_main_track_clips() {
                 clips: vec![mid],
                 delta: f(-10_000),
                 track_shift: 0,
+                followers: Vec::new(),
             }),
         ),
     ];

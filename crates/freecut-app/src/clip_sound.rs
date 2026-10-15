@@ -524,6 +524,7 @@ mod tests {
                 clips: detached_to.clone(),
                 delta: Tick::from_secs(1).unwrap(),
                 track_shift: 0,
+                followers: Vec::new(),
             }),
             Coalesce::Never,
         )

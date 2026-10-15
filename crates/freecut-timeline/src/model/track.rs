@@ -146,6 +146,7 @@ impl Track {
 
     /// Position of the clip with this start and id: a binary search.
     pub fn index_of(&self, start: Tick, id: ClipId) -> Option<usize> {
+        crate::probe::visited(1);
         self.clips
             .binary_search_by_key(&(start, id), |c| (c.start(), c.id))
             .ok()
@@ -154,12 +155,14 @@ impl Track {
     /// Position of clip `id` by linear search. Prefer [`Track::index_of`] or
     /// [`crate::model::Document::clip`].
     pub fn position_of(&self, id: ClipId) -> Option<usize> {
-        self.clips.iter().position(|c| c.id == id)
+        let found = self.clips.iter().position(|c| c.id == id);
+        crate::probe::visited(found.map_or(self.clips.len(), |i| i + 1));
+        found
     }
 
     /// Clip `id` by linear search. Prefer [`crate::model::Document::clip`].
     pub fn clip(&self, id: ClipId) -> Option<&Arc<Clip>> {
-        self.clips.iter().find(|c| c.id == id)
+        self.position_of(id).map(|i| &self.clips[i])
     }
 
     /// End of the last clip, or 0 for an empty track.

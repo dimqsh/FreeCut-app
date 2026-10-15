@@ -10,6 +10,8 @@ mod common;
 
 use common::*;
 use freecut_project::{Extras, OpenError, OpenWarning, decode, encode};
+use freecut_timeline::CommitMeta;
+use freecut_timeline::edit::{ColorEdit, EditCtx, EditRequest};
 use freecut_timeline::ids::ClipId;
 use freecut_timeline::model::{
     AutoSource, AutoStyle, ColorMask, ColorParamId, ColorStack, CurveChannel, CurvePoint,
@@ -658,6 +660,11 @@ fn bad_masks_are_refused_at_their_path() {
             "no `width`",
         ),
         (
+            json!({"id": 1, "shape": "rectangle", "roundness": 400, "width": 4}),
+            "[0].width",
+            "no `width`",
+        ),
+        (
             json!({"id": 1, "shape": "linear", "mode": "xor"}),
             "[0].mode",
             "not `add`",
@@ -696,4 +703,117 @@ fn bad_masks_are_refused_at_their_path() {
         }
         other => panic!("expected a refusal, got {other:?}"),
     }
+}
+
+fn edit_color(editor: &mut freecut_timeline::Editor, clip_id: u64, edit: ColorEdit) {
+    let req = EditRequest::EditColor {
+        seq: editor.document().root(),
+        clips: vec![clip(clip_id)],
+        edit,
+    };
+    let plan = editor.plan(&EditCtx::default(), &req).unwrap();
+    editor.commit(plan, CommitMeta::default()).unwrap();
+}
+
+#[test]
+fn unknown_keys_of_masks_stay_with_their_mask_id() {
+    let mut v = sink_value();
+    let masks = &mut v.pointer_mut(INTRO).unwrap()["color"]["masks"];
+    for i in 0..4 {
+        let id = masks[i]["id"].as_u64().unwrap();
+        masks[i]["x_tag"] = json!(format!("belongs-to-mask-{id}"));
+    }
+    let opened = decode(&compact(&v)).unwrap();
+    let mut editor = freecut_timeline::Editor::open(
+        opened.document.clone(),
+        opened.ids.clone(),
+        freecut_timeline::history::HistoryLimits::default(),
+    )
+    .unwrap();
+    // [1, 3, 2, 4] → without 1 → 4 moved to the front: [4, 3, 2].
+    edit_color(&mut editor, 40, ColorEdit::RemoveMask(1));
+    edit_color(&mut editor, 40, ColorEdit::ReorderMask { id: 4, to: 0 });
+    let saved = to_value(&encode(editor.document(), editor.ids().next(), &opened.extras).unwrap());
+    let masks = saved.pointer(&format!("{INTRO}/color/masks")).unwrap();
+    let tags: Vec<(u64, String)> = masks
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["id"].as_u64().unwrap(),
+                m["x_tag"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        tags,
+        [4, 3, 2]
+            .map(|id| (id, format!("belongs-to-mask-{id}")))
+            .to_vec()
+    );
+}
+
+#[test]
+fn a_match_reference_keeps_its_id_reserved() {
+    for (reference, raised_to) in [
+        (json!({"clip": 150, "at": 0}), 151),
+        (json!({"media": 160, "at": 0}), 161),
+    ] {
+        let mut v = sink_value();
+        assert_eq!(v["ids_next"], json!(100));
+        v.pointer_mut(INTRO).unwrap()["color"]["match"]["reference"] = reference.clone();
+        let opened = decode(&compact(&v)).unwrap();
+        assert!(
+            opened.warnings.contains(&OpenWarning::IdsNextRaised {
+                stored: 100,
+                raised_to
+            }),
+            "{reference}: {:?}",
+            opened.warnings
+        );
+        assert_eq!(opened.ids.next().get(), raised_to);
+    }
+}
+
+#[test]
+fn colour_keys_of_values_the_stack_lacks_are_dropped_as_a_repair() {
+    let mut v = sink_value();
+    let intro = v.pointer_mut(INTRO).unwrap();
+    // No LUT, no Auto and no mask 2 any more; their keys are strays.
+    let color = intro["color"].as_object_mut().unwrap();
+    color.remove("lut");
+    color.remove("auto");
+    let masks = color["masks"].as_array_mut().unwrap();
+    masks.retain(|m| m["id"] != 2);
+    let tracks = intro["keys"]["tracks"].as_array_mut().unwrap();
+    for (prop, value) in [
+        ("color.lut.intensity", json!(50)),
+        ("color.auto.strength", json!(50)),
+        ("color.masks.2.feather", json!(300)),
+    ] {
+        if !tracks.iter().any(|t| t["prop"] == prop) {
+            tracks.push(
+                json!({"prop": prop, "keys": [{"at": 0, "value": value, "interp": "linear"}]}),
+            );
+        }
+    }
+    let opened = decode(&compact(&v)).unwrap();
+    assert!(
+        opened
+            .warnings
+            .contains(&OpenWarning::StrayColorKeysDropped { clips: 1 }),
+        "{:?}",
+        opened.warnings
+    );
+    let intro = opened.document.clip(clip(40)).unwrap();
+    for prop in [
+        PropPath::Color(ColorParamId::LutIntensity),
+        PropPath::Color(ColorParamId::AutoStrength),
+        kitchen_mask_key(2, "feather"),
+    ] {
+        assert!(intro.keys.keys(prop).is_empty(), "{prop} dropped");
+    }
+    // Keys of values the stack has stay.
+    assert!(!intro.keys.keys(kitchen_mask_key(1, "center")).is_empty());
 }

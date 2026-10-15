@@ -193,6 +193,13 @@ impl Clip {
         self.range.duration()
     }
 
+    /// The id a colour match's reference names (CL-020), if any: reserved
+    /// like a link id, so it is never handed out again.
+    pub fn match_reference_id(&self) -> Option<u64> {
+        let xf = self.color.as_ref()?.match_xf.as_ref()?;
+        Some(xf.reference.raw_id())
+    }
+
     /// The same clip placed at `start`.
     pub fn moved_to(&self, start: Tick) -> Result<Clip, TimeError> {
         Ok(Clip {

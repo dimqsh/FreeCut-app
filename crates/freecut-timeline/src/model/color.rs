@@ -714,9 +714,29 @@ impl ColorStack {
         }
     }
 
+    /// Why **Apply to sliders** (CL-019) would change the picture: the
+    /// section whose switch is off, Auto itself or Light or Color while it
+    /// would take a non-zero offset (an off section shows its defaults, so
+    /// moving an offset into it would hide it). `None` when it can apply,
+    /// or when there is nothing to apply.
+    pub fn auto_apply_blocker(&self) -> Option<Section> {
+        let auto = self.auto.filter(AutoCorrection::changes)?;
+        let on = |s: Section| self.sections_enabled.is_on(s);
+        if !on(Section::Auto) {
+            return Some(Section::Auto);
+        }
+        AutoOffsets::PARAMS
+            .into_iter()
+            .filter(|id| auto.added(*id) != 0)
+            .filter_map(ColorParamId::section)
+            .find(|s| !on(*s))
+    }
+
     /// The stack with the auto correction added into the sliders at its
     /// Strength, each clamped into its range, and the correction removed
     /// (CL-019's **Apply to sliders**). Unchanged without a correction.
+    /// The picture stays the same unless [`ColorStack::auto_apply_blocker`]
+    /// names a switched-off section.
     #[must_use]
     pub fn with_auto_applied(&self) -> ColorStack {
         let Some(auto) = self.auto else {

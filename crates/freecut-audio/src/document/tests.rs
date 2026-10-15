@@ -660,6 +660,7 @@ fn keyframes_stay_on_their_samples_through_head_trims_and_splits() {
         edge: Edge::In,
         delta: secs(0.5),
         ripple: false,
+        partners: Vec::new(),
     }));
     let m = p.doc().clip(ids.m).unwrap();
     assert_eq!(m.range.start(), secs(1.5));

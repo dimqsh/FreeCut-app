@@ -127,9 +127,11 @@ impl At {
 /// `path` read with the clip rules of [`color`] (defaults left out, values
 /// out of range clamped, a list that is no curve refused at its path).
 /// Returns the stack and whether anything was clamped. Unknown keys are
-/// dropped.
-pub(crate) fn read_stack(value: Value, path: &str) -> Result<(ColorStack, bool), OpenError> {
+/// dropped (wide integers among them too, as a project's reader carries
+/// them).
+pub(crate) fn read_stack(mut value: Value, path: &str) -> Result<(ColorStack, bool), OpenError> {
     let at = At::root().key(path);
+    crate::format::carry_wide_integers(&mut value);
     let dto: ColorDto = decode_at(value, &at)?;
     let mut extras = Extras::new();
     let mut clamped = false;
@@ -208,6 +210,9 @@ pub(crate) struct Parts {
     /// Marker lists (a sequence's or a clip's) that were out of order or
     /// held a name or note over its length limit, and were fixed.
     pub fixed_marker_lists: usize,
+    /// Clips whose colour key tracks named a value their stack lacks; the
+    /// tracks were dropped.
+    pub stray_color_clips: usize,
 }
 
 /// State shared by the clip readers.
@@ -217,6 +222,8 @@ struct ClipReader<'a> {
     sorted: usize,
     /// Marker lists fixed so far ([`Parts::fixed_marker_lists`]).
     markers: usize,
+    /// Clips that lost stray colour key tracks ([`Parts::stray_color_clips`]).
+    stray: usize,
 }
 
 pub(crate) fn read(env: EnvelopeDto) -> Result<Parts, OpenError> {
@@ -244,6 +251,7 @@ pub(crate) fn read(env: EnvelopeDto) -> Result<Parts, OpenError> {
         clamped: 0,
         sorted: 0,
         markers: 0,
+        stray: 0,
     };
     let sequences = doc
         .sequences
@@ -251,8 +259,8 @@ pub(crate) fn read(env: EnvelopeDto) -> Result<Parts, OpenError> {
         .enumerate()
         .map(|(i, s)| read_sequence(s, &at.key("sequences").index(i), &mut reader))
         .collect::<Result<Vec<_>, _>>()?;
-    let (clamped_clips, sorted_clips, fixed_marker_lists) =
-        (reader.clamped, reader.sorted, reader.markers);
+    let (clamped_clips, sorted_clips, fixed_marker_lists, stray_color_clips) =
+        (reader.clamped, reader.sorted, reader.markers, reader.stray);
     let export = match env.export {
         Some(dto) => Some(read_export(dto, &At::root().key("export"), &mut extras)?),
         None => None,
@@ -274,6 +282,7 @@ pub(crate) fn read(env: EnvelopeDto) -> Result<Parts, OpenError> {
         clamped_clips,
         sorted_clips,
         fixed_marker_lists,
+        stray_color_clips,
     })
 }
 
@@ -850,10 +859,13 @@ fn read_clip(dto: ClipDto, at: &At, reader: &mut ClipReader<'_>) -> Result<Arc<C
     };
     if let Some(keys) = dto.keys {
         // Values are clamped against the clip's own content and transform.
-        let (keys, keys_sorted) =
+        let (keys, found) =
             motion::read_keys(keys, &at.key("keys"), &out, owner, extras, &mut clamped)?;
         out.keys = keys;
-        sorted |= keys_sorted;
+        sorted |= found.sorted;
+        if found.stray {
+            reader.stray += 1;
+        }
     }
     if clamped {
         reader.clamped += 1;
