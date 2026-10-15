@@ -4960,6 +4960,7 @@ mod tests {
         let (mut app, [a, _, _]) = recording_app(&frames, dir.path());
         let entries = |app: &FreeCutApp| app.project.as_ref().unwrap().editor.history().len();
         let before = entries(&app);
+        let requested_at = Instant::now();
         press(&mut app, &mut frames, Key::Enter, Modifiers::NONE);
         assert!(app.recorder.running(), "Enter starts a take");
         pump_recorder(&mut app, &frames, |a| {
@@ -4967,6 +4968,9 @@ mod tests {
                 .elapsed()
                 .is_some_and(|e| e > Tick::from_raw(s(1).raw() / 2))
         });
+        let samples_observed_at = Instant::now();
+        let playback = app.recorder.take().unwrap().playback;
+        assert_eq!(app.recorder.take().unwrap().start, s(1));
         assert!(app.playback.is_some(), "the timeline plays during the take");
         let p = app.project.as_mut().unwrap();
         p.selection = vec![a];
@@ -4985,14 +4989,28 @@ mod tests {
         let label = p.editor.history().undo_label().unwrap();
         assert_eq!(label.op, OpKind::InsertRecordedClip);
         let clip = p.doc().clip(p.selection[0]).unwrap();
-        // The first sample came in a moment before the timeline started;
-        // the clip lands on the frame grid at the start position.
+        // The capture worker may be scheduled later on a loaded runner.
+        // Its first sample lies between Record and the observed samples;
+        // placement follows that timestamp, rather than assuming <1 frame
+        // of scheduling delay. Pure take_position tests cover exact offsets.
         let frame = p.doc().settings().frame_rate.frame_ticks();
+        let position = |at| {
+            ui::recorder_panel::take_position(
+                s(1),
+                Tick::ZERO,
+                at,
+                playback,
+                app.settings.settings().voiceover.latency_offset_ms,
+                p.doc().settings().sample_rate,
+            )
+        };
         assert!(
-            clip.start().abs_diff(s(1)) <= frame.raw().unsigned_abs(),
+            clip.start() >= position(requested_at).checked_sub(frame).unwrap()
+                && clip.start() <= position(samples_observed_at).checked_add(frame).unwrap(),
             "{:?}",
             clip.start()
         );
+        assert!(p.doc().settings().frame_rate.is_on_grid(clip.start()));
         let ClipContent::Media { asset, .. } = clip.content else {
             panic!("a media clip");
         };

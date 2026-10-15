@@ -1,0 +1,3 @@
+# Text assets and canonical project fixtures have byte-based hashes.
+# Keep their content identical on Windows, macOS and Linux checkouts.
+* text=auto eol=lf
