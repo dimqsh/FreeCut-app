@@ -1,5 +1,7 @@
 //! Saving into another folder (Save As, Save a Copy) rewrites relative media
 //! paths so they keep naming the same files (PM-100, PM-012).
+// All cases below use Unix path spellings or symlinks, as do their helpers.
+#![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test code
 
 mod common;
