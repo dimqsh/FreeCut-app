@@ -46,7 +46,10 @@ fn video(info: &MediaInfo) -> &VideoStreamInfo {
 #[test]
 fn capabilities_report_the_core_codecs() {
     let caps = init().unwrap();
-    assert_eq!(caps.version("avcodec").map(|v| v.major), Some(62));
+    assert_eq!(
+        caps.version("avcodec").map(|v| v.major),
+        Some(ffmpeg_next::ffi::LIBAVCODEC_VERSION_MAJOR)
+    );
     assert!(caps.has_decoder("h264"));
     assert!(caps.has_decoder("aac"));
     assert!(caps.has_encoder("aac"));

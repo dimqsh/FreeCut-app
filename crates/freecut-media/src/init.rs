@@ -297,7 +297,10 @@ mod tests {
         let a = init().unwrap();
         let b = init().unwrap();
         assert_eq!(a, b);
-        assert_eq!(a.version("avcodec").map(|v| v.major), Some(62));
+        assert_eq!(
+            a.version("avcodec").map(|v| v.major),
+            Some(ffi::LIBAVCODEC_VERSION_MAJOR)
+        );
         assert!(a.has_decoder("h264"));
         assert!(a.has_decoder("aac"));
         assert!(a.has_encoder("aac"));
