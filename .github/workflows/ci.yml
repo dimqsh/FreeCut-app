@@ -71,6 +71,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: 'true'
+      # Dependency guards inspect other targets and optional cloud features
+      # with --offline; fetch the complete lockfile before running them.
+      - run: cargo fetch --locked
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - name: Audio mixer builds without FFmpeg
