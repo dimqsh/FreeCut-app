@@ -299,7 +299,7 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(
             a.version("avcodec").map(|v| v.major),
-            Some(ffi::LIBAVCODEC_VERSION_MAJOR)
+            Some(u32::try_from(ffi::LIBAVCODEC_VERSION_MAJOR).unwrap())
         );
         assert!(a.has_decoder("h264"));
         assert!(a.has_decoder("aac"));

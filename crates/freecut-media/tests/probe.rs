@@ -48,7 +48,7 @@ fn capabilities_report_the_core_codecs() {
     let caps = init().unwrap();
     assert_eq!(
         caps.version("avcodec").map(|v| v.major),
-        Some(ffmpeg_next::ffi::LIBAVCODEC_VERSION_MAJOR)
+        Some(u32::try_from(ffmpeg_next::ffi::LIBAVCODEC_VERSION_MAJOR).unwrap())
     );
     assert!(caps.has_decoder("h264"));
     assert!(caps.has_decoder("aac"));
