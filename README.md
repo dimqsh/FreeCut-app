@@ -5,7 +5,8 @@ everyday editing workflow people know from CapCut: a multi-track timeline,
 quick trims and splits, text, transitions, filters, speed control, and fast
 export.
 
-> **Status:** early planning. Nothing is usable yet.
+> **Status:** early desktop prototype. Build instructions, preview packages
+> and current platform limits are documented in [docs/packaging.md](docs/packaging.md).
 
 > FreeCut is an independent project. It is **not** affiliated with, endorsed by,
 > or derived from ByteDance or CapCut. "CapCut" is a trademark of its owner and

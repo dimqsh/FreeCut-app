@@ -978,5 +978,152 @@
       "bundled_libraries_loaded": 14,
       "homebrew_libraries_loaded": false
     }
+  },
+  "windows_package": {
+    "build_run": "https://github.com/dimqsh/FreeCut-app/actions/runs/38725250476",
+    "clean_runtime_run": "https://github.com/dimqsh/FreeCut-app/actions/runs/38730326080",
+    "render_unit_passed": 121,
+    "editing_e2e_passed": 13,
+    "installer_bytes": 57563230,
+    "package": {
+      "version": "0.1.0",
+      "architecture": "x86_64",
+      "minimum_windows": "10 22H2",
+      "cpu_target": "x86-64 baseline; no mandatory AVX/AVX2 in Rust code",
+      "source_commit": "fb1881c2aa180fc8746f9629d698c1a9f3693954",
+      "compiler": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.0\nLLVM version: 23.1.1",
+      "rustflags": "-C target-cpu=x86-64 -C target-feature=+crt-static",
+      "software_ui": "Direct3D 12 WARP; FXC",
+      "ffmpeg": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-14-13-03/ffmpeg-n8.1.3-18-g46d899d7a0-win64-gpl-shared-8.1.zip",
+        "sha256": "b337eef87f9c641e744225f127097194ecd460ed29837ae32f138e5bba3758ae",
+        "source": "https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-10-14-13-03",
+        "provider": "https://github.com/BtbN/FFmpeg-Builds",
+        "minimum_tested_windows": "Windows 10 22H2 x64"
+      },
+      "system_dlls": [
+        "advapi32.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-core-winrt-error-l1-1-0.dll",
+        "api-ms-win-crt-conio-l1-1-0.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll",
+        "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-multibyte-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll",
+        "api-ms-win-crt-process-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll",
+        "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll",
+        "bcrypt.dll",
+        "bcryptprimitives.dll",
+        "cfgmgr32.dll",
+        "combase.dll",
+        "crypt32.dll",
+        "d2d1.dll",
+        "dnsapi.dll",
+        "dwmapi.dll",
+        "dwrite.dll",
+        "dxgi.dll",
+        "gdi32.dll",
+        "imm32.dll",
+        "iphlpapi.dll",
+        "kernel32.dll",
+        "mmdevapi.dll",
+        "msimg32.dll",
+        "ncrypt.dll",
+        "ntdll.dll",
+        "ole32.dll",
+        "oleaut32.dll",
+        "opengl32.dll",
+        "pdh.dll",
+        "powrprof.dll",
+        "psapi.dll",
+        "rpcrt4.dll",
+        "secur32.dll",
+        "setupapi.dll",
+        "shell32.dll",
+        "shlwapi.dll",
+        "uiautomationcore.dll",
+        "user32.dll",
+        "userenv.dll",
+        "usp10.dll",
+        "uxtheme.dll",
+        "ws2_32.dll"
+      ],
+      "files": [
+        {
+          "name": "freecut.exe",
+          "bytes": 49336832
+        },
+        {
+          "name": "swresample-6.dll",
+          "bytes": 734720
+        },
+        {
+          "name": "avutil-60.dll",
+          "bytes": 3014144
+        },
+        {
+          "name": "swscale-9.dll",
+          "bytes": 12900864
+        },
+        {
+          "name": "avformat-62.dll",
+          "bytes": 22974464
+        },
+        {
+          "name": "avcodec-62.dll",
+          "bytes": 118876672
+        }
+      ],
+      "installed_logical_bytes": 207934723,
+      "zip_bytes": 79390378
+    },
+    "cpu_checks": {
+      "portable": {
+        "os": "Microsoft Windows NT 10.0.20348.0",
+        "memory_limit_bytes": 1610612736,
+        "memory_limit_type": "Windows Job Object per-process committed memory; not whole OS RAM",
+        "peak_committed_bytes": 302198784,
+        "working_set_bytes": 66052096,
+        "peak_working_set_bytes": 66646016,
+        "cpu_affinity_mask": 3,
+        "isolated_runtime_path": true,
+        "window_title": "FreeCut",
+        "window_created": true,
+        "limitations": [
+          "Hosted Windows Server runner, not old physical hardware",
+          "Startup/Home only under the Job Object limit; editing/export covered by separate compact tests",
+          "Windows 7/8 and 32-bit Windows not validated"
+        ],
+        "adapter": "Microsoft Basic Render Driver (WARP); selector accepts DeviceType::Cpu only",
+        "normal_exit": true
+      },
+      "installed": {
+        "os": "Microsoft Windows NT 10.0.20348.0",
+        "memory_limit_bytes": 1610612736,
+        "memory_limit_type": "Windows Job Object per-process committed memory; not whole OS RAM",
+        "peak_committed_bytes": 301047808,
+        "working_set_bytes": 65208320,
+        "peak_working_set_bytes": 65916928,
+        "cpu_affinity_mask": 3,
+        "isolated_runtime_path": true,
+        "window_title": "FreeCut",
+        "window_created": true,
+        "limitations": [
+          "Hosted Windows Server runner, not old physical hardware",
+          "Startup/Home only under the Job Object limit; editing/export covered by separate compact tests",
+          "Windows 7/8 and 32-bit Windows not validated"
+        ],
+        "adapter": "Microsoft Basic Render Driver (WARP); selector accepts DeviceType::Cpu only",
+        "normal_exit": true
+      }
+    }
   }
 }
