@@ -195,12 +195,6 @@ fn initialize() -> Result<Capabilities, MediaError> {
             ffi::LIBSWRESAMPLE_VERSION_MINOR,
             ffmpeg_next::software::resampling::version(),
         ),
-        (
-            "avfilter",
-            ffi::LIBAVFILTER_VERSION_MAJOR,
-            ffi::LIBAVFILTER_VERSION_MINOR,
-            ffmpeg_next::filter::version(),
-        ),
     ];
     let mut versions = Vec::with_capacity(libraries.len());
     for (name, major, minor, runtime) in libraries {
@@ -303,7 +297,10 @@ mod tests {
         let a = init().unwrap();
         let b = init().unwrap();
         assert_eq!(a, b);
-        assert_eq!(a.version("avcodec").map(|v| v.major), Some(62));
+        assert_eq!(
+            a.version("avcodec").map(|v| v.major),
+            Some(u32::try_from(ffi::LIBAVCODEC_VERSION_MAJOR).unwrap())
+        );
         assert!(a.has_decoder("h264"));
         assert!(a.has_decoder("aac"));
         assert!(a.has_encoder("aac"));

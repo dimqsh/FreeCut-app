@@ -175,7 +175,7 @@ impl Scaler {
             Some(m) if m.is_for(tf, peak, bt2020) => m,
             _ => ToneMapper::new(tf, peak, bt2020),
         };
-        let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
+        let threads = crate::resources::current().pixel_threads;
         let rgba = mapper.map_rgba64le(&out, dst_w as usize, threads);
         self.tone = Some(mapper);
         Ok(rgba)

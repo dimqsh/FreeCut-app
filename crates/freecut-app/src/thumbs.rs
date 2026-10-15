@@ -227,7 +227,11 @@ impl Filmstrips {
     pub fn new(wake: impl Fn() + Send + 'static) -> Filmstrips {
         Filmstrips::with_decoder(
             Box::new(|| Box::new(MediaFrames::default()) as Box<dyn FrameDecoder>),
-            BUDGET,
+            if freecut_media::resources::current().low_memory {
+                8 << 20
+            } else {
+                BUDGET
+            },
             wake,
         )
     }

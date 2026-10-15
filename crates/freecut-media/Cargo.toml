@@ -19,6 +19,7 @@ freecut-timeline.workspace = true
 ffmpeg-next = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
 thiserror.workspace = true
+sysinfo.workspace = true
 tracing.workspace = true
 xxhash-rust.workspace = true
 

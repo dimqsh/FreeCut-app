@@ -260,7 +260,9 @@ pub(super) struct BlurCache {
 const BLUR_CACHE_ENTRIES: usize = 4;
 
 /// Byte budget of the kept blurred layers.
-const BLUR_CACHE_BYTES: usize = 96 << 20;
+fn blur_cache_bytes() -> usize {
+    freecut_media::resources::current().cache_bytes(96, 8)
+}
 
 impl BlurCache {
     fn get(&mut self, key: &BlurKey) -> Option<Arc<Picture>> {
@@ -275,9 +277,7 @@ impl BlurCache {
         self.entries.push((key, picture));
         let bytes =
             |e: &[(BlurKey, Arc<Picture>)]| -> usize { e.iter().map(|(_, p)| p.rgba.len()).sum() };
-        while self.entries.len() > BLUR_CACHE_ENTRIES
-            || (self.entries.len() > 1 && bytes(&self.entries) > BLUR_CACHE_BYTES)
-        {
+        while self.entries.len() > BLUR_CACHE_ENTRIES || bytes(&self.entries) > blur_cache_bytes() {
             self.entries.remove(0);
         }
     }
@@ -357,17 +357,17 @@ fn draw_alone(layer: &Prepared, rect: (i64, i64, i64, i64), threads: usize) -> V
             }
         }
     };
-    let bands = threads.min(h.div_ceil(32)).max(1);
+    let bands = threads
+        .min(h.div_ceil(32))
+        .min((w * h / crate::parallel::MIN_BAND_PIXELS).max(1))
+        .max(1);
     if bands == 1 {
         rows(&mut out, 0);
         return out;
     }
     let per_band = h.div_ceil(bands);
-    std::thread::scope(|scope| {
-        for (i, band) in out.chunks_mut(per_band * w * 4).enumerate() {
-            let rows = &rows;
-            scope.spawn(move || rows(band, i * per_band));
-        }
+    crate::parallel::bands(&mut out, per_band * w * 4, |i, band| {
+        rows(band, i * per_band)
     });
     out
 }
@@ -384,25 +384,17 @@ fn blur_premultiplied(src: &[u8], w: usize, h: usize, radius: f32, threads: usiz
             .collect();
         blur_reduced(&plane, w, h, radius, 0.0, LAYER_BLUR_DOWNSAMPLE_ABOVE)
     };
-    let planes: Vec<Vec<f32>> = if threads > 1 {
-        std::thread::scope(|scope| {
-            let handles: Vec<_> = (0..4)
-                .map(|c| {
-                    let channel = &channel;
-                    scope.spawn(move || channel(c))
-                })
-                .collect();
-            handles
-                .into_iter()
-                .enumerate()
-                // A panicking blur (none is expected) recomputes on this
-                // thread, so the result never depends on threads.
-                .map(|(c, h)| h.join().unwrap_or_else(|_| channel(c)))
-                .collect()
-        })
+    let mut planes = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let per = if w * h < crate::parallel::MIN_BAND_PIXELS {
+        4
     } else {
-        (0..4).map(channel).collect()
+        4usize.div_ceil(threads.clamp(1, 4))
     };
+    crate::parallel::bands(&mut planes, per, |i, band| {
+        for (j, plane) in band.iter_mut().enumerate() {
+            *plane = channel(i * per + j);
+        }
+    });
     let mut rgba = vec![0u8; w * h * 4];
     for (i, px) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         for (c, v) in px.iter_mut().enumerate() {

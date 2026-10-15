@@ -15,6 +15,9 @@ use super::Picture;
 
 /// Pictures kept with their levels before the oldest is dropped.
 const MAX_ENTRIES: usize = 32;
+fn max_bytes() -> usize {
+    freecut_media::resources::current().cache_bytes(64, 8)
+}
 
 /// The mip level for a layer that steps `rho` source texels per output
 /// pixel: the nearest power of two (`round(log2 rho)`), 0 below √2.
@@ -132,7 +135,12 @@ impl MipCache {
                 self.entries.len() - 1
             }
         };
-        let levels = &mut self.entries[index].levels;
+        // Move hits to the end too: paused/still layers stay hot while
+        // old video frames are evicted first.
+        let entry = self.entries.remove(index);
+        self.entries.push(entry);
+        let last = self.entries.len() - 1;
+        let levels = &mut self.entries[last].levels;
         while levels.len() < k as usize {
             let prev = levels.last().unwrap_or(pic);
             if prev.width <= 1 && prev.height <= 1 {
@@ -145,13 +153,37 @@ impl MipCache {
             });
             levels.push(next);
         }
-        levels.last().map_or_else(|| Arc::clone(pic), Arc::clone)
+        let result = levels
+            .get((k as usize).saturating_sub(1))
+            .or_else(|| levels.last())
+            .map_or_else(|| Arc::clone(pic), Arc::clone);
+        let mut bytes: usize = self
+            .entries
+            .iter()
+            .flat_map(|e| &e.levels)
+            .map(|p| p.rgba.len())
+            .sum();
+        while bytes > max_bytes() {
+            let old = self.entries.remove(0);
+            bytes -= old.levels.iter().map(|p| p.rgba.len()).sum::<usize>();
+        }
+        result
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn requesting_a_coarser_level_does_not_replace_a_finer_one() {
+        let pic = Arc::new(Picture::new(32, 16, vec![255; 32 * 16 * 4]));
+        let mut cache = MipCache::default();
+        let fine = cache.level(&pic, 1, false);
+        let coarse = cache.level(&pic, 3, false);
+        assert_eq!((coarse.width, coarse.height), (4, 2));
+        assert!(Arc::ptr_eq(&fine, &cache.level(&pic, 1, false)));
+    }
 
     #[test]
     fn levels_follow_the_minification() {

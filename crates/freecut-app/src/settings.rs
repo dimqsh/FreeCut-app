@@ -1084,9 +1084,12 @@ mod tests {
             ),
             Some(PathBuf::from("C:/Users/ana/AppData/Roaming/FreeCut"))
         );
+        // PathBuf uses the test host's path rules even when we exercise
+        // another Os branch: a rooted /cfg has no drive on Windows.
+        let xdg = std::env::temp_dir().join("freecut-config-test");
         assert_eq!(
-            config_dir(Os::Other, home.clone(), None, Some(PathBuf::from("/cfg"))),
-            Some(PathBuf::from("/cfg/freecut"))
+            config_dir(Os::Other, home.clone(), None, Some(xdg.clone())),
+            Some(xdg.join("freecut"))
         );
         // A relative XDG folder is ignored, as the spec says.
         assert_eq!(

@@ -588,6 +588,9 @@ pub(super) fn draw_rows(band: &mut [u8], y0: u32, width: u32, layers: &[Clipped]
     let y_end = y0 + rows;
     for clipped in layers {
         let layer = &clipped.layer;
+        if draw_texels(band, y0, width, clipped) {
+            continue;
+        }
         if !layer.is_plain() {
             let shader = Shader::new(layer);
             for y in clipped.y0.max(y0)..clipped.y1.min(y_end) {
@@ -666,6 +669,66 @@ pub(super) fn draw_rows(band: &mut [u8], y0: u32, width: u32, layers: &[Clipped]
             }
         }
     }
+}
+
+/// Integer translations at 1:1 need no inverse mapping, edge coverage or
+/// bilinear taps. Keep the same alpha arithmetic as the general path.
+fn draw_texels(band: &mut [u8], y0: u32, width: u32, clipped: &Clipped) -> bool {
+    let layer = &clipped.layer;
+    if !layer.is_plain() {
+        return false;
+    }
+    let PreparedSource::Picture(pic) = &layer.source else {
+        return false;
+    };
+    let m = layer.to_source.m;
+    if m.x_axis != freecut_timeline::glam::DVec3::X
+        || m.y_axis != freecut_timeline::glam::DVec3::Y
+        || !m.z_axis.is_finite()
+        || m.z_axis.x.fract() != 0.0
+        || m.z_axis.y.fract() != 0.0
+    {
+        return false;
+    }
+    let row_bytes = width as usize * 4;
+    let y_end = y0 + (band.len() / row_bytes.max(1)) as u32;
+    // Bounds come from the original layer rectangle; check the mapped
+    // span too, so extreme/off-canvas transforms fall back safely.
+    let sx = f64::from(clipped.x0) + m.z_axis.x;
+    let sy0 = f64::from(clipped.y0.max(y0)) + m.z_axis.y;
+    let sy1 = f64::from(clipped.y1.min(y_end)) + m.z_axis.y;
+    let len = (clipped.x1 - clipped.x0) as usize * 4;
+    if sx < 0.0
+        || sx + (len / 4) as f64 > f64::from(pic.width)
+        || sy0 < 0.0
+        || sy1 > f64::from(pic.height)
+    {
+        return false;
+    }
+    for y in clipped.y0.max(y0)..clipped.y1.min(y_end) {
+        let src_start =
+            ((f64::from(y) + m.z_axis.y) as usize * pic.width as usize + sx as usize) * 4;
+        let dst_start = (y - y0) as usize * row_bytes + clipped.x0 as usize * 4;
+        let src = &pic.rgba[src_start..src_start + len];
+        let dst = &mut band[dst_start..dst_start + len];
+        if layer.opacity == 255 && src.as_chunks::<4>().0.iter().all(|p| p[3] == 255) {
+            dst.copy_from_slice(src);
+        } else {
+            for (dst, src) in dst
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(src.as_chunks::<4>().0)
+            {
+                blend(
+                    dst,
+                    [src[0], src[1], src[2]].map(u32::from),
+                    mul255(u32::from(src[3]), layer.opacity),
+                );
+            }
+        }
+    }
+    true
 }
 
 /// What one layer puts at one output pixel.
@@ -1000,5 +1063,49 @@ mod tests {
         let (rgb, a) = sample(&pic, 1.0, 0.5);
         assert_eq!(rgb, [255, 0, 0]);
         assert_eq!(a, 128);
+    }
+
+    #[test]
+    fn texel_path_matches_the_reference_shader_with_clipping_and_alpha() {
+        for offset in [(-3.0, -2.0), (0.0, 0.0), (2.0, 1.0), (0.25, 0.5)] {
+            for alpha in [0, 1, 128, 254, 255] {
+                for opacity in [1, 128, 255] {
+                    let rgba = (0..8 * 6)
+                        .flat_map(|i| [i as u8, 150, 230, alpha])
+                        .collect();
+                    let pic = Arc::new(Picture::new(8, 6, rgba));
+                    let prepared = Prepared::picture(
+                        DMat3::from_translation(DVec2::new(offset.0, offset.1)),
+                        (8.0, 6.0),
+                        pic,
+                        opacity,
+                    )
+                    .unwrap();
+                    let clipped = prepared.clip(10, 9).unwrap();
+                    for background in [[30, 50, 70, 255], [20, 40, 60, 100], [0; 4]] {
+                        let mut actual: Vec<u8> = (0..10 * 9).flat_map(|_| background).collect();
+                        let mut expected = actual.clone();
+                        let shader = Shader::new(&clipped.layer);
+                        for y in 0..9 {
+                            for x in 0..10 {
+                                if let Some(Shaded::Straight(rgb, a)) =
+                                    shader.shade(x as f64 + 0.5, y as f64 + 0.5)
+                                {
+                                    blend(&mut expected.as_chunks_mut::<4>().0[y * 10 + x], rgb, a);
+                                }
+                            }
+                        }
+                        // Separate bands also exercise a layer crossing their boundary.
+                        for (i, band) in actual.chunks_mut(10 * 4 * 3).enumerate() {
+                            draw_rows(band, i as u32 * 3, 10, std::slice::from_ref(&clipped));
+                        }
+                        assert_eq!(
+                            actual, expected,
+                            "{offset:?} alpha={alpha} opacity={opacity}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

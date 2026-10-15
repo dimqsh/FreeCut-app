@@ -150,6 +150,51 @@ fn a_video_without_an_audio_stream_has_no_sound_after_migration() {
 }
 
 #[test]
+fn detaching_one_piece_of_a_split_video_reopens_without_repairs() {
+    let plan = DocPlan {
+        settings: freecut_timeline::model::ProjectSettings::new_default().unwrap(),
+        media: vec![MediaSpec {
+            kind: 0,
+            frames: 9,
+            absolute: "".into(),
+            relative: None,
+            fingerprint: None,
+            display_name: None,
+            rotation: 0,
+            start: 0,
+            tagged: false,
+        }],
+        ops: vec![
+            Op::Insert {
+                asset: 0,
+                src: 1,
+                len: 4,
+                at: 0,
+                track: 0,
+            },
+            Op::AddStream { pick: 0, stream: 2 },
+            Op::Split { pick: 23274, at: 5 },
+            Op::Detach { pick: 0 },
+        ],
+    };
+    let (doc, ids) = build(&plan);
+    let current = encode(&doc, ids, &Extras::new()).unwrap();
+    let reopened = decode(&current).unwrap();
+    assert!(reopened.warnings.is_empty(), "{:?}", reopened.warnings);
+    assert_eq!(reopened.document, doc);
+    let old = decode(&compact(&to_v4(&to_value(&current)))).unwrap();
+    assert_eq!(
+        old.warnings,
+        vec![OpenWarning::Migrated {
+            from: 4,
+            to: CURRENT_FORMAT_VERSION
+        }]
+    );
+    let saved = encode(&old.document, old.ids.next(), &old.extras).unwrap();
+    assert_eq!(older_view(&saved), older_view(&current));
+}
+
+#[test]
 fn keys_a_development_build_wrote_under_format_1_are_kept() {
     // A build that already wrote sound but still called the format 1.
     let (doc, ids) = kitchen_sink();

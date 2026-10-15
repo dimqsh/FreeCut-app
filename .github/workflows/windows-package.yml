@@ -1,0 +1,147 @@
+name: Windows package
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: 'Recheck a successful package run without development dependencies; empty builds a new package'
+        type: string
+        required: false
+        default: ''
+      stage_release:
+        description: 'Upload verified assets into an existing draft release; never publishes it'
+        type: boolean
+        required: false
+        default: false
+  push:
+    branches: ['codex/windows-release']
+permissions:
+  contents: read
+jobs:
+  windows:
+    if: ${{ inputs.artifact_run == '' }}
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTFLAGS: '-C target-cpu=x86-64 -C target-feature=+crt-static'
+      FREECUT_LOW_MEMORY: '1'
+      LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt,clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: 'true'
+      - name: Install pinned FFmpeg and import libraries
+        run: ./scripts/setup_windows_ffmpeg.ps1 -Destination "$env:RUNNER_TEMP/freecut-ffmpeg"
+      - run: cargo fmt --all -- --check
+      - name: Build Windows x64 release
+        run: cargo build -p freecut-app --release --target x86_64-pc-windows-msvc --locked
+      - name: Package portable application
+        run: |
+          # The Rust build cache may contain an earlier package. Discard only
+          # generated CI outputs so provenance always comes from this build.
+          foreach ($generated in 'target/windows-dist','target/windows-check') {
+            if (Test-Path $generated) { Remove-Item $generated -Recurse -Force }
+          }
+          python scripts/package_windows.py --ffmpeg "$env:FFMPEG_DIR"
+      - name: Verify WARP startup under memory limit
+        run: |
+          ./scripts/check_windows_cpu.ps1
+          Copy-Item target/windows-check/cpu-result.json target/windows-check/portable-cpu-result.json
+      - name: Create per-user installer
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          $package = (Get-ChildItem target/windows-dist -Directory -Filter 'FreeCut-*')[0].FullName
+          & $iscc "/DPackageDir=$package" scripts/windows-installer.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem target/windows-dist/*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)" | Set-Content -Encoding ascii ($_.FullName + '.sha256')
+          }
+      - name: Verify installation and installed WARP startup
+        run: |
+          $installer = (Get-ChildItem target/windows-dist/*setup.exe)[0].FullName
+          $installed = Join-Path $env:RUNNER_TEMP 'FreeCut-installed-check'
+          $log = Join-Path $PWD 'target/windows-check/installer.log'
+          $p = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$installed","/LOG=$log") -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode)" }
+          ./scripts/check_windows_cpu.ps1 -Package $installed
+          Copy-Item target/windows-check/cpu-result.json target/windows-check/installed-cpu-result.json
+      - name: Check compact render and editing flow
+        run: |
+          cargo test -p freecut-render --target x86_64-pc-windows-msvc --lib -- --test-threads=1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test -p freecut-app --target x86_64-pc-windows-msvc e2e:: -- --test-threads=1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: FreeCut-windows-x64
+          path: |
+            target/windows-dist/*portable.zip
+            target/windows-dist/*setup.exe
+            target/windows-dist/*.sha256
+            target/windows-dist/*.json
+            target/windows-check/*
+          if-no-files-found: warn
+  recheck-package:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_run != '' }}
+    runs-on: windows-2022
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: FreeCut-windows-x64
+          run-id: ${{ inputs.artifact_run }}
+          github-token: ${{ github.token }}
+          path: verified-package
+      - name: Recheck both packages without development tools on PATH
+        shell: pwsh
+        run: |
+          $portable = (Get-ChildItem verified-package/windows-dist/*portable.zip)[0].FullName
+          Expand-Archive $portable verified-portable
+          $package = (Get-ChildItem verified-portable -Directory)[0].FullName
+          ./scripts/check_windows_cpu.ps1 -Package $package
+          Copy-Item target/windows-check/cpu-result.json verified-package/windows-check/portable-cpu-result.json -Force
+          $installer = (Get-ChildItem verified-package/windows-dist/*setup.exe)[0].FullName
+          $installed = Join-Path $env:RUNNER_TEMP 'FreeCut-installed-check'
+          $p = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$installed") -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode)" }
+          ./scripts/check_windows_cpu.ps1 -Package $installed
+          Copy-Item target/windows-check/cpu-result.json verified-package/windows-check/installed-cpu-result.json -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-clean-runtime-checks
+          path: verified-package/windows-check/*cpu-result.json
+      - name: Upload verified assets into the draft release
+        if: ${{ inputs.stage_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN: ${{ inputs.artifact_run }}
+        shell: pwsh
+        run: python scripts/stage_windows_release.py --run-id "$env:PACKAGE_RUN" --artifacts verified-package --repo "$env:GITHUB_REPOSITORY"

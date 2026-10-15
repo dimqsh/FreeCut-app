@@ -31,14 +31,26 @@ fn a_held_lock_is_busy_and_names_its_holder() {
     assert!(lock.stale().is_none());
     assert_eq!(lock.info().pid, std::process::id());
     assert!(lock.path().exists());
-    let on_disk: LockInfo = serde_json::from_slice(&std::fs::read(lock.path()).unwrap()).unwrap();
-    assert_eq!(&on_disk, lock.info());
+    #[cfg(not(windows))]
+    {
+        let on_disk: LockInfo =
+            serde_json::from_slice(&std::fs::read(lock.path()).unwrap()).unwrap();
+        assert_eq!(&on_disk, lock.info());
+    }
+    #[cfg(windows)]
+    assert!(
+        std::fs::read(lock.path()).is_err(),
+        "the OS lock denies other readers"
+    );
 
     match ProjectLock::acquire(&path) {
         Err(LockError::Busy { holder }) => {
             // Windows' OS lock makes the file unreadable to others.
             if cfg!(unix) {
                 assert_eq!(holder.as_ref(), Some(lock.info()));
+            }
+            if cfg!(windows) {
+                assert!(holder.is_none());
             }
         }
         other => panic!("expected Busy, got {other:?}"),
@@ -79,8 +91,8 @@ fn metadata_left_by_a_crash_is_stale_and_taken_over() {
     let lock_path = ProjectLock::lock_path(&path);
     // Simulate a crash: the metadata stays, the OS lock is gone.
     let lock = ProjectLock::acquire(&path).unwrap();
-    let left_behind = std::fs::read(&lock_path).unwrap();
     let crashed = lock.info().clone();
+    let left_behind = serde_json::to_vec(&crashed).unwrap();
     drop(lock);
     std::fs::write(&lock_path, &left_behind).unwrap();
 

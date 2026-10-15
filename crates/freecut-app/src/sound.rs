@@ -429,6 +429,23 @@ impl Playback {
     }
 }
 
+/// Wake at the next project frame boundary, following the audio clock on
+/// each wake. Rational rates (including 30000/1001) keep their cadence.
+pub fn next_frame_delay(
+    time: Tick,
+    rate: freecut_timeline::time::FrameRate,
+) -> std::time::Duration {
+    let next = rate.frame_index(time).saturating_add(1);
+    let ticks = rate
+        .frame_start(next)
+        .ok()
+        .and_then(|next| next.checked_sub(time).ok())
+        .map_or(1, |t| t.raw().max(1)) as u128;
+    let nanos = (ticks * 1_000_000_000).div_ceil(TICKS_PER_SECOND as u128);
+    std::time::Duration::from_nanos(nanos.min(u128::from(u64::MAX)) as u64)
+        .max(std::time::Duration::from_millis(1))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::float_cmp)] // test code
@@ -436,6 +453,23 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn playback_wakes_at_rational_frame_boundaries() {
+        use freecut_timeline::time::FrameRate;
+        for (num, den) in [(24, 1), (30, 1), (60, 1), (30_000, 1001)] {
+            let rate = FrameRate::new(num, den).unwrap();
+            for k in [0, 1, 999, 10_000] {
+                let start = rate.frame_start(k).unwrap();
+                let next = rate.frame_start(k + 1).unwrap();
+                let delay = next_frame_delay(start, rate);
+                let expected = (next.raw() - start.raw()) as f64 / TICKS_PER_SECOND as f64;
+                assert!((delay.as_secs_f64() - expected).abs() < 0.000_001);
+                let near_end = Tick::from_raw(next.raw() - 1);
+                assert_eq!(next_frame_delay(near_end, rate), Duration::from_millis(1));
+            }
+        }
+    }
 
     #[test]
     fn the_audio_clock_wins_while_it_plays() {

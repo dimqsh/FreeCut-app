@@ -483,17 +483,14 @@ fn grade_rows(
             px[2] = quantize(v[2]);
         }
     };
-    let bands = threads.clamp(1, rows.div_ceil(16).max(1));
+    let bands = threads
+        .clamp(1, rows.div_ceil(16).max(1))
+        .min((rows * width as usize / crate::parallel::MIN_BAND_PIXELS).max(1));
     if bands == 1 {
         run(pixels, 0);
     } else {
         let per = rows.div_ceil(bands);
-        std::thread::scope(|scope| {
-            for (k, band) in pixels.chunks_mut(per * row).enumerate() {
-                let run = &run;
-                scope.spawn(move || run(band, k * per));
-            }
-        });
+        crate::parallel::bands(pixels, per * row, |k, band| run(band, k * per));
     }
 }
 
@@ -514,6 +511,11 @@ pub(crate) struct GradeCache {
 
 const COMPILED_ENTRIES: usize = 16;
 const GRADED_ENTRIES: usize = 8;
+/// Source and output are both held strongly. Eight 4K pairs would keep
+/// over 500 MiB alive; enforce a byte cap as well as an entry count.
+fn graded_bytes() -> usize {
+    freecut_media::resources::current().cache_bytes(64, 8)
+}
 
 impl GradeCache {
     /// `stack` compiled with `luts`, from the cache when it was compiled
@@ -618,8 +620,18 @@ impl GradeCache {
         }
         let (compiled, _) = self.compile_masked(&stack, table, threads);
         let out = Arc::new(grade_displayed(&compiled, picture, display, threads));
-        if self.graded.len() >= GRADED_ENTRIES {
-            self.graded.remove(0);
+        let bytes = picture.rgba.len().saturating_add(out.rgba.len());
+        if bytes > graded_bytes() {
+            return out;
+        }
+        let mut retained: usize = self
+            .graded
+            .iter()
+            .map(|(src, _, _, dst)| src.rgba.len() + dst.rgba.len())
+            .sum();
+        while self.graded.len() >= GRADED_ENTRIES || retained + bytes > graded_bytes() {
+            let old = self.graded.remove(0);
+            retained -= old.0.rgba.len() + old.3.rgba.len();
         }
         self.graded
             .push((Arc::clone(picture), digest, frame, Arc::clone(&out)));

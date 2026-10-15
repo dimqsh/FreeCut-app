@@ -555,6 +555,35 @@ fn detaching_a_video_keeps_its_streams_added_as_clips_in_the_link() {
 }
 
 #[test]
+fn detaching_one_split_piece_leaves_the_other_playing_its_own_sound() {
+    let mut fx = Fixture::new();
+    let (_, video) = three_stream_video(&mut fx);
+    let stream = applied(add_stream(&mut fx, video, 3).unwrap()).1[0];
+    let seq = fx.seq_id();
+    let right = applied(
+        fx.apply(EditRequest::Split(SplitReq {
+            seq,
+            at: f(10),
+            targets: SplitTargets::Clips(vec![video]),
+        }))
+        .unwrap(),
+    )
+    .1[0];
+    let before = fx.doc().clone();
+    let sound = detach(&mut fx, video);
+    let link = clip(&fx, video).audio.detached().unwrap();
+    assert_eq!(clip(&fx, sound).link, Some(link));
+    assert_eq!(clip(&fx, stream).link, Some(link));
+    assert!(clip(&fx, right).audio.active().is_some());
+    assert_eq!(clip(&fx, right).link, None);
+    assert_eq!(
+        clip(&fx, right).content,
+        before.clip(right).unwrap().content
+    );
+    // Fixture::apply checks every edit's undo/redo, including the removed link.
+}
+
+#[test]
 fn a_stream_already_on_a_linked_clip_is_refused() {
     let mut fx = Fixture::new();
     let (_, v) = three_stream_video(&mut fx);

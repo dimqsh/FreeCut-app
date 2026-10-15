@@ -751,6 +751,25 @@ fn the_feeder_thread_renders_ahead_and_stops_on_drop() {
     assert!(device.tap.lock().unwrap().is_none());
 }
 
+#[test]
+fn the_paused_feeder_wakes_for_device_changes_and_shutdown() {
+    let device = FakeDevice::new();
+    let engine = Engine::start(Box::new(device.clone()), EngineConfig::default()).unwrap();
+    assert!(!engine.is_playing());
+    let opens = device.opens.load(Ordering::SeqCst);
+    device.unplug("test device lost while paused");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while device.opens.load(Ordering::SeqCst) <= opens {
+        assert!(
+            Instant::now() < deadline,
+            "paused feeder ignored device change"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    drop(engine);
+    assert!(device.tap.lock().unwrap().is_none());
+}
+
 // ------------------------------------------------------- devices (AU-010)
 
 fn chosen(name: &str) -> EngineConfig {
