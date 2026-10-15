@@ -42,15 +42,19 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     arch = platform.machine()
+    commit = run("git", "rev-parse", "HEAD")
+    source_dirty = bool(run("git", "status", "--porcelain"))
     stem = f"FreeCut-{version}-macos-{arch}"
     app_dest, dmg_dest = output / "FreeCut.app", output / f"{stem}.dmg"
     manifest_dest = output / f"{stem}.json"
-    for path in (app_dest, dmg_dest, manifest_dest):
+    checksum_dest = output / f"{stem}.dmg.sha256"
+    for path in (app_dest, dmg_dest, manifest_dest, checksum_dest):
         if path.exists():
             parser.error(f"Output already exists: {path}. Choose another --output directory.")
     subprocess.run(["cargo", "build", "-p", "freecut-app", "--release", "--locked"],
                    cwd=ROOT, check=True)
-    binary = (ROOT / "target/release/freecut").resolve()
+    metadata = json.loads(run("cargo", "metadata", "--no-deps", "--format-version", "1"))
+    binary = (Path(metadata["target_directory"]) / "release/freecut").resolve()
     graph = {}
     pending = [binary]
     while pending:
@@ -131,6 +135,20 @@ def main():
                     raise RuntimeError(f"External dependency remains: {destination}: {dep}")
                 if not resolved.is_file() or not resolved.resolve().is_relative_to(app.resolve()):
                     raise RuntimeError(f"Missing bundled dependency: {dep}")
+        provenance = {
+            "source_commit": commit, "source_dirty": source_dirty,
+            "source_url": f"https://github.com/dimqsh/FreeCut-app/tree/{commit}",
+            "compiler": run("rustc", "-vV"),
+            "libraries": [{"name": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+                          for p in libraries],
+        }
+        (contents / "Resources/build-info.json").write_text(json.dumps(provenance, indent=2) + "\n")
+        (contents / "Resources/SOURCE.txt").write_text(
+            f"FreeCut source: {provenance['source_url']}\n"
+            "Build: python3 scripts/package_macos.py\n"
+            "FFmpeg source: https://ffmpeg.org/download.html\n"
+            "Bundled library build recipes: https://github.com/Homebrew/homebrew-core\n"
+            "Library licenses are in Resources/Licenses.\n", encoding="utf-8")
         info = {
             "CFBundleName": "FreeCut", "CFBundleDisplayName": "FreeCut",
             "CFBundleIdentifier": "org.freecut.FreeCut", "CFBundleExecutable": "freecut",
@@ -145,6 +163,17 @@ def main():
         run("codesign", "--force", "--sign", "-", "--timestamp=none", str(app))
         run("codesign", "--verify", "--deep", "--strict", str(app))
         (stage / "Applications").symlink_to("/Applications")
+        (stage / "Read Me.txt").write_text(
+            f"FreeCut {version} Preview\n\n"
+            f"Requires macOS {minimum} or later and Apple Silicon ({arch}).\n"
+            "Drag FreeCut.app to Applications, then open it from Applications.\n\n"
+            "This preview is ad-hoc signed and has not been notarized by Apple.\n"
+            "If macOS blocks it, use System Settings > Privacy & Security > Open Anyway\n"
+            "only after checking that you downloaded it from the official release.\n"
+            "Do not disable Gatekeeper globally.\n\n"
+            "This Mac build uses Metal for the window interface; CPU-only UI is not supported.\n"
+            "For smaller caches: FreeCut.app/Contents/MacOS/freecut --low-memory\n\n"
+            "Releases: https://github.com/dimqsh/FreeCut-app/releases\n", encoding="utf-8")
         dmg = work / f"{stem}.dmg"
         run("hdiutil", "create", "-volname", "FreeCut", "-srcfolder", str(stage),
             "-format", "UDZO", "-fs", "HFS+", str(dmg))
@@ -153,6 +182,7 @@ def main():
             checksum = hashlib.file_digest(stream, "sha256").hexdigest()
         manifest = {
             "version": version, "architecture": arch, "minimum_macos": minimum,
+            **provenance,
             "signing": "ad-hoc; local development bundle; not notarized",
             "binary_bytes": executable.stat().st_size,
             "bundled_libraries": [{"name": copied[p].name, "bytes": copied[p].stat().st_size}
@@ -166,6 +196,7 @@ def main():
         shutil.move(str(app), app_dest)
         shutil.move(str(dmg), dmg_dest)
         manifest_dest.write_text(json.dumps(manifest, indent=2) + "\n")
+        checksum_dest.write_text(f"{checksum}  {dmg_dest.name}\n")
         print(json.dumps({"app": str(app_dest), "dmg": str(dmg_dest), **manifest}, indent=2))
 
 

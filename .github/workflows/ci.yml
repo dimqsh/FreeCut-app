@@ -39,7 +39,31 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev libasound2-dev
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev libasound2-dev libclang-dev pkg-config
+      - name: Install pinned FFmpeg 8 development libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          archive="$RUNNER_TEMP/freecut-ffmpeg.tar.xz"
+          curl --fail --location --retry 3 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-14-13-03/ffmpeg-n8.1.3-18-g46d899d7a0-linux64-gpl-shared-8.1.tar.xz' --output "$archive"
+          echo "cd7b846585e536e6f54dcec47743563d941dfdeef35e40aae86dec50d6cb8393  $archive" | sha256sum --check
+          ffmpeg_root="$RUNNER_TEMP/freecut-ffmpeg"
+          mkdir "$ffmpeg_root"
+          tar -xJf "$archive" --strip-components=1 -C "$ffmpeg_root"
+          sed -i "s|^prefix=.*|prefix=$ffmpeg_root|" "$ffmpeg_root"/lib/pkgconfig/*.pc
+          echo "PKG_CONFIG_PATH=$ffmpeg_root/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$ffmpeg_root/lib" >> "$GITHUB_ENV"
+          echo "$ffmpeg_root/bin" >> "$GITHUB_PATH"
+      - name: Install FFmpeg development libraries (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkg-config
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Install pinned FFmpeg development libraries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/setup_windows_ffmpeg.ps1 -Destination "$env:RUNNER_TEMP/freecut-ffmpeg"
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
