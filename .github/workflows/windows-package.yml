@@ -1,12 +1,19 @@
 name: Windows package
 on:
   workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: 'Stage a successful package run as a draft Release; empty builds a new package'
+        type: string
+        required: false
+        default: ''
   push:
     branches: ['codex/windows-release']
 permissions:
   contents: read
 jobs:
   windows:
+    if: ${{ inputs.artifact_run == '' }}
     runs-on: windows-2022
     timeout-minutes: 60
     defaults:
@@ -83,3 +90,24 @@ jobs:
             target/windows-dist/*.json
             target/windows-check/*
           if-no-files-found: warn
+  draft-release:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_run != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: FreeCut-windows-x64
+          run-id: ${{ inputs.artifact_run }}
+          github-token: ${{ github.token }}
+          path: verified-package
+      - name: Stage verified files in a draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN: ${{ inputs.artifact_run }}
+        run: python3 scripts/stage_windows_release.py --run-id "$PACKAGE_RUN" --artifacts verified-package --repo "$GITHUB_REPOSITORY"
