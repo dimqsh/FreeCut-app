@@ -39,7 +39,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev libasound2-dev libclang-dev pkg-config
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev libasound2-dev libfontconfig1-dev libclang-dev pkg-config
       - name: Install pinned FFmpeg 8 development libraries (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -64,7 +64,13 @@ jobs:
         run: |
           ./scripts/setup_windows_ffmpeg.ps1 -Destination "$env:RUNNER_TEMP/freecut-ffmpeg"
           "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          # Git Bash prepends its POSIX link.exe to PATH; select MSVC explicitly.
+          $linker = Join-Path $env:VCToolsInstallDir 'bin/Hostx64/x64/link.exe'
+          if (-not (Test-Path $linker)) { throw "Missing MSVC linker: $linker" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: 'true'
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - name: Audio mixer builds without FFmpeg
