@@ -455,9 +455,11 @@ mod tests {
 
     #[test]
     fn lock_path_appends_lock_to_the_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let real_dir = std::fs::canonicalize(dir.path()).unwrap();
         assert_eq!(
-            ProjectLock::lock_path(Path::new("/a/My Trip.freecut")),
-            Path::new("/a/My Trip.freecut.lock")
+            ProjectLock::lock_path(&real_dir.join("My Trip.freecut")),
+            real_dir.join("My Trip.freecut.lock")
         );
     }
 
@@ -513,8 +515,10 @@ mod tests {
         let p = project(&dir);
         let mut lock = acquire_as(&p, &me("here", 5), Remote::Respect).unwrap();
         lock.refresh_at(99).unwrap();
+        // Windows denies reads through another handle while the OS lock is
+        // held. The owner's handle still verifies the actual bytes on disk.
         let on_disk: LockInfo =
-            serde_json::from_slice(&std::fs::read(lock.path()).unwrap()).unwrap();
+            serde_json::from_slice(&read_all(lock.file.as_ref().unwrap()).unwrap()).unwrap();
         assert_eq!((on_disk.started_ms, on_disk.refreshed_ms), (5, 99));
     }
 }
