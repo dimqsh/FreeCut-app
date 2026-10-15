@@ -37,9 +37,9 @@ jobs:
         run: cargo build -p freecut-app --release --target x86_64-pc-windows-msvc --locked
       - name: Check compact render and editing flow
         run: |
-          cargo test -p freecut-render --lib -- --test-threads=1
+          cargo test -p freecut-render --target x86_64-pc-windows-msvc --lib -- --test-threads=1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test -p freecut-app e2e:: -- --test-threads=1
+          cargo test -p freecut-app --target x86_64-pc-windows-msvc e2e:: -- --test-threads=1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Package portable application
         run: python scripts/package_windows.py --ffmpeg "$env:FFMPEG_DIR"

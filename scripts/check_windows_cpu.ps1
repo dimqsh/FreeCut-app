@@ -35,7 +35,9 @@ public static class FreeCutJob {
 $job = [FreeCutJob]::CreateJobObject([IntPtr]::Zero, $null)
 if ($job -eq [IntPtr]::Zero) { throw 'CreateJobObject failed' }
 $limits = New-Object FreeCutJob+Extended
-$limits.Basic.Flags = 0x2100 # PROCESS_MEMORY + KILL_ON_JOB_CLOSE
+$basic = New-Object FreeCutJob+Basic
+$basic.Flags = 0x2100 # PROCESS_MEMORY + KILL_ON_JOB_CLOSE
+$limits.Basic = $basic
 $limits.ProcessMemory = [UIntPtr]([uint64]$LimitMiB * 1MB)
 $size = [Runtime.InteropServices.Marshal]::SizeOf($limits)
 if (-not [FreeCutJob]::SetInformationJobObject($job, 9, [ref]$limits, $size)) {
@@ -70,6 +72,9 @@ try {
     $measured = New-Object FreeCutJob+Extended
     if (-not [FreeCutJob]::QueryInformationJobObject($job, 9, [ref]$measured, $size, [IntPtr]::Zero)) {
         throw 'Cannot read process memory peak'
+    }
+    if (($measured.Basic.Flags -band 0x100) -eq 0 -or $measured.ProcessMemory -ne $limits.ProcessMemory) {
+        throw 'The expected committed-memory limit was not applied'
     }
     $result = [ordered]@{
         os = [Environment]::OSVersion.VersionString
