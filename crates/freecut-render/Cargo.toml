@@ -17,6 +17,7 @@ freecut-timeline.workspace = true
 
 libm.workspace = true
 parley.workspace = true
+rayon.workspace = true
 swash.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

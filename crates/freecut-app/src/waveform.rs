@@ -182,6 +182,7 @@ pub struct Waveforms {
     cancel: CancelToken,
     /// Results from before the last [`Waveforms::clear`] are dropped.
     generation: u64,
+    requested_revision: Option<(u64, u64)>,
 }
 
 impl std::fmt::Debug for Waveforms {
@@ -200,6 +201,7 @@ impl Waveforms {
             jobs: Jobs::new(1, wake),
             cancel: CancelToken::new(),
             generation: 0,
+            requested_revision: None,
         }
     }
 
@@ -213,6 +215,7 @@ impl Waveforms {
         self.cancel = CancelToken::new();
         self.generation += 1;
         self.states.clear();
+        self.requested_revision = None;
     }
 
     /// Whether a scan is still running (headless snapshots wait for it).
@@ -240,6 +243,11 @@ impl Waveforms {
     /// Starts a scan for every stream the project's clips may show that
     /// hasn't been asked for yet. Offline media gets none.
     pub fn request_missing(&mut self, project: &Project) {
+        let revision = (project.editor.revision(), project.media_revision());
+        if self.requested_revision == Some(revision) {
+            return;
+        }
+        self.requested_revision = Some(revision);
         let doc = project.doc();
         let wanted: Vec<(PeakKey, PathBuf)> = wanted_keys(doc)
             .into_iter()

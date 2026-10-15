@@ -107,6 +107,9 @@ impl<T: Send + 'static> Drop for Jobs<T> {
 
 /// A sensible pool size: half the cores, between 2 and 4.
 pub fn default_workers() -> usize {
+    if freecut_media::resources::current().low_memory {
+        return 1;
+    }
     std::thread::available_parallelism()
         .map(|n| n.get() / 2)
         .unwrap_or(2)

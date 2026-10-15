@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
 use freecut_render::color::LutSource;
 use freecut_render::media::{MediaFile, MediaImages};
 use freecut_render::{
@@ -90,12 +89,12 @@ struct SlotState {
     /// A new LUT source for the compositor, taken with the next request.
     luts: Option<Arc<dyn LutSource>>,
     stop: bool,
+    frame: Option<PreviewFrame>,
 }
 
 /// Owns the render thread.
 pub struct Preview {
     slot: Slot,
-    frames: Receiver<PreviewFrame>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -115,17 +114,12 @@ impl Preview {
         wake: impl Fn() + Send + 'static,
     ) -> Preview {
         let slot: Slot = Arc::default();
-        let (tx, rx) = unbounded();
         let worker_slot = Arc::clone(&slot);
         let thread = std::thread::Builder::new()
             .name("freecut-preview".into())
-            .spawn(move || run(&worker_slot, &tx, fonts, presets, wake))
+            .spawn(move || run(&worker_slot, fonts, presets, wake))
             .ok();
-        Preview {
-            slot,
-            frames: rx,
-            thread,
-        }
+        Preview { slot, thread }
     }
 
     /// Replaces any pending request with this one.
@@ -147,7 +141,8 @@ impl Preview {
 
     /// The newest finished frame, if any.
     pub fn poll(&self) -> Option<PreviewFrame> {
-        self.frames.try_iter().last()
+        let (lock, _) = &*self.slot;
+        lock.lock().ok()?.frame.take()
     }
 }
 
@@ -164,13 +159,7 @@ impl Drop for Preview {
     }
 }
 
-fn run(
-    slot: &Slot,
-    frames: &Sender<PreviewFrame>,
-    fonts: FontRegistry,
-    presets: Arc<PresetTable>,
-    wake: impl Fn(),
-) {
+fn run(slot: &Slot, fonts: FontRegistry, presets: Arc<PresetTable>, wake: impl Fn()) {
     let mut renderer = Renderer::new(fonts, presets);
     loop {
         let request = {
@@ -193,9 +182,14 @@ fn run(
             }
         };
         let frame = renderer.render(&request);
-        if frames.send(frame).is_err() {
+        let (lock, _) = &**slot;
+        let Ok(mut state) = lock.lock() else { return };
+        if state.stop {
             return;
         }
+        // A hidden or busy window retains only the newest finished frame.
+        state.frame = Some(frame);
+        drop(state);
         wake();
     }
 }
@@ -205,6 +199,8 @@ struct Renderer {
     compositor: Compositor,
     images: MediaImages,
     boxes: TextBoxes,
+    files_doc: Option<Arc<Document>>,
+    files_paths: Arc<BTreeMap<MediaId, PathBuf>>,
     presets: Arc<PresetTable>,
 }
 
@@ -214,6 +210,8 @@ impl Renderer {
             compositor: Compositor::new(fonts),
             images: MediaImages::new(),
             boxes: TextBoxes::default(),
+            files_doc: None,
+            files_paths: Arc::default(),
             presets,
         }
     }
@@ -270,8 +268,18 @@ impl Renderer {
     /// Gives the decoders this request's media files. Decoders of files
     /// that didn't change are kept.
     fn sync_files(&mut self, req: &PreviewRequest) {
+        if self
+            .files_doc
+            .as_ref()
+            .is_some_and(|doc| Arc::ptr_eq(doc, &req.doc))
+            && Arc::ptr_eq(&self.files_paths, &req.media_paths)
+        {
+            return;
+        }
         self.images
             .set_files(MediaFile::from_library(req.doc.library(), &req.media_paths));
+        self.files_doc = Some(Arc::clone(&req.doc));
+        self.files_paths = Arc::clone(&req.media_paths);
     }
 }
 
@@ -284,6 +292,10 @@ struct WithDraft<'a, I: ?Sized> {
 }
 
 impl<I: LayerImages + ?Sized> LayerImages for WithDraft<'_, I> {
+    fn begin_frame(&mut self, plan: &FramePlan) {
+        self.inner.begin_frame(plan);
+    }
+
     fn video(&mut self, asset: MediaId, source_time: Tick) -> Option<Arc<Picture>> {
         self.inner.video(asset, source_time)
     }

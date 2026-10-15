@@ -67,6 +67,16 @@ cargo build --release
 cargo run -p freecut-app
 ```
 
+Use the release build when measuring playback or export performance:
+`cargo run -p freecut-app --release`. Resource costs, reproducible benchmarks,
+and the current older-hardware/OS limitations are documented in
+[docs/performance.md](docs/performance.md).
+
+Build a local macOS `.app` and `.dmg` with bundled FFmpeg libraries using
+`python3 scripts/package_macos.py` (Python 3.11+). Output sizes, supported
+architecture, signing status and Windows packaging notes are documented in
+[docs/packaging.md](docs/packaging.md).
+
 ## Contributing
 
 Contributions are welcome. Before opening a PR:

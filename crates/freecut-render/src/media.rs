@@ -13,13 +13,14 @@
 //! [`MAX_FAILURES`] are kept. Everything here blocks: call it from a render
 //! thread.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use freecut_media::{SeekMode, VideoDecoder};
 use freecut_timeline::ids::MediaId;
 use freecut_timeline::model::{Library, MediaItem, Rotation};
+use freecut_timeline::plan::{FramePlan, LayerSource, PlanNode};
 use freecut_timeline::time::Tick;
 
 use crate::cpu::{ImageFailure, LayerImages, Picture};
@@ -27,6 +28,12 @@ use crate::cpu::{ImageFailure, LayerImages, Picture};
 /// Failures kept for [`LayerImages::take_failures`] (the oldest are
 /// dropped, so a preview that never takes them stays bounded).
 pub const MAX_FAILURES: usize = 64;
+
+/// An idle asset must not keep a decoder, its FFmpeg reference frames and
+/// converted RGBA buffers alive for the whole editing session.
+fn open_decoders() -> usize {
+    freecut_media::resources::current().idle_decoders
+}
 
 /// Where an asset's pictures come from and how they are turned for display.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +111,10 @@ pub struct MediaImages {
     slots: HashMap<MediaId, Slot>,
     mode: SeekMode,
     failures: Vec<ImageFailure>,
+    /// Open decoders, most recently requested last. Failed opens have no
+    /// decoder and stay remembered separately until their file changes.
+    recent: VecDeque<MediaId>,
+    active: BTreeSet<MediaId>,
 }
 
 impl std::fmt::Debug for MediaImages {
@@ -131,6 +142,8 @@ impl MediaImages {
             slots: HashMap::new(),
             mode: SeekMode::Exact,
             failures: Vec::new(),
+            recent: VecDeque::new(),
+            active: BTreeSet::new(),
         }
     }
 
@@ -139,6 +152,7 @@ impl MediaImages {
     pub fn set_files(&mut self, files: BTreeMap<MediaId, MediaFile>) {
         self.slots
             .retain(|id, slot| files.get(id).is_some_and(|f| f == slot.file()));
+        self.recent.retain(|id| self.slots.contains_key(id));
         self.files = files;
     }
 
@@ -150,6 +164,9 @@ impl MediaImages {
     fn slot(&mut self, asset: MediaId) -> Option<&mut Slot> {
         if !self.slots.contains_key(&asset) {
             let file = self.files.get(&asset)?.clone();
+            if self.recent.len() >= open_decoders().max(self.active.len()) {
+                self.evict_idle();
+            }
             let slot = match VideoDecoder::open(&file.path, file.stream) {
                 Ok(decoder) => Slot::Ready {
                     file,
@@ -167,7 +184,22 @@ impl MediaImages {
             };
             self.slots.insert(asset, slot);
         }
+        if matches!(self.slots.get(&asset), Some(Slot::Ready { .. })) {
+            self.recent.retain(|id| *id != asset);
+            self.recent.push_back(asset);
+        }
         self.slots.get_mut(&asset)
+    }
+
+    /// Drops one least-recent decoder that the current frame doesn't need.
+    fn evict_idle(&mut self) -> bool {
+        let Some(i) = self.recent.iter().position(|id| !self.active.contains(id)) else {
+            return false;
+        };
+        if let Some(id) = self.recent.remove(i) {
+            self.slots.remove(&id);
+        }
+        true
     }
 }
 
@@ -266,6 +298,21 @@ fn scaled_size(coded: (u32, u32), rotation: Rotation, fraction: (f64, f64)) -> O
 }
 
 impl LayerImages for MediaImages {
+    fn begin_frame(&mut self, plan: &FramePlan) {
+        self.active = plan
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                PlanNode::Layer(layer) => match layer.source {
+                    LayerSource::Video { asset, .. } | LayerSource::Still { asset } => Some(asset),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        while self.recent.len() > open_decoders().max(self.active.len()) && self.evict_idle() {}
+    }
+
     fn video(&mut self, asset: MediaId, source_time: Tick) -> Option<Arc<Picture>> {
         self.frame(asset, source_time, |_, _| None)
     }
@@ -326,6 +373,51 @@ impl LayerImages for MediaImages {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[allow(clippy::unwrap_used)] // test code
+    fn idle_decoders_are_bounded_but_simultaneous_layers_stay_open() {
+        use std::num::NonZeroU64;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("still.png");
+        image::RgbaImage::from_pixel(16, 9, image::Rgba([20, 30, 40, 255]))
+            .save(&path)
+            .unwrap();
+        let id = |i| MediaId::from_raw(NonZeroU64::new(i).unwrap());
+        let files = (1..=12)
+            .map(|i| {
+                (
+                    id(i),
+                    MediaFile {
+                        path: path.clone(),
+                        stream: 0,
+                        rotation: Rotation::None,
+                        mirrored: false,
+                    },
+                )
+            })
+            .collect();
+        let mut images = MediaImages::new();
+        images.set_files(files);
+        for i in 1..=12 {
+            assert!(images.still(id(i)).is_some());
+            assert!(images.recent.len() <= open_decoders());
+        }
+        assert!(!images.slots.contains_key(&id(1)));
+        // More than four simultaneously visible sources must not thrash
+        // their decoders on each frame.
+        images.active = (1..=6).map(id).collect();
+        for i in 1..=6 {
+            assert!(images.still(id(i)).is_some());
+        }
+        let old: Vec<_> = (1..=6).map(|i| images.still(id(i)).unwrap()).collect();
+        for (i, old) in (1..=6).zip(old) {
+            assert!(Arc::ptr_eq(&old, &images.still(id(i)).unwrap()));
+        }
+        images.set_files(BTreeMap::new());
+        assert!(images.slots.is_empty());
+        assert!(images.recent.is_empty());
+    }
 
     #[test]
     fn scaled_sizes_cover_the_drawn_size() {

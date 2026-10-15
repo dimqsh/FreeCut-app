@@ -140,7 +140,8 @@ impl VideoDecoder {
         };
         src.keep_only(&[stream_index]);
         src.rewind(stream_index)?;
-        let decoder = src.video_decoder(stream_index, 0)?;
+        let decoder =
+            src.video_decoder(stream_index, crate::resources::current().decoder_threads)?;
         let (num, den) = src.time_base(stream_index);
         let guess = av::codec::guess_frame_rate(&src.input, stream_index);
         let rate = src.input.stream(stream_index).and_then(|st| {

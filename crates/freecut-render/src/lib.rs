@@ -33,3 +33,4 @@ pub use cpu::{
 };
 pub use export::{ExportRenderError, ExportRenderer, UnreadableFrame, fit_rect};
 pub use text::{FontRegistry, TextAlign, TextRaster, TextRenderer, TextSpec};
+mod parallel;

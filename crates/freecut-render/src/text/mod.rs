@@ -415,11 +415,15 @@ pub const MAX_RASTER_SIDE: u32 = 8192;
 pub const MAX_RASTER_PIXELS: u32 = 1 << 23;
 
 /// Byte budget of the raster cache.
-const RASTER_CACHE_BYTES: usize = 64 << 20;
+fn raster_cache_bytes() -> usize {
+    freecut_media::resources::current().cache_bytes(64, 8)
+}
 
-/// The part of [`RASTER_CACHE_BYTES`] that rasters of moving text may
+/// The part of [`raster_cache_bytes`] that rasters of moving text may
 /// hold, so playing an animation never pushes still text out.
-const ANIMATED_CACHE_BYTES: usize = 16 << 20;
+fn animated_cache_bytes() -> usize {
+    freecut_media::resources::current().cache_bytes(16, 2)
+}
 
 /// Layouts kept for animated text (each frame of a moving title needs its
 /// layout to evaluate the motion, even when its raster is cached).
@@ -444,7 +448,7 @@ struct CacheEntry {
     raster: Arc<TextRaster>,
     last_use: u64,
     bytes: usize,
-    /// Made for moving text (counts toward [`ANIMATED_CACHE_BYTES`]).
+    /// Made for moving text (counts toward [`animated_cache_bytes`]).
     animated: bool,
 }
 
@@ -600,12 +604,15 @@ impl TextRenderer {
 
     fn insert(&mut self, key: SpecKey, raster: Arc<TextRaster>, animated: bool) {
         let bytes = raster.image.rgba.len() + key.text.len() + 4 * key.motion.len() + 256;
+        if bytes > raster_cache_bytes() || animated && bytes > animated_cache_bytes() {
+            return;
+        }
         while !self.cache.is_empty()
-            && (self.cache_bytes + bytes > RASTER_CACHE_BYTES
-                || animated && self.animated_bytes + bytes > ANIMATED_CACHE_BYTES)
+            && (self.cache_bytes + bytes > raster_cache_bytes()
+                || animated && self.animated_bytes + bytes > animated_cache_bytes())
         {
             // Over the animated share, the oldest animated raster goes.
-            let only_animated = animated && self.animated_bytes + bytes > ANIMATED_CACHE_BYTES;
+            let only_animated = animated && self.animated_bytes + bytes > animated_cache_bytes();
             let oldest = self
                 .cache
                 .iter()

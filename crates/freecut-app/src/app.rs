@@ -155,18 +155,29 @@ struct PreviewKey {
     revision: u64,
     time: Tick,
     size: (u32, u32),
-    offline: usize,
+    media_revision: u64,
     fonts: u64,
     draft: Option<TextDraft>,
 }
 
+/// Inputs change on an edit/relink, rather than on every playback frame.
+struct PreviewSource {
+    key: (u64, u64, u64),
+    doc: Arc<freecut_timeline::model::Document>,
+    media_paths: Arc<std::collections::BTreeMap<MediaId, PathBuf>>,
+    offline: Arc<BTreeSet<MediaId>>,
+}
+
 /// The FreeCut editor window.
 pub struct FreeCutApp {
+    window_title: String,
     project: Option<Project>,
     jobs: Jobs<Done>,
     preview: Preview,
     preview_tex: Option<TextureHandle>,
     preview_key: Option<PreviewKey>,
+    /// Immutable inputs shared across playhead-only requests.
+    preview_source: Option<PreviewSource>,
     /// Where the clips of the frame on screen landed, for the player's
     /// hit-testing and outlines (TR-007) and the text box size.
     preview_layers: Vec<LayerBox>,
@@ -180,6 +191,7 @@ pub struct FreeCutApp {
     preview_size: (u32, u32),
     posters: HashMap<MediaId, TextureHandle>,
     posters_requested: HashSet<MediaId>,
+    posters_revision: Option<(u64, u64, u64)>,
     /// HDR items of the open project already announced (CL-002).
     hdr: HdrNotices,
     imports: Imports,
@@ -369,6 +381,7 @@ impl FreeCutApp {
             wake_posters,
         ));
         FreeCutApp {
+            window_title: String::new(),
             project: None,
             jobs: Jobs::new(default_workers(), wake_jobs),
             preview: {
@@ -378,6 +391,7 @@ impl FreeCutApp {
             },
             preview_tex: None,
             preview_key: None,
+            preview_source: None,
             preview_layers: Vec::new(),
             preview_canvas: (16, 9),
             fonts,
@@ -386,6 +400,7 @@ impl FreeCutApp {
             preview_size: (960, 540),
             posters: HashMap::new(),
             posters_requested: HashSet::new(),
+            posters_revision: None,
             hdr: HdrNotices::default(),
             imports: Imports::default(),
             opening: false,
@@ -952,6 +967,11 @@ impl FreeCutApp {
 
     fn request_posters(&mut self) {
         let Some(p) = &self.project else { return };
+        let revision = (self.project_serial, p.editor.revision(), p.media_revision());
+        if self.posters_revision == Some(revision) {
+            return;
+        }
+        self.posters_revision = Some(revision);
         let wanted: Vec<(MediaId, PathBuf)> = p
             .doc()
             .library()
@@ -989,6 +1009,7 @@ impl FreeCutApp {
         self.posters_requested.clear();
         self.hdr.reset();
         self.preview_key = None;
+        self.preview_source = None;
         self.preview_tex = None;
         self.preview_layers.clear();
         self.preview_shown = self.preview_generation;
@@ -1840,7 +1861,7 @@ impl FreeCutApp {
             p.playhead = rate
                 .round_to_grid(t, freecut_timeline::time::Rounding::Floor)
                 .unwrap_or(t);
-            ctx.request_repaint_after(Duration::from_millis(5));
+            ctx.request_repaint_after(crate::sound::next_frame_delay(t, rate));
         }
     }
 
@@ -1882,7 +1903,7 @@ impl FreeCutApp {
             revision: p.editor.revision(),
             time,
             size: self.preview_size,
-            offline: p.offline.len(),
+            media_revision: p.media_revision(),
             fonts: self.fonts.generation(),
             draft: self.inspector.props.text_draft(),
         };
@@ -1890,10 +1911,26 @@ impl FreeCutApp {
             return;
         }
         self.preview_generation += 1;
+        let source_key = (self.project_serial, p.editor.revision(), p.media_revision());
+        if self
+            .preview_source
+            .as_ref()
+            .is_none_or(|s| s.key != source_key)
+        {
+            self.preview_source = Some(PreviewSource {
+                key: source_key,
+                doc: Arc::new(p.doc().clone()),
+                media_paths: Arc::new(p.media_paths.clone()),
+                offline: Arc::new(p.offline.clone()),
+            });
+        }
+        let Some(source) = &self.preview_source else {
+            return;
+        };
         self.preview.request(PreviewRequest {
-            doc: Arc::new(p.doc().clone()),
-            media_paths: Arc::new(p.media_paths.clone()),
-            offline: Arc::new(p.offline.clone()),
+            doc: Arc::clone(&source.doc),
+            media_paths: Arc::clone(&source.media_paths),
+            offline: Arc::clone(&source.offline),
             time,
             max_size: self.preview_size,
             text_draft: key.draft.clone(),
@@ -3826,7 +3863,10 @@ impl eframe::App for FreeCutApp {
             || "FreeCut".to_owned(),
             |p| format!("{} — FreeCut", p.title()),
         );
-        ctx.send_viewport_cmd(ViewportCommand::Title(title));
+        if self.window_title != title {
+            self.window_title.clone_from(&title);
+            ctx.send_viewport_cmd(ViewportCommand::Title(title));
+        }
 
         if self.show_about {
             let sheet = Sheet::new(Id::new("about"), "About FreeCut")
@@ -4106,6 +4146,32 @@ mod tests {
 
     use super::*;
     use crate::ui::drag::tests::{Frames, key, project_with_a_sound};
+
+    #[test]
+    fn playback_shares_preview_inputs_and_edits_replace_them() {
+        let ctx = egui::Context::default();
+        let project = Project::new(ProjectSettings::new_default().unwrap()).unwrap();
+        let mut app = FreeCutApp::headless(&ctx, Some(project), crate::theme::ThemeChoice::Dark);
+        app.update_preview(&ctx);
+        let first = Arc::clone(&app.preview_source.as_ref().unwrap().doc);
+        let paths = Arc::clone(&app.preview_source.as_ref().unwrap().media_paths);
+        app.project.as_mut().unwrap().playhead = Tick::from_secs(1).unwrap();
+        app.update_preview(&ctx);
+        assert!(Arc::ptr_eq(
+            &first,
+            &app.preview_source.as_ref().unwrap().doc
+        ));
+        assert!(Arc::ptr_eq(
+            &paths,
+            &app.preview_source.as_ref().unwrap().media_paths
+        ));
+        crate::ui::text::add_text_at_playhead(app.project.as_mut().unwrap()).unwrap();
+        app.update_preview(&ctx);
+        assert!(!Arc::ptr_eq(
+            &first,
+            &app.preview_source.as_ref().unwrap().doc
+        ));
+    }
 
     /// UI-031: every File menu command with a shortcut shows it, not only
     /// Export and Preferences.

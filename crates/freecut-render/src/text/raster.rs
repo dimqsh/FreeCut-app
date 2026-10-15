@@ -53,10 +53,6 @@ const EMBOLDEN_EM: f32 = 0.02;
 /// Most glyph cache entries kept.
 const MAX_GLYPHS: usize = 8192;
 
-/// Byte budget of one rasterizer's glyph cache. Bitmaps grow with the
-/// square of the size, and a zoom makes new ones every frame.
-const GLYPH_CACHE_BYTES: usize = 32 << 20;
-
 /// What one cache entry costs besides its bitmap data.
 const GLYPH_ENTRY_BYTES: usize = 160;
 
@@ -154,7 +150,7 @@ impl ToRest {
 }
 
 /// Rasterizes and caches glyphs. The cache holds at most
-/// [`MAX_GLYPHS`] entries and about [`GLYPH_CACHE_BYTES`]; past either,
+/// [`MAX_GLYPHS`] entries and about the configured byte budget; past either,
 /// the entries least recently used are dropped (never those of the render
 /// in progress).
 pub(super) struct GlyphRasterizer {
@@ -179,7 +175,7 @@ impl Default for GlyphRasterizer {
             context: ScaleContext::default(),
             glyphs: HashMap::new(),
             bytes: 0,
-            budget: GLYPH_CACHE_BYTES,
+            budget: freecut_media::resources::current().cache_bytes(32, 4),
             clock: 0,
         }
     }

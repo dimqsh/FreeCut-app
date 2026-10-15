@@ -168,14 +168,9 @@ pub fn bake_eval(eval: &Evaluator, size: BakeSize, threads: usize) -> Arc<Lattic
         }
     } else {
         let per = n.div_ceil(threads);
-        std::thread::scope(|scope| {
-            for (i, band) in nodes.chunks_mut(plane * per).enumerate() {
-                let fill = &fill;
-                scope.spawn(move || {
-                    for (j, out) in band.chunks_mut(plane).enumerate() {
-                        fill(i * per + j, out);
-                    }
-                });
+        crate::parallel::bands(&mut nodes, plane * per, |i, band| {
+            for (j, out) in band.chunks_mut(plane).enumerate() {
+                fill(i * per + j, out);
             }
         });
     }

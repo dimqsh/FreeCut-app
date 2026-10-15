@@ -198,6 +198,10 @@ pub struct ImageFailure {
 /// and export. A missing picture draws the offline slate; missing text
 /// draws nothing.
 pub trait LayerImages {
+    /// Announces this frame's working set so a provider can evict idle
+    /// decoders without repeatedly reopening layers used together.
+    fn begin_frame(&mut self, _plan: &FramePlan) {}
+
     /// The video frame of `asset` displayed at media time `source_time`.
     fn video(&mut self, asset: MediaId, source_time: Tick) -> Option<Arc<Picture>>;
 
@@ -324,9 +328,7 @@ const MIN_BAND_ROWS: u32 = 32;
 
 impl Compositor {
     pub fn new(fonts: FontRegistry) -> Compositor {
-        let threads = std::thread::available_parallelism()
-            .map_or(1, |n| n.get())
-            .min(8);
+        let threads = freecut_media::resources::current().pixel_threads;
         Compositor {
             text: TextRenderer::new(fonts),
             threads,
@@ -429,6 +431,7 @@ impl Compositor {
         frame: &mut Frame,
         images: &mut dyn LayerImages,
     ) {
+        images.begin_frame(plan);
         let (width, height) = (frame.width, frame.height);
         frame.rgba.resize(width as usize * height as usize * 4, 0);
         for px in frame.rgba.as_chunks_mut::<4>().0 {
@@ -501,17 +504,15 @@ impl Compositor {
         let bands = self
             .threads
             .min((height / MIN_BAND_ROWS).max(1) as usize)
+            .min((width as usize * height as usize / crate::parallel::MIN_BAND_PIXELS).max(1))
             .max(1);
         if bands == 1 {
             draw::draw_rows(&mut frame.rgba, 0, width, layers);
             return;
         }
         let rows_per_band = (height as usize).div_ceil(bands);
-        std::thread::scope(|scope| {
-            for (i, band) in frame.rgba.chunks_mut(rows_per_band * row_bytes).enumerate() {
-                let y0 = (i * rows_per_band) as u32;
-                scope.spawn(move || draw::draw_rows(band, y0, width, layers));
-            }
+        crate::parallel::bands(&mut frame.rgba, rows_per_band * row_bytes, |i, band| {
+            draw::draw_rows(band, (i * rows_per_band) as u32, width, layers);
         });
     }
 

@@ -195,12 +195,6 @@ fn initialize() -> Result<Capabilities, MediaError> {
             ffi::LIBSWRESAMPLE_VERSION_MINOR,
             ffmpeg_next::software::resampling::version(),
         ),
-        (
-            "avfilter",
-            ffi::LIBAVFILTER_VERSION_MAJOR,
-            ffi::LIBAVFILTER_VERSION_MINOR,
-            ffmpeg_next::filter::version(),
-        ),
     ];
     let mut versions = Vec::with_capacity(libraries.len());
     for (name, major, minor, runtime) in libraries {

@@ -47,7 +47,7 @@ pub enum MediaError {
     )]
     VersionMismatch {
         /// `"avcodec"`, `"avformat"`, `"avutil"`, `"swscale"`,
-        /// `"swresample"` or `"avfilter"`.
+        /// or `"swresample"`.
         library: &'static str,
         /// Major version of the headers the bindings came from.
         built_major: u32,

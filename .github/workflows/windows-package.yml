@@ -1,0 +1,83 @@
+name: Windows package
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/windows-release']
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTFLAGS: '-C target-cpu=x86-64 -C target-feature=+crt-static'
+      FREECUT_LOW_MEMORY: '1'
+      LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt,clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install pinned FFmpeg and import libraries
+        run: ./scripts/setup_windows_ffmpeg.ps1
+      - run: cargo fmt --all -- --check
+      - name: Build Windows x64 release
+        run: cargo build -p freecut-app --release --target x86_64-pc-windows-msvc --locked
+      - name: Check compact render and editing flow
+        run: |
+          cargo test -p freecut-render --lib -- --test-threads=1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test -p freecut-app e2e:: -- --test-threads=1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Package portable application
+        run: python scripts/package_windows.py --ffmpeg "$env:FFMPEG_DIR"
+      - name: Verify WARP startup under memory limit
+        run: |
+          ./scripts/check_windows_cpu.ps1
+          Copy-Item target/windows-check/cpu-result.json target/windows-check/portable-cpu-result.json
+      - name: Create per-user installer
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          $package = (Get-ChildItem target/windows-dist -Directory -Filter 'FreeCut-*')[0].FullName
+          & $iscc "/DPackageDir=$package" scripts/windows-installer.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem target/windows-dist/*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)" | Set-Content -Encoding ascii ($_.FullName + '.sha256')
+          }
+      - name: Verify installation and installed WARP startup
+        run: |
+          $installer = (Get-ChildItem target/windows-dist/*setup.exe)[0].FullName
+          $installed = Join-Path $env:RUNNER_TEMP 'FreeCut-installed-check'
+          $log = Join-Path $PWD 'target/windows-check/installer.log'
+          $p = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-',"/DIR=$installed","/LOG=$log") -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode)" }
+          ./scripts/check_windows_cpu.ps1 -Package $installed
+          Copy-Item target/windows-check/cpu-result.json target/windows-check/installed-cpu-result.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: FreeCut-windows-x64
+          path: |
+            target/windows-dist/*portable.zip
+            target/windows-dist/*setup.exe
+            target/windows-dist/*.sha256
+            target/windows-dist/*.json
+            target/windows-check/*
+          if-no-files-found: warn

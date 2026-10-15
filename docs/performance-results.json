@@ -1,0 +1,982 @@
+{
+  "date": "2026-10-15",
+  "host": "Apple M3 Pro, 18 GiB, macOS arm64",
+  "base_commit": "aa7abdc1f5fc1968e11ddccf05feca4b0cb666d6",
+  "baseline": {
+    "binary_bytes": 45092944,
+    "dependency_bytes": 38112304,
+    "libraries": [
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libavcodec.62.28.101.dylib",
+        9799440
+      ],
+      [
+        "/opt/homebrew/Cellar/x265/4.2/lib/libx265.216.dylib",
+        7566976
+      ],
+      [
+        "/opt/homebrew/Cellar/openssl@3/3.6.4/lib/libcrypto.3.dylib",
+        4870816
+      ],
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libavfilter.11.14.101.dylib",
+        3047888
+      ],
+      [
+        "/opt/homebrew/Cellar/svt-av1/4.1.0/lib/libSvtAv1Enc.4.1.0.dylib",
+        2901936
+      ],
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libavformat.62.12.101.dylib",
+        2357104
+      ],
+      [
+        "/opt/homebrew/Cellar/libvpx/1.16.0/lib/libvpx.12.dylib",
+        1764656
+      ],
+      [
+        "/opt/homebrew/Cellar/x264/r3222/lib/libx264.165.dylib",
+        1281664
+      ],
+      [
+        "/opt/homebrew/Cellar/openssl@3/3.6.4/lib/libssl.3.dylib",
+        888320
+      ],
+      [
+        "/opt/homebrew/Cellar/dav1d/1.5.3/lib/libdav1d.7.dylib",
+        798624
+      ],
+      [
+        "/opt/homebrew/Cellar/libvmaf/3.1.0/lib/libvmaf.3.dylib",
+        749152
+      ],
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libavutil.60.26.101.dylib",
+        661280
+      ],
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libswscale.9.5.101.dylib",
+        622080
+      ],
+      [
+        "/opt/homebrew/Cellar/opus/1.6.1/lib/libopus.0.dylib",
+        375824
+      ],
+      [
+        "/opt/homebrew/Cellar/lame/3.100/lib/libmp3lame.0.dylib",
+        304944
+      ],
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libswresample.6.3.101.dylib",
+        121600
+      ]
+    ]
+  },
+  "optimized": {
+    "binary_bytes": 39880240,
+    "dependency_bytes": 34315264,
+    "libraries": [
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libavcodec.62.28.101.dylib",
+        9799440
+      ],
+      [
+        "/opt/homebrew/Cellar/x265/4.2/lib/libx265.216.dylib",
+        7566976
+      ],
+      [
+        "/opt/homebrew/Cellar/openssl@3/3.6.4/lib/libcrypto.3.dylib",
+        4870816
+      ],
+      [
+        "/opt/homebrew/Cellar/svt-av1/4.1.0/lib/libSvtAv1Enc.4.1.0.dylib",
+        2901936
+      ],
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libavformat.62.12.101.dylib",
+        2357104
+      ],
+      [
+        "/opt/homebrew/Cellar/libvpx/1.16.0/lib/libvpx.12.dylib",
+        1764656
+      ],
+      [
+        "/opt/homebrew/Cellar/x264/r3222/lib/libx264.165.dylib",
+        1281664
+      ],
+      [
+        "/opt/homebrew/Cellar/openssl@3/3.6.4/lib/libssl.3.dylib",
+        888320
+      ],
+      [
+        "/opt/homebrew/Cellar/dav1d/1.5.3/lib/libdav1d.7.dylib",
+        798624
+      ],
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libavutil.60.26.101.dylib",
+        661280
+      ],
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libswscale.9.5.101.dylib",
+        622080
+      ],
+      [
+        "/opt/homebrew/Cellar/opus/1.6.1/lib/libopus.0.dylib",
+        375824
+      ],
+      [
+        "/opt/homebrew/Cellar/lame/3.100/lib/libmp3lame.0.dylib",
+        304944
+      ],
+      [
+        "/opt/homebrew/Cellar/ffmpeg/8.1.1/lib/libswresample.6.3.101.dylib",
+        121600
+      ]
+    ]
+  },
+  "render_benchmark": {
+    "runs": [
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "tile",
+        "threads": 1,
+        "ms": 0.142,
+        "checksum": 13268152
+      },
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "tile",
+        "threads": 4,
+        "ms": 0.077,
+        "checksum": 13268152
+      },
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "preview",
+        "threads": 1,
+        "ms": 3.048,
+        "checksum": 297189696
+      },
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "preview",
+        "threads": 4,
+        "ms": 0.948,
+        "checksum": 297189696
+      },
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "1080p",
+        "threads": 1,
+        "ms": 12.575,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "1080p",
+        "threads": 4,
+        "ms": 5.087,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "4k",
+        "threads": 1,
+        "ms": 48.148,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "4k",
+        "threads": 4,
+        "ms": 19.679,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "rotated-preview",
+        "threads": 1,
+        "ms": 16.019,
+        "checksum": 291098518
+      },
+      {
+        "variant": "before",
+        "run": 1,
+        "case": "rotated-preview",
+        "threads": 4,
+        "ms": 5.363,
+        "checksum": 291098518
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "tile",
+        "threads": 1,
+        "ms": 0.038,
+        "checksum": 13268152
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "tile",
+        "threads": 4,
+        "ms": 0.038,
+        "checksum": 13268152
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "preview",
+        "threads": 1,
+        "ms": 0.817,
+        "checksum": 297189696
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "preview",
+        "threads": 4,
+        "ms": 0.295,
+        "checksum": 297189696
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "1080p",
+        "threads": 1,
+        "ms": 3.506,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "1080p",
+        "threads": 4,
+        "ms": 1.305,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "4k",
+        "threads": 1,
+        "ms": 12.961,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "4k",
+        "threads": 4,
+        "ms": 3.728,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "rotated-preview",
+        "threads": 1,
+        "ms": 14.473,
+        "checksum": 291098518
+      },
+      {
+        "variant": "after",
+        "run": 1,
+        "case": "rotated-preview",
+        "threads": 4,
+        "ms": 4.795,
+        "checksum": 291098518
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "tile",
+        "threads": 1,
+        "ms": 0.039,
+        "checksum": 13268152
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "tile",
+        "threads": 4,
+        "ms": 0.038,
+        "checksum": 13268152
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "preview",
+        "threads": 1,
+        "ms": 0.813,
+        "checksum": 297189696
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "preview",
+        "threads": 4,
+        "ms": 0.286,
+        "checksum": 297189696
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "1080p",
+        "threads": 1,
+        "ms": 3.164,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "1080p",
+        "threads": 4,
+        "ms": 1.028,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "4k",
+        "threads": 1,
+        "ms": 13.773,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "4k",
+        "threads": 4,
+        "ms": 3.774,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "rotated-preview",
+        "threads": 1,
+        "ms": 14.968,
+        "checksum": 291098518
+      },
+      {
+        "variant": "after",
+        "run": 2,
+        "case": "rotated-preview",
+        "threads": 4,
+        "ms": 4.615,
+        "checksum": 291098518
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "tile",
+        "threads": 1,
+        "ms": 0.142,
+        "checksum": 13268152
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "tile",
+        "threads": 4,
+        "ms": 0.072,
+        "checksum": 13268152
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "preview",
+        "threads": 1,
+        "ms": 2.946,
+        "checksum": 297189696
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "preview",
+        "threads": 4,
+        "ms": 0.852,
+        "checksum": 297189696
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "1080p",
+        "threads": 1,
+        "ms": 11.764,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "1080p",
+        "threads": 4,
+        "ms": 3.236,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "4k",
+        "threads": 1,
+        "ms": 47.431,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "4k",
+        "threads": 4,
+        "ms": 13.75,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "rotated-preview",
+        "threads": 1,
+        "ms": 14.419,
+        "checksum": 291098518
+      },
+      {
+        "variant": "before",
+        "run": 2,
+        "case": "rotated-preview",
+        "threads": 4,
+        "ms": 4.393,
+        "checksum": 291098518
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "tile",
+        "threads": 1,
+        "ms": 0.139,
+        "checksum": 13268152
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "tile",
+        "threads": 4,
+        "ms": 0.079,
+        "checksum": 13268152
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "preview",
+        "threads": 1,
+        "ms": 3.092,
+        "checksum": 297189696
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "preview",
+        "threads": 4,
+        "ms": 0.95,
+        "checksum": 297189696
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "1080p",
+        "threads": 1,
+        "ms": 11.589,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "1080p",
+        "threads": 4,
+        "ms": 3.06,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "4k",
+        "threads": 1,
+        "ms": 46.1,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "4k",
+        "threads": 4,
+        "ms": 13.752,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "rotated-preview",
+        "threads": 1,
+        "ms": 15.108,
+        "checksum": 291098518
+      },
+      {
+        "variant": "before",
+        "run": 3,
+        "case": "rotated-preview",
+        "threads": 4,
+        "ms": 4.718,
+        "checksum": 291098518
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "tile",
+        "threads": 1,
+        "ms": 0.038,
+        "checksum": 13268152
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "tile",
+        "threads": 4,
+        "ms": 0.039,
+        "checksum": 13268152
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "preview",
+        "threads": 1,
+        "ms": 0.824,
+        "checksum": 297189696
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "preview",
+        "threads": 4,
+        "ms": 0.317,
+        "checksum": 297189696
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "1080p",
+        "threads": 1,
+        "ms": 3.188,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "1080p",
+        "threads": 4,
+        "ms": 1.048,
+        "checksum": 1189110656
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "4k",
+        "threads": 1,
+        "ms": 12.956,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "4k",
+        "threads": 4,
+        "ms": 3.837,
+        "checksum": 4759603200
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "rotated-preview",
+        "threads": 1,
+        "ms": 15.017,
+        "checksum": 291098518
+      },
+      {
+        "variant": "after",
+        "run": 3,
+        "case": "rotated-preview",
+        "threads": 4,
+        "ms": 4.433,
+        "checksum": 291098518
+      }
+    ],
+    "median": [
+      {
+        "case": "tile",
+        "threads": 1,
+        "before_ms": 0.142,
+        "after_ms": 0.038,
+        "speedup": 3.74
+      },
+      {
+        "case": "tile",
+        "threads": 4,
+        "before_ms": 0.077,
+        "after_ms": 0.038,
+        "speedup": 2.03
+      },
+      {
+        "case": "preview",
+        "threads": 1,
+        "before_ms": 3.048,
+        "after_ms": 0.817,
+        "speedup": 3.73
+      },
+      {
+        "case": "preview",
+        "threads": 4,
+        "before_ms": 0.948,
+        "after_ms": 0.295,
+        "speedup": 3.21
+      },
+      {
+        "case": "1080p",
+        "threads": 1,
+        "before_ms": 11.764,
+        "after_ms": 3.188,
+        "speedup": 3.69
+      },
+      {
+        "case": "1080p",
+        "threads": 4,
+        "before_ms": 3.236,
+        "after_ms": 1.048,
+        "speedup": 3.09
+      },
+      {
+        "case": "4k",
+        "threads": 1,
+        "before_ms": 47.431,
+        "after_ms": 12.961,
+        "speedup": 3.66
+      },
+      {
+        "case": "4k",
+        "threads": 4,
+        "before_ms": 13.752,
+        "after_ms": 3.774,
+        "speedup": 3.64
+      },
+      {
+        "case": "rotated-preview",
+        "threads": 1,
+        "before_ms": 15.108,
+        "after_ms": 14.968,
+        "speedup": 1.01
+      },
+      {
+        "case": "rotated-preview",
+        "threads": 4,
+        "before_ms": 4.718,
+        "after_ms": 4.615,
+        "speedup": 1.02
+      }
+    ]
+  },
+  "native_idle": [
+    {
+      "variant": "before",
+      "samples_cpu_rss_kib_time": [
+        "20.3  92160   0:04.82",
+        "23.5  92112   0:05.05",
+        "24.3  92112   0:05.31"
+      ],
+      "footprint": [
+        "Physical footprint:         250.3M",
+        "Physical footprint (peak):  252.5M"
+      ]
+    },
+    {
+      "variant": "after",
+      "samples_cpu_rss_kib_time": [
+        "2.8 115792   0:01.18",
+        "7.6 115792   0:01.26",
+        "6.0 115792   0:01.33"
+      ],
+      "footprint": [
+        "Physical footprint:         94.3M",
+        "Physical footprint (peak):  322.4M"
+      ]
+    }
+  ],
+  "ui_snapshots": [
+    {
+      "scene": "dark-compact.png",
+      "size": [
+        1100,
+        700
+      ],
+      "changed_pixels": 0,
+      "bbox": null
+    },
+    {
+      "scene": "dark-gutter-hover.png",
+      "size": [
+        1440,
+        900
+      ],
+      "changed_pixels": 0,
+      "bbox": null
+    },
+    {
+      "scene": "dark-home.png",
+      "size": [
+        1440,
+        900
+      ],
+      "changed_pixels": 0,
+      "bbox": null
+    },
+    {
+      "scene": "dark-stage-zoom.png",
+      "size": [
+        1440,
+        900
+      ],
+      "changed_pixels": 0,
+      "bbox": null
+    },
+    {
+      "scene": "dark.png",
+      "size": [
+        1440,
+        900
+      ],
+      "changed_pixels": 0,
+      "bbox": null
+    }
+  ],
+  "validation": {
+    "workspace_passed": 2239,
+    "workspace_ignored": 9,
+    "workspace_command": "cargo test --workspace -- --skip snapshots::main_window_snapshots",
+    "snapshot_command": "FREECUT_LOW_MEMORY=1 FREECUT_SNAPSHOT_ONLY=dark cargo test -p freecut-app snapshots::main_window_snapshots",
+    "low_memory_e2e_passed": 13,
+    "clippy": "cargo clippy --workspace --all-targets -- -D warnings",
+    "audio_without_default_features": "passed",
+    "compact_render_unit_passed": 121,
+    "cpu_only_linux_1_5_gib": {
+      "architecture": "aarch64",
+      "build": "Rust 1.99.0 release, LTO=false, one cargo worker, 2 GiB hard limit, offline; passed",
+      "environment": "ffmpeg version 9.0.2-3 Copyright (c) 2000-2026 the FFmpeg developers\nlibxcursor1:arm64\t1:1.2.3-1\nlibxi6:arm64\t2:1.8.3-1\nlibxkbcommon-x11-0:arm64\t1.13.1-1\nlibxkbcommon0:arm64\t1.13.1-1\nmesa-vulkan-drivers:arm64\t26.2.4-1",
+      "memory_limit_bytes": 1610612736,
+      "memory_plus_swap_limit_bytes": 1610612736,
+      "cpu_quota_cores": 2.0,
+      "gpu_devices": [],
+      "dev_dri_exists": "no",
+      "network": "none",
+      "adapter": "FreeCut software UI: llvmpipe (LLVM 22.1.8, 128 bits)",
+      "memory_current_bytes": 417189888,
+      "memory_peak_bytes": 841396224,
+      "memory_events": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      },
+      "process_rss": "243088 kB",
+      "process_rss_peak": "687024 kB",
+      "peak_scope": "Whole runtime cgroup: app, Xvfb, screen captures, test helpers and earlier startup attempts; includes file cache.",
+      "steps_passed": [
+        "Launch window with --software",
+        "Create 1920x1080/30fps project",
+        "Drag text asset to timeline",
+        "Play preview (visible text and advancing timecode)",
+        "Export H.264 MP4 through GUI",
+        "ffprobe confirms 1920x1080, 30fps, 98 frames, 3.266667s"
+      ],
+      "export": {
+        "streams": [
+          {
+            "index": 0,
+            "codec_name": "h264",
+            "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+            "profile": "High",
+            "codec_type": "video",
+            "codec_tag_string": "avc1",
+            "codec_tag": "0x31637661",
+            "mime_codec_string": "avc1.640028",
+            "width": 1920,
+            "height": 1080,
+            "coded_width": 1920,
+            "coded_height": 1080,
+            "has_b_frames": 2,
+            "pix_fmt": "yuv420p",
+            "level": 40,
+            "color_range": "tv",
+            "color_space": "bt709",
+            "color_transfer": "bt709",
+            "color_primaries": "bt709",
+            "chroma_location": "left",
+            "field_order": "progressive",
+            "is_avc": "true",
+            "nal_length_size": "4",
+            "id": "0x1",
+            "r_frame_rate": "30/1",
+            "avg_frame_rate": "30/1",
+            "time_base": "1/15360",
+            "start_pts": 0,
+            "start_time": "0.000000",
+            "duration_ts": 50176,
+            "duration": "3.266667",
+            "bit_rate": "47250",
+            "bits_per_raw_sample": "8",
+            "nb_frames": "98",
+            "extradata_size": 49,
+            "disposition": {
+              "default": 1,
+              "dub": 0,
+              "original": 0,
+              "comment": 0,
+              "lyrics": 0,
+              "karaoke": 0,
+              "forced": 0,
+              "hearing_impaired": 0,
+              "visual_impaired": 0,
+              "clean_effects": 0,
+              "attached_pic": 0,
+              "timed_thumbnails": 0,
+              "non_diegetic": 0,
+              "captions": 0,
+              "descriptions": 0,
+              "metadata": 0,
+              "dependent": 0,
+              "still_image": 0,
+              "multilayer": 0
+            },
+            "tags": {
+              "creation_time": "2026-10-15T10:21:28.000000Z",
+              "language": "und",
+              "handler_name": "VideoHandler"
+            }
+          }
+        ],
+        "format": {
+          "filename": "/root/Videos/Untitled.mp4",
+          "nb_streams": 1,
+          "nb_programs": 0,
+          "nb_stream_groups": 0,
+          "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+          "format_long_name": "QuickTime / MOV",
+          "start_time": "0.000000",
+          "duration": "3.266667",
+          "size": "21386",
+          "bit_rate": "52373",
+          "probe_score": 100,
+          "tags": {
+            "major_brand": "isom",
+            "minor_version": "512",
+            "compatible_brands": "isomiso2avc1mp41",
+            "creation_time": "2026-10-15T10:21:28.000000Z",
+            "title": "Untitled",
+            "encoder": "Lavf63.1.102"
+          }
+        }
+      },
+      "limitations": [
+        "ARM64 container on M3 Pro, not an old x86 processor",
+        "No physical audio output device; fallback without sound worked",
+        "Text-only short project; not proof for arbitrary 4K or large projects",
+        "Windows WARP and CPU-only macOS not verified"
+      ],
+      "build_memory_peak_bytes": 1347432448,
+      "export_frame_verified": "Decoded at 1 second; visible white text on black background"
+    }
+  },
+  "macos_package": {
+    "version": "0.1.0",
+    "architecture": "arm64",
+    "minimum_macos": "15.0",
+    "signing": "ad-hoc; local development bundle; not notarized",
+    "binary_bytes": 39648528,
+    "bundled_libraries": [
+      {
+        "name": "libdav1d.7.dylib",
+        "bytes": 776096
+      },
+      {
+        "name": "libavcodec.62.28.101.dylib",
+        "bytes": 9724592
+      },
+      {
+        "name": "libavformat.62.12.101.dylib",
+        "bytes": 2325520
+      },
+      {
+        "name": "libavutil.60.26.101.dylib",
+        "bytes": 639552
+      },
+      {
+        "name": "libswresample.6.3.101.dylib",
+        "bytes": 103008
+      },
+      {
+        "name": "libswscale.9.5.101.dylib",
+        "bytes": 600576
+      },
+      {
+        "name": "libmp3lame.0.dylib",
+        "bytes": 285296
+      },
+      {
+        "name": "libvpx.12.dylib",
+        "bytes": 1736496
+      },
+      {
+        "name": "libcrypto.3.dylib",
+        "bytes": 4842512
+      },
+      {
+        "name": "libssl.3.dylib",
+        "bytes": 883152
+      },
+      {
+        "name": "libopus.0.dylib",
+        "bytes": 355760
+      },
+      {
+        "name": "libSvtAv1Enc.4.1.0.dylib",
+        "bytes": 2867184
+      },
+      {
+        "name": "libx264.165.dylib",
+        "bytes": 1256304
+      },
+      {
+        "name": "libx265.216.dylib",
+        "bytes": 7505104
+      }
+    ],
+    "installed_logical_bytes": 73789701,
+    "installed_allocated_kib": 72144,
+    "dmg_bytes": 35002509,
+    "dmg_sha256": "2e4c54abca99101be039ec9a76c0cf1b2f594ae1cf757059d72d020243f116f5",
+    "dependency_check": "Only bundled libraries and macOS system libraries",
+    "verification": {
+      "signature_verified": true,
+      "alive_after_12_seconds": true,
+      "ps_cpu_rss_kib": "0.0  66224",
+      "bundled_libraries_loaded": 14,
+      "homebrew_libraries_loaded": false
+    }
+  }
+}

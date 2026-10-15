@@ -31,7 +31,6 @@ glam = "0.34.1"
 ffmpeg-next = { version = "9.0.0", default-features = false, features = [
   "codec",
   "format",
-  "filter",
   "software-resampling",
   "software-scaling",
 ] }
@@ -51,6 +50,8 @@ parking_lot = "0.12.5"
 # freecut_render::text). fontique comes through `parley::fontique`.
 parley = { version = "=0.12.0", default-features = false, features = ["system", "complex-scripts"] }
 rfd = "0.17.2"
+# One shared CPU worker pool for compositing, grading and blur.
+rayon = "1.12.0"
 # Lock-free SPSC ring between the audio feeder thread and the device callback.
 rtrb = "0.4.0"
 # ring as ureq's crypto provider and its certificate errors (freecut-cloud's
@@ -59,6 +60,7 @@ rtrb = "0.4.0"
 rustls = { version = "=0.23.45", default-features = false }
 # Glyph rasterization; must resolve to parley's skrifa.
 swash = "=0.2.10"
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 # PKCE S256 challenges and account tags (freecut-cloud).
 sha2 = "0.11.1"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -124,4 +126,19 @@ opt-level = 2
 
 [profile.dev.package.freecut-app]
 # Waveform and timeline drawing loop over columns every frame.
+opt-level = 2
+
+[profile.release]
+# Keep pixel loops optimized; remove symbols and let the linker eliminate
+# code across crate boundaries. Use the target's baseline CPU instruction set.
+lto = "thin"
+strip = "symbols"
+
+[profile.dev.package.freecut-media]
+opt-level = 2
+
+[profile.dev.package.freecut-audio]
+opt-level = 2
+
+[profile.dev.package.freecut-timeline]
 opt-level = 2

@@ -43,6 +43,7 @@ pub mod encode;
 pub mod error;
 mod fingerprint;
 pub mod lut;
+pub mod resources;
 
 #[cfg(feature = "ffmpeg")]
 mod audio;

@@ -1,5 +1,6 @@
 //! FreeCut desktop application entry point.
 #![forbid(unsafe_code)]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod anim;
 mod app;
@@ -44,10 +45,49 @@ fn main() -> anyhow::Result<()> {
             .with_title_shown(false)
             .with_titlebar_shown(false);
     }
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+        if std::env::args_os().any(|arg| arg == "--software") {
+            #[cfg(windows)]
+            {
+                // WARP is provided by Windows. FXC avoids an additional DXC
+                // runtime and does not require a hardware graphics driver.
+                setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+                setup
+                    .instance_descriptor
+                    .backend_options
+                    .dx12
+                    .shader_compiler = eframe::wgpu::Dx12Compiler::Fxc;
+            }
+            eprintln!(
+                "FreeCut resource budget: {:?}",
+                freecut_media::resources::current()
+            );
+            setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters, surface| {
+                adapters.iter().find(|adapter| {
+                    adapter.get_info().device_type == eframe::wgpu::DeviceType::Cpu
+                        && surface.is_none_or(|surface| adapter.is_surface_supported(surface))
+                }).cloned().inspect(|adapter| {
+                    eprintln!("FreeCut software UI: {}", adapter.get_info().name);
+                }).ok_or_else(|| {
+                    "CPU rendering needs a software graphics driver (Mesa lavapipe on Linux or WARP on Windows); no CPU adapter can present this window".to_owned()
+                })
+            }));
+        }
+        // The UI only draws textured triangles. Don't require desktop GPU
+        // compute/storage limits or 8192px textures from older adapters.
+        setup.device_descriptor = std::sync::Arc::new(|adapter| eframe::wgpu::DeviceDescriptor {
+            label: Some("FreeCut UI"),
+            required_limits: eframe::wgpu::Limits {
+                max_texture_dimension_2d: adapter.limits().max_texture_dimension_2d.min(8192),
+                ..eframe::wgpu::Limits::downlevel_webgl2_defaults()
+            },
+            ..Default::default()
+        });
+    }
 
     eframe::run_native(
         "FreeCut",

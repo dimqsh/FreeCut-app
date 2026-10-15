@@ -1161,7 +1161,19 @@ impl Feeder {
                 continue;
             }
             self.retry_if_due();
-            match self.commands.recv_timeout(IDLE_WAIT) {
+            // Only active playback needs to poll ring space. A paused
+            // feeder sleeps until a command/device event; a disconnected
+            // device sleeps until its actual retry deadline.
+            let received = if self.rendering && self.ring.is_some() {
+                self.commands.recv_timeout(IDLE_WAIT)
+            } else if let Some((at, _)) = &self.retry {
+                self.commands.recv_deadline(*at)
+            } else {
+                self.commands
+                    .recv()
+                    .map_err(|_| RecvTimeoutError::Disconnected)
+            };
+            match received {
                 Ok(cmd) => {
                     if !self.handle(cmd) {
                         return;
