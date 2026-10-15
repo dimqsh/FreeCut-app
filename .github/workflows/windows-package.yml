@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       artifact_run:
-        description: 'Stage a successful package run as a draft Release; empty builds a new package'
+        description: 'Recheck a successful package run without development dependencies; empty builds a new package'
         type: string
         required: false
         default: ''
@@ -90,12 +90,12 @@ jobs:
             target/windows-dist/*.json
             target/windows-check/*
           if-no-files-found: warn
-  draft-release:
+  recheck-package:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_run != '' }}
     runs-on: windows-2022
     permissions:
       actions: read
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,9 +123,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode)" }
           ./scripts/check_windows_cpu.ps1 -Package $installed
           Copy-Item target/windows-check/cpu-result.json verified-package/windows-check/installed-cpu-result.json -Force
-      - name: Stage verified files in a draft Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PACKAGE_RUN: ${{ inputs.artifact_run }}
-        shell: pwsh
-        run: python scripts/stage_windows_release.py --run-id "$env:PACKAGE_RUN" --artifacts verified-package --repo "$env:GITHUB_REPOSITORY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-clean-runtime-checks
+          path: verified-package/windows-check/*cpu-result.json
