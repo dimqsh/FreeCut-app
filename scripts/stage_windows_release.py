@@ -49,7 +49,7 @@ This limit applies to the application, not the whole OS. The test used a hosted 
 Installed payload: {info['installed_logical_bytes'] / 1e6:.1f} MB. Portable ZIP: {info['zip_bytes'] / 1e6:.1f} MB.
 WARP process-commit peak: portable {checks['portable']['peak_committed_bytes'] / 2**20:.1f} MiB; installed {checks['installed']['peak_committed_bytes'] / 2**20:.1f} MiB.
 
-Source commit: {info['source_commit']}
+Source commit: https://github.com/{args.repo}/tree/{info['source_commit']}
 Build and tests: {run['html_url']}
 FFmpeg build recipes: {info['ffmpeg']['source']}
 
