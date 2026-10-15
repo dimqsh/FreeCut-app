@@ -4,3 +4,6 @@
 .idea/
 .vscode/
 .claude/worktrees/
+# Recordings made with `--example record` stay out of git until review
+# approves one; then add it with `git add -f` (review round 3, N2).
+crates/freecut-cloud/tests/fixtures/higgsfield/recorded/

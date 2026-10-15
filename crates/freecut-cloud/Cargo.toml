@@ -1,0 +1,53 @@
+[package]
+name = "freecut-cloud"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# The real HTTPS transport (ureq, rustls, the platform's certificate roots).
+# Without it the crate contains no networking code at all: the protocol,
+# OAuth, catalogue and guard logic run against the in-memory fake server.
+http = ["dep:ureq", "dep:rustls"]
+# `provider::scripted::ScriptedProvider` and the `fake` service for tests
+# (§6.1); enable it from dev-dependencies only (deps_guard checks the app).
+test-support = []
+
+[dependencies]
+freecut-timeline.workspace = true
+# `CancelToken` only. A path dependency, not `workspace = true`, so that
+# FFmpeg stays off (the workspace entry keeps media's default features).
+freecut-media = { path = "../freecut-media", default-features = false }
+
+base64.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+ureq = { workspace = true, optional = true }
+# ring as the crypto provider the transport hands to ureq, and certificate
+# errors to classify as "not sent" (§4.5).
+rustls = { workspace = true, features = ["ring"], optional = true }
+
+# Records FreeCut's own free exchanges with the service as fixtures; the
+# owner signs in once (architecture §13). Its tests run with `http`.
+[[example]]
+name = "record"
+required-features = ["http"]
+test = true
+
+[dev-dependencies]
+# The crate's own integration tests and example tests use `fake`.
+freecut-cloud = { path = ".", features = ["test-support"] }
+pretty_assertions.workspace = true
+proptest.workspace = true
+
+[lints]
+workspace = true

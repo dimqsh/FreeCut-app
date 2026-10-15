@@ -27,9 +27,15 @@ Cargo workspace under `crates/`:
 - `freecut-audio` — mixing and playback (cpal).
 - `freecut-project` — serde project format; versioned, with migrations.
 - `freecut-app` — egui/eframe UI; wires the other crates together.
+- `freecut-cloud` — opt-in generation through the user's own account on a
+  third-party service (Higgsfield first): MCP client, OAuth sign-in, model
+  catalogue, cloud job ledger. Off by default; networking only behind its
+  `http` feature. No FreeCut server, no telemetry.
 
 Dependency direction: `app` → everything; `render`/`audio` → `media` +
-`timeline`; `timeline` depends on nothing internal.
+`timeline`; `cloud` → `timeline` + `media` (without FFmpeg, for the cancel
+token only); `timeline` depends on nothing internal. Nothing but `app`
+depends on `cloud`.
 
 ## Conventions
 
@@ -42,6 +48,9 @@ Dependency direction: `app` → everything; `render`/`audio` → `media` +
 - No `unwrap()`/`expect()` outside tests unless the invariant is commented.
 - `unsafe` only inside `freecut-media`/`freecut-render`, each block with a
   `// SAFETY:` comment.
+- Paid cloud calls are never retried or resent automatically; every one
+  needs the user's confirmation after a cost preflight
+  (docs/features/cloud-generation.md, architecture §4.5–§4.7).
 
 ## Skills
 

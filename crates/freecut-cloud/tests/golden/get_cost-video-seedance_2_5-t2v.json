@@ -1,0 +1,12 @@
+{
+  "params": {
+    "aspect_ratio": "16:9",
+    "count": 1,
+    "duration": 5,
+    "get_cost": true,
+    "mode": "t2v",
+    "model": "seedance_2_5",
+    "prompt": "waves rolling onto a beach at sunset",
+    "resolution": "720p"
+  }
+}

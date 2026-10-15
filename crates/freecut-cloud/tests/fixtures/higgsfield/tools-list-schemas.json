@@ -1,0 +1,287 @@
+{
+  "tools": [
+    {
+      "name": "models_explore",
+      "description": "",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "search",
+              "get",
+              "recommend"
+            ]
+          },
+          "after": {
+            "type": "string"
+          },
+          "input": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "model_id": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video",
+              "audio",
+              "3d"
+            ]
+          },
+          "unlim": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "generate_image",
+      "description": "",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "params"
+        ],
+        "properties": {
+          "context": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {},
+                "required": [
+                  "model"
+                ],
+                "properties": {
+                  "count": {
+                    "type": "integer",
+                    "default": 1,
+                    "minimum": 1,
+                    "maximum": 4
+                  },
+                  "folder_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "get_cost": {
+                    "type": "boolean"
+                  },
+                  "medias": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "value",
+                        "role"
+                      ],
+                      "properties": {
+                        "role": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "preset_session_id": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "use_free_gens": {
+                    "type": "boolean"
+                  },
+                  "use_unlim": {
+                    "type": "boolean"
+                  },
+                  "aspect_ratio": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "generate_video",
+      "description": "",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "params"
+        ],
+        "properties": {
+          "context": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "params": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {},
+                "required": [
+                  "model"
+                ],
+                "properties": {
+                  "count": {
+                    "type": "integer",
+                    "default": 1,
+                    "minimum": 1,
+                    "maximum": 4
+                  },
+                  "folder_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "get_cost": {
+                    "type": "boolean"
+                  },
+                  "medias": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "value",
+                        "role"
+                      ],
+                      "properties": {
+                        "role": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "preset_session_id": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "use_free_gens": {
+                    "type": "boolean"
+                  },
+                  "use_unlim": {
+                    "type": "boolean"
+                  },
+                  "aspect_ratio": {
+                    "type": "string"
+                  },
+                  "declined_preset_id": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "preset_id": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "jobs_wait",
+      "description": "",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "jobs"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "index",
+                "job_id"
+              ],
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "job_id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                }
+              }
+            }
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "default": 15,
+            "minimum": 0,
+            "maximum": 15
+          }
+        }
+      }
+    }
+  ]
+}

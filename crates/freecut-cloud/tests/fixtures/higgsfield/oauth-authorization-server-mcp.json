@@ -1,0 +1,47 @@
+{
+  "issuer": "https://mcp.higgsfield.ai",
+  "authorization_endpoint": "https://mcp.higgsfield.ai/oauth2/authorize",
+  "token_endpoint": "https://mcp.higgsfield.ai/oauth2/token",
+  "registration_endpoint": "https://mcp.higgsfield.ai/oauth2/register",
+  "client_id_metadata_document_supported": true,
+  "response_types_supported": [
+    "code"
+  ],
+  "response_modes_supported": [
+    "form_post",
+    "query"
+  ],
+  "grant_types_supported": [
+    "authorization_code",
+    "refresh_token",
+    "urn:ietf:params:oauth:grant-type:device_code"
+  ],
+  "token_endpoint_auth_methods_supported": [
+    "client_secret_basic",
+    "none",
+    "client_secret_post"
+  ],
+  "code_challenge_methods_supported": [
+    "S256"
+  ],
+  "scopes_supported": [
+    "openid",
+    "email",
+    "offline_access"
+  ],
+  "claims_supported": [
+    "aud",
+    "email",
+    "email_verified",
+    "exp",
+    "family_name",
+    "given_name",
+    "iat",
+    "iss",
+    "name",
+    "picture",
+    "preferred_username",
+    "sub",
+    "org_id"
+  ]
+}

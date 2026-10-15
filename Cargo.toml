@@ -17,12 +17,16 @@ freecut-audio = { path = "crates/freecut-audio" }
 freecut-project = { path = "crates/freecut-project" }
 
 anyhow = "1.0.104"
+# PKCE and token encoding in freecut-cloud (the version ureq already uses).
+base64 = "0.23.1"
 # Audio output; only the freecut-audio "output" feature enables it.
 cpal = "0.18.2"
 crossbeam-channel = "0.5.17"
 eframe = "0.36.2"
 # Free disk space for export preflight (EX-036); `available_space` only.
 fs4 = { version = "1.1.0", default-features = false }
+# OS randomness for PKCE verifiers and OAuth state (freecut-cloud).
+getrandom = "0.4.3"
 glam = "0.34.1"
 ffmpeg-next = { version = "9.0.0", default-features = false, features = [
   "codec",
@@ -49,8 +53,14 @@ parley = { version = "=0.12.0", default-features = false, features = ["system", 
 rfd = "0.17.2"
 # Lock-free SPSC ring between the audio feeder thread and the device callback.
 rtrb = "0.4.0"
+# ring as ureq's crypto provider and its certificate errors (freecut-cloud's
+# `http` feature). Pinned to the version ureq =3.4.2 resolves, so the two never
+# split into separate rustls builds.
+rustls = { version = "=0.23.45", default-features = false }
 # Glyph rasterization; must resolve to parley's skrifa.
 swash = "=0.2.10"
+# PKCE S256 challenges and account tags (freecut-cloud).
+sha2 = "0.11.1"
 serde = { version = "1.0.229", features = ["derive"] }
 # Never `arbitrary_precision` or `raw_value`: the project format is canonical JSON.
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
@@ -59,6 +69,15 @@ thiserror = "2.0.21"
 tracing = "0.1.44"
 # Grapheme and word segmentation (UAX #29) for text animation units.
 unicode-segmentation = "1.13.3"
+# Blocking HTTPS for freecut-cloud's `http` feature only: rustls with the
+# platform's certificate roots. The transport sets the proxy itself (only
+# HTTPS_PROXY, never for loopback; `TransportConfig::proxy_from_env`).
+# `rustls-no-provider` keeps webpki-roots (bundled roots, unused) out; the
+# cloud transport passes ring as the crypto provider itself.
+# Pinned exactly: the cloud transport's send-state table matches its errors.
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+# OAuth endpoint and authorize-URL handling (freecut-cloud).
+url = "2.5.8"
 xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 # Vector path filling for text boxes, bubbles and decorations (pre-1.0:
 # pinned exactly; the version swash already uses).

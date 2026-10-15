@@ -1,0 +1,3 @@
+Invalid request: unknown model "freecut_no_such_model". Use models_explore(action:'list') to see available models.
+
+Check models_explore.get for allowed aspect ratios, durations, media roles, and params for this model.

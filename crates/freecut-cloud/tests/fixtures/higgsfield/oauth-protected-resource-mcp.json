@@ -1,0 +1,51 @@
+{
+  "resource": "https://mcp.higgsfield.ai/mcp",
+  "authorization_servers": [
+    "https://clerk.higgsfield.ai",
+    "https://fnf-device-auth.higgsfield.ai"
+  ],
+  "scopes_supported": [
+    "openid",
+    "email",
+    "offline_access"
+  ],
+  "bearer_methods_supported": [
+    "header"
+  ],
+  "higgsfield_auth_hints": {
+    "selection": "client_capability_based",
+    "options": [
+      {
+        "flow": "authorization_code_pkce",
+        "authorization_server": "https://clerk.higgsfield.ai",
+        "potential_clients": [
+          "anthropic",
+          "claude",
+          "claude-ai",
+          "claude-code"
+        ],
+        "use_when": "Client can complete an OAuth authorization-code redirect using one of its registered redirect mechanisms.",
+        "requires": [
+          "authorization_endpoint",
+          "token_endpoint",
+          "redirect_uri_receiver",
+          "pkce"
+        ]
+      },
+      {
+        "flow": "device_code",
+        "authorization_server": "https://fnf-device-auth.higgsfield.ai",
+        "potential_clients": [
+          "openclaw",
+          "hermes",
+          "memoclaw"
+        ],
+        "use_when": "Client cannot receive authorization-code redirects and should ask the user to complete verification out-of-band.",
+        "requires": [
+          "device_authorization_endpoint",
+          "token_polling"
+        ]
+      }
+    ]
+  }
+}

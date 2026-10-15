@@ -1,0 +1,1258 @@
+{
+  "items": [
+    {
+      "id": "cinematic_studio_3_0",
+      "name": "Cinema Studio Video 3.0",
+      "provider_name": "Higgsfield",
+      "description": "Most advanced cinema-grade model",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "resolution",
+          "required": "optional",
+          "type": "string",
+          "description": "Output resolution (higher = more credits)",
+          "default": "720p",
+          "options": [
+            "480p",
+            "720p",
+            "1080p",
+            "4k"
+          ]
+        },
+        {
+          "name": "genre",
+          "required": "optional",
+          "type": "string",
+          "description": "Cinematic genre hint",
+          "default": "auto",
+          "options": [
+            "auto",
+            "action",
+            "horror",
+            "comedy",
+            "noir",
+            "drama",
+            "epic"
+          ]
+        },
+        {
+          "name": "generate_audio",
+          "required": "optional",
+          "type": "bool",
+          "description": "Generate audio for the video.",
+          "default": false
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "image",
+            "start_image",
+            "end_image"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "auto",
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16"
+      ],
+      "tags": [
+        "cinematic",
+        "premium",
+        "advanced",
+        "sota",
+        "film",
+        "best-quality"
+      ],
+      "duration_range": {
+        "min": 4,
+        "max": 15
+      }
+    },
+    {
+      "id": "cinematic_studio_video",
+      "name": "Cinema Studio Video",
+      "provider_name": "Higgsfield",
+      "description": "Solid cinematic, dramatic compositions",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "slow_motion",
+          "required": "optional",
+          "type": "bool",
+          "description": "Enable slow motion effect",
+          "default": false
+        },
+        {
+          "name": "sound",
+          "required": "optional",
+          "type": "bool",
+          "description": "Enable sound generation",
+          "default": true
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "image",
+            "start_image",
+            "end_image"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "1:1",
+        "4:3",
+        "3:4",
+        "16:9",
+        "9:16"
+      ],
+      "tags": [
+        "cinematic",
+        "dramatic",
+        "compositions",
+        "sound",
+        "slow-motion"
+      ],
+      "durations": [
+        5,
+        10
+      ]
+    },
+    {
+      "id": "marketing_studio_video",
+      "name": "Marketing Studio",
+      "provider_name": "Higgsfield",
+      "description": "One-click product ads, TikTok/Reels ready",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "resolution",
+          "required": "optional",
+          "type": "string",
+          "description": "Video resolution",
+          "default": "720p",
+          "options": [
+            "480p",
+            "720p",
+            "1080p"
+          ]
+        },
+        {
+          "name": "generate_audio",
+          "required": "optional",
+          "type": "bool",
+          "description": "Generate audio for the video",
+          "default": true
+        },
+        {
+          "name": "mode",
+          "required": "optional",
+          "type": "string",
+          "description": "Marketing video mode slug — the creative format/style (get the options from `marketing_list_video_presets` or `show_marketing_studio` with `action='presets'`). Choose it deliberately rather than letting it default; pass the chosen format's `presets[].slug`. Omit only when the user explicitly wants a generic video."
+        },
+        {
+          "name": "folder_id",
+          "required": "optional",
+          "type": "string",
+          "description": "Marketing project / folder id"
+        },
+        {
+          "name": "width",
+          "required": "optional",
+          "type": "number",
+          "description": "Optional explicit output width"
+        },
+        {
+          "name": "height",
+          "required": "optional",
+          "type": "number",
+          "description": "Optional explicit output height"
+        },
+        {
+          "name": "avatar_ids",
+          "required": "optional",
+          "type": "string_array",
+          "description": "Avatar ids as a plain UUID array (like `product_ids`) — the server resolves preset vs custom for you, so you don't pass { id, type }. Preferred for a single avatar: `avatar_ids: ['<uuid>']`. Max 1. Pass at most one of `avatars` / `avatar_ids` (if both are given, `avatars` is ignored in favor of `avatar_ids`).",
+          "max": 1
+        },
+        {
+          "name": "product_ids",
+          "required": "optional",
+          "type": "string_array",
+          "description": "Product ids. Field name is `product_ids` (plural array of UUID strings). Do NOT use `product_id` (singular) — the server only accepts `product_ids`. For a single product pass `product_ids: ['<uuid>']`."
+        },
+        {
+          "name": "assets",
+          "required": "optional",
+          "type": "string_array",
+          "description": "Optional backend asset ids"
+        },
+        {
+          "name": "hook_id",
+          "required": "optional",
+          "type": "string",
+          "description": "Optional Marketing Studio Setup hook id (the 'what' — attention-grabbing mechanic, e.g. 'Object flies into frame'). Get available ids from `show_marketing_studio` with `type='hook'`. Hooks/settings are supported only for these presets: UGC, Tutorial, Unboxing, Product Review, UGC Virtual Try On. If the user asks for hooks but does not provide `hook_id`, list hooks first via `show_marketing_studio(action='list', type='hook')` and ask/select from that list before calling generate_video. INDEPENDENT of `setting_id` — you can pass `hook_id` alone, `setting_id` alone, both, or neither. MUTUALLY EXCLUSIVE with `ad_reference_id` — hook/setting compose a video from explicit building blocks, while ad_reference recreates an existing video's scenario. Pick one approach, never both."
+        },
+        {
+          "name": "setting_id",
+          "required": "optional",
+          "type": "string",
+          "description": "Optional Marketing Studio Setup setting id (the 'where' — location/vibe, e.g. 'Sunlit kitchen, morning light'). Get available ids from `show_marketing_studio` with `type='setting'`. Hooks/settings are supported only for these presets: UGC, Tutorial, Unboxing, Product Review, UGC Virtual Try On. INDEPENDENT of `hook_id` — you can pass `setting_id` alone, `hook_id` alone, both, or neither. MUTUALLY EXCLUSIVE with `ad_reference_id` — see `hook_id` for explanation."
+        },
+        {
+          "name": "ad_reference_id",
+          "required": "optional",
+          "type": "string",
+          "description": "Optional ad reference id. When set, the new marketing video follows the analyzed scenario of an existing reference video (scene composition, pacing, hook, narration) instead of inventing a structure from the prompt alone. Use this when the user wants to 'recreate this ad', 'make a video like this', or 'copy the style of this clip'. Create/list/edit ad references via `show_marketing_studio` with `type='ad_reference'`. AVATAR/PRODUCT ARE NOT AUTO-PULLED: if the ad reference was created with a linked avatar and/or product, those links are stored on the ad_reference for organizational/reference purposes only — they are NOT applied at generation time. The backend executor only reads avatar/product from explicit `avatars` / `product_ids` on this call. Rule: if the user wants the new video to feature the same avatar/product that was linked to the ad_reference (or a different one they specify), you MUST pass them explicitly here as `avatars: [{id, type: 'custom'|'preset'}]` and `product_ids: ['<uuid>']`. Example: ad_reference X was created with Sofia (preset) + On Cloud shoes linked, and the user says 'generate the marketing video' — you still pass `avatars: [{id: <sofia-id>, type: 'preset'}]` and `product_ids: ['<on-cloud-id>']` along with `ad_reference_id`. If the user asks for a different avatar/product than what was linked, just pass the new ones — the ad_reference still drives the scenario. MUTUALLY EXCLUSIVE with `hook_id` and `setting_id` — ad_reference replaces the explicit hook/setting composition with a reference-driven scenario. Pick one approach, never both."
+        }
+      ],
+      "medias": [
+        {
+          "name": "avatars",
+          "type": "image"
+        },
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "image",
+            "start_image",
+            "end_image"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "auto",
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16"
+      ],
+      "tags": [
+        "marketing",
+        "ugc",
+        "ads",
+        "tiktok",
+        "reels",
+        "product",
+        "social-media"
+      ],
+      "duration_range": {
+        "min": 12,
+        "max": 15
+      }
+    },
+    {
+      "id": "higgsfield_preset",
+      "name": "Higgsfield Preset",
+      "provider_name": "Higgsfield",
+      "description": "Legacy image-to-video generation for an existing preset ID or accepted preset recommendation. Browse new Viral presets with get_presets and execute them with execute_preset",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "folder_id",
+          "required": "optional",
+          "type": "string",
+          "format": "regex",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        {
+          "name": "preset_id",
+          "required": "required",
+          "type": "string",
+          "description": "Existing legacy preset ID from a prior selection or recommendation. Do not pass get_presets catalog IDs here."
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "max": 1,
+          "required": true,
+          "roles": [
+            "image"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16",
+        "1:1"
+      ],
+      "tags": [
+        "preset",
+        "image-to-video",
+        "viral",
+        "template"
+      ]
+    },
+    {
+      "id": "video_background_remover",
+      "name": "Video Background Remover",
+      "provider_name": "",
+      "description": "",
+      "output_type": "video",
+      "parameters": [],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "video_references"
+          ]
+        }
+      ],
+      "aspect_ratios": [],
+      "tags": []
+    },
+    {
+      "id": "voice_change",
+      "name": "voice_change",
+      "provider_name": "",
+      "description": "",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "voice_id",
+          "required": "required",
+          "type": "string",
+          "description": "Identifier of the target voice — a preset voice id or a voice element id, depending on voice_type."
+        },
+        {
+          "name": "voice_type",
+          "required": "optional",
+          "type": "string",
+          "description": "How to interpret voice_id: 'preset' for a built-in voice, 'element' for a user-created voice element.",
+          "options": [
+            "preset",
+            "element"
+          ],
+          "default": "preset"
+        },
+        {
+          "name": "folder_id",
+          "required": "optional",
+          "type": "string",
+          "description": "Optional folder to place the generated output in.",
+          "nullable": true
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "input_video"
+          ]
+        }
+      ],
+      "aspect_ratios": [],
+      "tags": []
+    },
+    {
+      "id": "dubbing",
+      "name": "dubbing",
+      "provider_name": "",
+      "description": "",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "target_language",
+          "required": "required",
+          "type": "string",
+          "description": "Language to dub the video into.",
+          "options": [
+            "eng",
+            "cmn",
+            "fra",
+            "hin",
+            "ita",
+            "jpn",
+            "kor",
+            "por",
+            "rus",
+            "tur",
+            "spa",
+            "deu",
+            "ara",
+            "pol",
+            "ind",
+            "fil",
+            "swe",
+            "fin"
+          ]
+        },
+        {
+          "name": "folder_id",
+          "required": "optional",
+          "type": "string",
+          "description": "Destination folder id.",
+          "nullable": true
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "input_video"
+          ]
+        }
+      ],
+      "aspect_ratios": [],
+      "tags": []
+    },
+    {
+      "id": "sync_so",
+      "name": "Sync Lipsync 3",
+      "provider_name": "",
+      "description": "",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "sync_mode",
+          "required": "optional",
+          "type": "string",
+          "description": "How to reconcile a duration mismatch between the video and the audio: 'bounce' ping-pongs the video, 'loop' repeats it, 'cut_off' truncates to the shorter input, 'silence' pads the audio, 'remap' retimes the video.",
+          "options": [
+            "bounce",
+            "loop",
+            "cut_off",
+            "silence",
+            "remap"
+          ],
+          "default": "bounce"
+        },
+        {
+          "name": "folder_id",
+          "required": "optional",
+          "type": "string",
+          "description": "Optional folder to place the generated output in.",
+          "nullable": true
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "input_video",
+            "input_audio"
+          ]
+        }
+      ],
+      "aspect_ratios": [],
+      "tags": []
+    },
+    {
+      "id": "minimax_hailuo",
+      "name": "Minimax Hailuo",
+      "provider_name": "Hailuo",
+      "description": "Natural physics, facial emotion, multiple variants",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "variant",
+          "required": "optional",
+          "type": "string",
+          "description": "Minimax Hailuo model variant.",
+          "options": [
+            "minimax",
+            "minimax-fast",
+            "minimax-2.3",
+            "minimax-2.3-fast"
+          ],
+          "default": "minimax-2.3"
+        },
+        {
+          "name": "duration",
+          "required": "optional",
+          "type": "number",
+          "description": "Duration in seconds.",
+          "options": [
+            6,
+            10
+          ],
+          "default": 6
+        },
+        {
+          "name": "resolution",
+          "required": "optional",
+          "type": "string",
+          "description": "Output resolution. '512' is incompatible with end_image, and is not supported by the 'minimax-2.3' / 'minimax-2.3-fast' variants.",
+          "options": [
+            "512",
+            "768",
+            "1080"
+          ],
+          "default": "768"
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "start_image",
+            "end_image"
+          ]
+        }
+      ],
+      "aspect_ratios": [],
+      "tags": [
+        "physics",
+        "emotion",
+        "facial",
+        "realistic",
+        "1080p",
+        "natural"
+      ]
+    },
+    {
+      "id": "seedance_2_5",
+      "name": "Seedance 2.5",
+      "provider_name": "Bytedance",
+      "description": "Seedance 2.5 text-to-video, multimodal omni-reference generation, video edit, and video extension",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "mode",
+          "required": "optional",
+          "type": "string",
+          "description": "Generation mode: 't2v' for prompt-only generation, 'omni_reference' for image, video, or audio references, 'video_edit' to edit one reference video (billed by that video's duration; 'duration' and 'aspect_ratio' are ignored), or 'video_extension' to extend a reference video ('aspect_ratio' is ignored — the output follows the extended video).",
+          "options": [
+            "t2v",
+            "omni_reference",
+            "video_edit",
+            "video_extension"
+          ],
+          "default": "t2v"
+        },
+        {
+          "name": "duration",
+          "required": "optional",
+          "type": "number",
+          "description": "Duration in seconds (4-30).",
+          "min": 4,
+          "max": 30,
+          "default": 5
+        },
+        {
+          "name": "resolution",
+          "required": "optional",
+          "type": "string",
+          "description": "Output resolution: 480p, 720p, or 1080p.",
+          "options": [
+            "480p",
+            "720p",
+            "1080p"
+          ],
+          "default": "720p"
+        },
+        {
+          "name": "generate_audio",
+          "required": "optional",
+          "type": "bool",
+          "description": "Generate audio for the output video.",
+          "default": true
+        },
+        {
+          "name": "bitrate_mode",
+          "required": "optional",
+          "type": "string",
+          "description": "'standard' = normal output bitrate; 'high' = higher bitrate output.",
+          "options": [
+            "standard",
+            "high"
+          ],
+          "default": "standard"
+        },
+        {
+          "name": "extension_mode",
+          "required": "optional",
+          "type": "string",
+          "description": "Extension direction; required for mode 'video_extension' and not allowed otherwise.",
+          "options": [
+            "backward",
+            "forward"
+          ],
+          "nullable": true
+        },
+        {
+          "name": "draft",
+          "required": "optional",
+          "type": "bool",
+          "description": "Generate a 480p draft that can be finalized within seven days.",
+          "default": false
+        },
+        {
+          "name": "draft_job_id",
+          "required": "optional",
+          "type": "string",
+          "description": "Completed draft job to finalize at 1080p.",
+          "nullable": true
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "start_image",
+            "end_image",
+            "image_references",
+            "video_references",
+            "audio_references"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "auto",
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16"
+      ],
+      "tags": [
+        "text-to-video",
+        "reference",
+        "identity",
+        "audio-reference",
+        "video-reference",
+        "video-edit",
+        "video-extension",
+        "480p",
+        "720p",
+        "1080p"
+      ]
+    },
+    {
+      "id": "reframe",
+      "name": "Reframe",
+      "provider_name": "",
+      "description": "",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "resolution",
+          "required": "optional",
+          "type": "string",
+          "description": "Output resolution.",
+          "options": [
+            "480p",
+            "720p",
+            "1080p"
+          ],
+          "default": "720p"
+        },
+        {
+          "name": "duration",
+          "required": "optional",
+          "type": "number",
+          "description": "Duration of the source video in seconds (used for pricing).",
+          "nullable": true
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "video_references",
+            "start_image",
+            "image_references"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16"
+      ],
+      "tags": []
+    },
+    {
+      "id": "topaz_video",
+      "name": "Topaz",
+      "provider_name": "",
+      "description": "",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "resolution",
+          "required": "optional",
+          "type": "string",
+          "description": "Target output resolution.",
+          "options": [
+            "1080p",
+            "2160p"
+          ],
+          "default": "1080p"
+        },
+        {
+          "name": "enhancement",
+          "required": "optional",
+          "type": "string",
+          "description": "Enhancement settings (omit to use Topaz defaults).",
+          "nullable": true
+        },
+        {
+          "name": "frame_interpolation",
+          "required": "optional",
+          "type": "string",
+          "description": "Frame interpolation (omit to disable).",
+          "nullable": true
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "video_references"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "auto",
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16"
+      ],
+      "tags": []
+    },
+    {
+      "id": "clipify",
+      "name": "Clipify",
+      "provider_name": "Higgsfield",
+      "description": "Turn one YouTube video into ready-to-share clips with subtitles",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "urls",
+          "required": "required",
+          "type": "string_array",
+          "description": "YouTube video URLs. Provide exactly one URL; submit one Clipify job per source video."
+        },
+        {
+          "name": "clips_num",
+          "required": "optional",
+          "type": "number",
+          "description": "How many clips to create.",
+          "min": 1,
+          "max": 20,
+          "default": 10
+        },
+        {
+          "name": "clip_aspect",
+          "required": "optional",
+          "type": "string",
+          "description": "Clip aspect ratio.",
+          "options": [
+            "9:16",
+            "1:1",
+            "16:9"
+          ],
+          "default": "9:16"
+        },
+        {
+          "name": "subtitle_highlight_hex",
+          "required": "optional",
+          "type": "string",
+          "description": "Subtitle highlight color as #RRGGBB.",
+          "default": "#FFE84D"
+        },
+        {
+          "name": "subtitle_position",
+          "required": "optional",
+          "type": "string",
+          "description": "Subtitle vertical position.",
+          "options": [
+            "bottom",
+            "center",
+            "top"
+          ],
+          "default": "bottom"
+        },
+        {
+          "name": "subtitle_font",
+          "required": "optional",
+          "type": "string",
+          "description": "Subtitle font.",
+          "options": [
+            "notosans",
+            "notoserif",
+            "notosansdisplay",
+            "ibmplexsans",
+            "mplusrounded1c",
+            "bebasneue",
+            "archivoblack",
+            "unbounded",
+            "inter",
+            "montserrat",
+            "bangers",
+            "permanentmarker",
+            "playfairdisplay",
+            "caveat"
+          ],
+          "default": "notosans"
+        },
+        {
+          "name": "subtitle_case",
+          "required": "optional",
+          "type": "string",
+          "description": "Subtitle text case.",
+          "options": [
+            "upper",
+            "lower",
+            "as-is"
+          ],
+          "default": "as-is"
+        },
+        {
+          "name": "track_face_crop",
+          "required": "optional",
+          "type": "bool",
+          "description": "Track faces when cropping clips.",
+          "default": true
+        },
+        {
+          "name": "max_height",
+          "required": "optional",
+          "type": "number",
+          "description": "Maximum source processing height.",
+          "min": 144,
+          "max": 2160,
+          "default": 1080
+        },
+        {
+          "name": "segment_seconds",
+          "required": "optional",
+          "type": "number",
+          "description": "Segment duration in seconds.",
+          "min": 2,
+          "max": 60,
+          "default": 10
+        }
+      ],
+      "medias": [],
+      "aspect_ratios": [],
+      "tags": [
+        "youtube",
+        "clips",
+        "shorts",
+        "reels",
+        "subtitles",
+        "personal-clipper"
+      ]
+    },
+    {
+      "id": "kling3_0",
+      "name": "Kling v3.0",
+      "provider_name": "Kling",
+      "description": "Multi-shot, audio sync, motion transfer",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "duration",
+          "required": "optional",
+          "type": "number",
+          "description": "Duration in seconds (3-15).",
+          "min": 3,
+          "max": 15,
+          "default": 5
+        },
+        {
+          "name": "mode",
+          "required": "optional",
+          "type": "string",
+          "description": "Generation mode: 'std' (standard), 'pro' (higher quality), or '4k' (4K resolution).",
+          "options": [
+            "std",
+            "pro",
+            "4k"
+          ],
+          "default": "std"
+        },
+        {
+          "name": "sound",
+          "required": "optional",
+          "type": "string",
+          "description": "Generate audio. Use 'off' for silent video and lower credits.",
+          "options": [
+            "on",
+            "off"
+          ],
+          "default": "on"
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "start_image",
+            "end_image"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16",
+        "1:1"
+      ],
+      "tags": [
+        "multi-shot",
+        "audio",
+        "motion-transfer",
+        "cinematic",
+        "advanced",
+        "unlim"
+      ],
+      "supports_unlim": true
+    },
+    {
+      "id": "wan3_0",
+      "name": "Wan 3.0",
+      "provider_name": "Wan",
+      "description": "Wan 3.0 text-to-video, first/last frame video, and multimodal reference-to-video with native audio",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "duration",
+          "required": "optional",
+          "type": "number",
+          "description": "Duration in seconds (2-30), or -1 to let the model choose the length from the prompt and media. Smart duration is billed as 10 seconds.",
+          "min": -1,
+          "max": 30,
+          "default": 5
+        },
+        {
+          "name": "resolution",
+          "required": "optional",
+          "type": "string",
+          "description": "Output resolution: 480p, 720p, or 1080p.",
+          "options": [
+            "480p",
+            "720p",
+            "1080p"
+          ],
+          "default": "720p"
+        },
+        {
+          "name": "generate_audio",
+          "required": "optional",
+          "type": "bool",
+          "description": "Generate a native audio track for the output video.",
+          "default": true
+        },
+        {
+          "name": "enable_thinking",
+          "required": "optional",
+          "type": "bool",
+          "description": "Let the model reason about the prompt before generating (slower, better prompt adherence).",
+          "default": false
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "start_image",
+            "end_image",
+            "image_references",
+            "video_references",
+            "audio_references"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "auto",
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:3",
+        "3:4"
+      ],
+      "tags": [
+        "text-to-video",
+        "reference",
+        "identity",
+        "audio-reference",
+        "video-reference",
+        "first-last-frame",
+        "sound",
+        "thinking",
+        "480p",
+        "720p",
+        "1080p"
+      ]
+    },
+    {
+      "id": "veo3_1",
+      "name": "Google Veo 3.1",
+      "provider_name": "Google",
+      "description": "Ultra-realistic, top-tier cinematic quality",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "duration",
+          "required": "optional",
+          "type": "number",
+          "description": "Duration of the output video in seconds.",
+          "options": [
+            4,
+            6,
+            8
+          ],
+          "default": 8
+        },
+        {
+          "name": "quality",
+          "required": "optional",
+          "type": "string",
+          "description": "Output quality tier.",
+          "options": [
+            "basic",
+            "high",
+            "ultra"
+          ],
+          "default": "basic"
+        },
+        {
+          "name": "variant",
+          "required": "optional",
+          "type": "string",
+          "description": "Veo 3.1 variant: 'veo-3-1-preview' = best quality, 'veo-3-1-fast' = faster generation.",
+          "options": [
+            "veo-3-1-preview",
+            "veo-3-1-fast"
+          ],
+          "default": "veo-3-1-fast"
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "start_image"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "16:9",
+        "9:16"
+      ],
+      "tags": [
+        "ultra-realistic",
+        "cinematic",
+        "top-tier",
+        "quality",
+        "audio"
+      ]
+    },
+    {
+      "id": "cinematic_studio_video_3_5",
+      "name": "Cinematic Studio Video 3.5",
+      "provider_name": "",
+      "description": "",
+      "output_type": "video",
+      "parameters": [
+        {
+          "name": "resolution",
+          "required": "optional",
+          "type": "string",
+          "description": "Output resolution of the video.",
+          "options": [
+            "480p",
+            "720p",
+            "1080p"
+          ],
+          "default": "720p"
+        },
+        {
+          "name": "duration",
+          "required": "optional",
+          "type": "number",
+          "description": "Total duration of the video in seconds (minimum 4).",
+          "min": 4,
+          "default": 15
+        },
+        {
+          "name": "genre",
+          "required": "optional",
+          "type": "string",
+          "description": "Cinematic genre hint.",
+          "options": [
+            "auto",
+            "action",
+            "horror",
+            "comedy",
+            "noir",
+            "drama",
+            "epic"
+          ],
+          "default": "auto"
+        },
+        {
+          "name": "generate_audio",
+          "required": "optional",
+          "type": "bool",
+          "description": "Generate native audio for the video. Set false for a silent video.",
+          "default": false
+        },
+        {
+          "name": "enhance_prompt",
+          "required": "optional",
+          "type": "bool",
+          "description": "Automatically rewrite the prompt for richer detail.",
+          "default": false
+        },
+        {
+          "name": "prompt_language",
+          "required": "optional",
+          "type": "string",
+          "description": "Language the prompt is written in.",
+          "options": [
+            "en",
+            "zh"
+          ],
+          "default": "zh"
+        },
+        {
+          "name": "multi_shots",
+          "required": "optional",
+          "type": "bool",
+          "description": "Split the video into multiple shots driven by multi_prompt.",
+          "default": false
+        },
+        {
+          "name": "multi_shot_mode",
+          "required": "optional",
+          "type": "string",
+          "description": "'auto' lets the model plan shots; 'custom' uses the given multi_prompt.",
+          "options": [
+            "auto",
+            "custom"
+          ],
+          "default": "custom"
+        },
+        {
+          "name": "multi_prompt",
+          "required": "optional",
+          "type": "string_array",
+          "description": "Per-shot prompts and durations (max 6) used when multi_shots is enabled."
+        },
+        {
+          "name": "camera_style",
+          "required": "optional",
+          "type": "string",
+          "description": "Camera movement and framing style.",
+          "options": [
+            "classic_static",
+            "silent_machine",
+            "one_take",
+            "epic_scale",
+            "intimate_observer",
+            "impossible_camera",
+            "documentary_snap",
+            "raw_chaos",
+            "dreamy_flow"
+          ],
+          "nullable": true
+        },
+        {
+          "name": "light_scheme",
+          "required": "optional",
+          "type": "string",
+          "description": "Lighting scheme for the scene.",
+          "options": [
+            "soft_cross",
+            "contre_jour",
+            "overhead_fall",
+            "window",
+            "practicals",
+            "silhouette"
+          ],
+          "nullable": true
+        },
+        {
+          "name": "color_grading",
+          "required": "optional",
+          "type": "string",
+          "description": "Color grading look applied to the video.",
+          "options": [
+            "naturalistic_clean",
+            "bleached_warm",
+            "hyper_neon",
+            "teal_orange_epic",
+            "sodium_decay",
+            "cold_steel",
+            "bleach_bypass",
+            "classic_bw"
+          ],
+          "nullable": true
+        },
+        {
+          "name": "style_prompt",
+          "required": "optional",
+          "type": "string",
+          "description": "Free-form description of the visual style.",
+          "nullable": true
+        }
+      ],
+      "medias": [
+        {
+          "name": "medias",
+          "type": "image",
+          "roles": [
+            "start_image",
+            "end_image",
+            "image_references",
+            "video_references",
+            "audio_references"
+          ]
+        }
+      ],
+      "aspect_ratios": [
+        "auto",
+        "21:9",
+        "16:9",
+        "4:3",
+        "1:1",
+        "3:4",
+        "9:16"
+      ],
+      "tags": []
+    }
+  ],
+  "has_more": false,
+  "unlim": {
+    "available": false,
+    "remaining": null,
+    "expires_at": null
+  }
+}

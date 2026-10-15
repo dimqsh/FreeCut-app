@@ -1,6 +1,8 @@
-//! Enforces the crate dependency rules (docs/architecture/README.md §1.2):
-//! which workspace crates may depend on which, what the pure timeline crate
-//! may use, and that only `freecut-media` links FFmpeg.
+//! Enforces the crate dependency rules (docs/architecture/README.md §1.2,
+//! cloud-generation.md §2.3): which workspace crates may depend on which,
+//! what the pure timeline crate may use, that only `freecut-media` links
+//! FFmpeg, and that `freecut-cloud` stays free of FFmpeg, GPU and UI crates
+//! and has no networking code without its `http` feature.
 #![allow(clippy::unwrap_used, clippy::expect_used)] // test code
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,10 +16,13 @@ const ALLOWED_EDGES: &[(&str, &[&str])] = &[
     ("freecut-project", &["freecut-timeline"]),
     ("freecut-render", &["freecut-media", "freecut-timeline"]),
     ("freecut-audio", &["freecut-media", "freecut-timeline"]),
+    // Nothing but the app may depend on cloud.
+    ("freecut-cloud", &["freecut-media", "freecut-timeline"]),
     (
         "freecut-app",
         &[
             "freecut-audio",
+            "freecut-cloud",
             "freecut-media",
             "freecut-project",
             "freecut-render",
@@ -48,6 +53,7 @@ const FFMPEG_CRATES: &[&str] = &["ffmpeg-next", "ffmpeg-sys-next"];
 struct Dep {
     name: String,
     optional: bool,
+    default_features: bool,
 }
 
 /// Normal (non-dev, non-build) dependencies of every workspace member.
@@ -80,6 +86,7 @@ fn workspace_deps() -> BTreeMap<String, Vec<Dep>> {
             .map(|d| Dep {
                 name: d["name"].as_str().unwrap().to_string(),
                 optional: d["optional"].as_bool().unwrap_or(false),
+                default_features: d["uses_default_features"].as_bool().unwrap_or(true),
             })
             .collect();
         map.insert(pkg["name"].as_str().unwrap().to_string(), deps);
@@ -168,4 +175,232 @@ fn the_project_crate_never_reaches_media() {
             dep.name
         );
     }
+}
+
+/// Package names in `cargo tree -p <krate>` (normal dependencies only).
+fn tree(krate: &str, features: &[&str]) -> BTreeSet<String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let mut args = vec![
+        "tree",
+        "-p",
+        krate,
+        "-e",
+        "normal",
+        "--prefix",
+        "none",
+        "--format",
+        "{p}",
+        "--offline",
+    ];
+    if !features.is_empty() {
+        args.push("--features");
+        args.extend(features);
+    }
+    let out = Command::new(cargo)
+        .args(&args)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run cargo tree");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn cloud_reaches_media_without_ffmpeg() {
+    let deps = workspace_deps();
+    let media = deps["freecut-cloud"]
+        .iter()
+        .find(|d| d.name == "freecut-media")
+        .expect("cloud uses media for the cancel token");
+    assert!(
+        !media.default_features,
+        "freecut-cloud must use freecut-media with default-features = false"
+    );
+}
+
+#[test]
+fn cloud_with_networking_has_no_ffmpeg_gpu_or_ui() {
+    let names = tree("freecut-cloud", &["http"]);
+    assert!(
+        names.contains("ureq"),
+        "the http feature brings the transport"
+    );
+    // webpki-roots and webpki-root-certs bundle Mozilla's roots
+    // (CDLA-Permissive-2.0); FreeCut uses the platform verifier instead.
+    for banned in [
+        "ffmpeg-sys-next",
+        "ffmpeg-next",
+        "wgpu",
+        "egui",
+        "eframe",
+        "webpki-roots",
+        "webpki-root-certs",
+    ] {
+        assert!(
+            !names.contains(banned),
+            "freecut-cloud --features http pulls in {banned}"
+        );
+    }
+}
+
+#[test]
+fn cloud_without_http_has_no_networking_crates() {
+    let names = tree("freecut-cloud", &[]);
+    for banned in [
+        "ureq",
+        "ureq-proto",
+        "rustls",
+        "ring",
+        "rustls-platform-verifier",
+        "socket2",
+        "ffmpeg-sys-next",
+        "wgpu",
+        "egui",
+    ] {
+        assert!(
+            !names.contains(banned),
+            "freecut-cloud without http pulls in {banned}"
+        );
+    }
+}
+
+/// freecut-cloud opens sockets only in its http transport (review Q9): no
+/// `std::net`, `TcpStream`, `UdpSocket` or `TcpListener` anywhere else in
+/// its sources, so the sans-I/O core cannot grow a network path.
+#[test]
+fn cloud_opens_sockets_only_in_its_http_transport() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../freecut-cloud/src");
+    let transport = src.join("http.rs");
+    let mut dirs = vec![src];
+    let mut offenders = Vec::new();
+    let mut scanned = 0;
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") || path == transport {
+                continue;
+            }
+            scanned += 1;
+            let text = std::fs::read_to_string(&path).unwrap();
+            for banned in ["std::net", "TcpStream", "UdpSocket", "TcpListener"] {
+                if text.contains(banned) {
+                    offenders.push(format!("{}: {banned}", path.display()));
+                }
+            }
+        }
+    }
+    assert!(scanned > 10, "only {scanned} files scanned");
+    assert!(
+        offenders.is_empty(),
+        "socket code outside http.rs: {offenders:?}"
+    );
+}
+
+/// The app's normal build never enables a workspace crate's `test-support`
+/// feature, such as freecut-cloud's scripted provider and fake server
+/// (review Q10, R20). The tree is read with every app feature on, for every
+/// target, and with each package's enabled features listed, so a feature the
+/// app's own `[features]` table turns on (default or not) is seen too.
+/// Dev-dependencies are not part of it. Until the app depends on
+/// freecut-cloud (Phase B) the cloud crate is simply absent from this tree.
+#[test]
+fn the_app_build_enables_no_test_support_feature() {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = Command::new(cargo)
+        .args([
+            "tree",
+            "-p",
+            "freecut-app",
+            "-e",
+            "normal",
+            "--all-features",
+            "--target",
+            "all",
+            "--prefix",
+            "none",
+            "--format",
+            "{p} [{f}]",
+            "--offline",
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run cargo tree");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.lines().any(|l| l.starts_with("freecut-timeline ")),
+        "unexpected cargo tree output: {text}"
+    );
+    let enabled: Vec<&str> = text
+        .lines()
+        .filter(|l| {
+            l.starts_with("freecut-")
+                && l.rsplit_once('[').is_some_and(|(_, features)| {
+                    features
+                        .trim_end_matches(']')
+                        .split(',')
+                        .any(|f| f.trim() == "test-support")
+                })
+        })
+        .collect();
+    assert!(
+        enabled.is_empty(),
+        "freecut-app's normal build enables test-support: {enabled:?}"
+    );
+}
+
+/// CI lints `freecut-cloud` as the app will build it, without dev targets
+/// (review R41). Building tests or examples turns on `test-support` through
+/// the crate's self dev-dependency (resolver 3 unifies it), so only a run
+/// without them compiles the shipping configuration, where `fake` and
+/// `provider::scripted` do not exist.
+#[test]
+fn ci_lints_the_cloud_crate_without_dev_targets() {
+    let ci =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/ci.yml");
+    let ci = std::fs::read_to_string(ci).unwrap();
+    let shipping = |features: Option<&str>| {
+        ci.lines().any(|line| {
+            let line = line.trim().trim_start_matches("run:").trim();
+            line.starts_with("cargo clippy -p freecut-cloud ")
+                && line.ends_with("-- -D warnings")
+                && ![
+                    "--all-targets",
+                    "--tests",
+                    "--examples",
+                    "--benches",
+                    "test-support",
+                ]
+                .iter()
+                .any(|banned| line.contains(banned))
+                && match features {
+                    Some(f) => line.contains(f),
+                    None => !line.contains("--features"),
+                }
+        })
+    };
+    assert!(
+        shipping(None),
+        "no CI lint of freecut-cloud without features or dev targets"
+    );
+    assert!(
+        shipping(Some("--features http")),
+        "no CI lint of freecut-cloud with http and without dev targets"
+    );
 }

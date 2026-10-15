@@ -1,0 +1,15 @@
+{
+  "params": {
+    "aspect_ratio": "4:5",
+    "count": 1,
+    "get_cost": true,
+    "is_inpaint": true,
+    "medias": [
+      { "role": "image_references", "value": "00000000-0000-4000-8000-00000000000a" },
+      { "role": "mask", "value": "00000000-0000-4000-8000-00000000000b" }
+    ],
+    "model": "nano_banana_2",
+    "prompt": "make it night",
+    "resolution": "2k"
+  }
+}

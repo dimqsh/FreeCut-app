@@ -1,0 +1,17 @@
+{
+  "params": {
+    "aspect_ratio": "9:16",
+    "count": 1,
+    "duration": 8,
+    "generate_audio": false,
+    "get_cost": true,
+    "medias": [
+      { "role": "start_image", "value": "00000000-0000-4000-8000-000000000001" },
+      { "role": "end_image", "value": "00000000-0000-4000-8000-000000000002" }
+    ],
+    "mode": "omni_reference",
+    "model": "seedance_2_5",
+    "prompt": "the camera rises over the city",
+    "resolution": "480p"
+  }
+}

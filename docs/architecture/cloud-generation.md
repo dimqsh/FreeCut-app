@@ -138,13 +138,15 @@ Feature flags:
 
 | Crate | Feature | Enables | Default |
 |---|---|---|---|
-| `freecut-cloud` | `http` | `ureq` (blocking, rustls; the same version as the assistant and C49's downloader), `sha2`, the real transport and OAuth endpoints | on in `freecut-app`'s dependency; **off** for `cargo test -p freecut-cloud` |
+| `freecut-cloud` | `http` | `ureq` (blocking, rustls with ring and the platform verifier; the same version as the assistant and C49's downloader), `rustls` (to hand `ureq` the ring provider), the real transport and OAuth endpoints. PKCE (`sha2`, `base64`, `getrandom`) and `url` are always built | on in `freecut-app`'s dependency; **off** for `cargo test -p freecut-cloud` |
 | `freecut-app` | `cloud` | the Preferences section, Generate tab, worker | on (runtime switch still **off** by default, CG-001); a distributor may build without it |
 
-New third-party crates, licences confirmed at adoption: `ureq`, `sha2`, `base64` and `rand`
-(PKCE verifier and state; or `getrandom` alone), `url`, `uuid` (local run ids),
-`keyring` (shared with AS-003), `open` or the platform's URL opener for the browser. All are
-MIT/Apache-2.0 today. No async runtime (README §2.1).
+New third-party crates, licences confirmed at adoption (README §4.2): `ureq`, `rustls`, `sha2`,
+`base64` and `getrandom` (PKCE verifier and state; no `rand`), `url`; in Phase B `uuid` (local
+run ids), `keyring` (shared with AS-003), `open` or the platform's URL opener for the browser.
+They are MIT/Apache-2.0, except that `rustls` is Apache-2.0 OR ISC OR MIT and its TLS stack
+brings ISC (`ring` is Apache-2.0 AND ISC; `rustls-webpki`, `untrusted`) and BSD-3-Clause
+(`subtle`); README §4.3 lists both as compatible. No async runtime (README §2.1).
 
 ### 2.4 Proposed CLAUDE.md lines (owner approval required)
 
@@ -233,9 +235,18 @@ Rules:
 - **Server-to-client messages.** FreeCut declares no client capabilities (no sampling, roots or
   elicitation). Server requests are answered with JSON-RPC error `-32601`; `notifications/progress`
   and `notifications/message` are logged at `debug`; anything else is ignored.
-- FreeCut does not open the optional `GET` stream; it polls with `jobs_wait`.
+- FreeCut does not open the optional standalone `GET` stream; it polls with `jobs_wait`. It does
+  use `GET` with `Last-Event-ID` to **resume** an answer's stream that the server ended, or that
+  broke (a cut chunked body, a reset; review R16), after an event id but before the response
+  (MCP 2025-11-25 polling and network failures): after the server's `retry` delay
+  (1 s if none, at most 30 s), at most 5 times. A `GET` never resends the request; if resuming
+  fails, the answer is lost, so a paid call is *Outcome unknown* and a free call fails (review
+  F4). `Last-Event-ID` is the id of the last *dispatched* event: an `id:` line counts only at
+  the blank line that ends its event, so a stream cut inside the response event resumes before
+  it and the server sends it again (WHATWG last-event-ID buffer, review R3).
 - **Sessions.** The `Mcp-Session-Id` from the `initialize` response is kept in memory for the
-  worker's lifetime. HTTP `404` on a request carrying a session id means the session expired:
+  worker's lifetime. (Higgsfield's server issues none, §15.1; then none of the session rules
+  below apply.) HTTP `404` on a request carrying a session id means the session expired:
   FreeCut re-initializes once. A **free** call (§4.5's table) is then sent again. A **paid**
   submission is never sent again on its own, even though the MCP specification implies the
   request was not processed: a `404` can also come from a proxy or a server fault, and Q2 allows
@@ -311,7 +322,10 @@ byte: `Error::HostNotFound`, `Error::ConnectionFailed`, `Error::Timeout(Resolve 
 (`InvalidCertificate`, `NoCertificatesPresented`; other rustls errors can occur mid-stream and
 count as `MaybeSent`), and `Error::Io`
 whose kind is `ConnectionRefused`, `NetworkUnreachable`, `HostUnreachable` or
-`AddrNotAvailable`. Everything else is `MaybeSent`. A test pins this table against ureq's error
+`AddrNotAvailable`. Everything else is `MaybeSent`. The `io::ErrorKind` rule assumes those four
+kinds come only from `connect(2)`; once a connection is up, a broken one reports a reset, a
+broken pipe or a timeout, which are `MaybeSent` (review F7). The cancel gate's refusal
+(review M3) is the one other `NotSent` case. A test pins this table against ureq's error
 enum, so a ureq upgrade that adds variants fails the build until they are classified.
 
 Further transport rules for paid calls:
@@ -321,9 +335,13 @@ Further transport rules for paid calls:
 - **Fresh connection.** Paid submissions use an agent with `max_idle_connections(0)`, so a stale
   pooled socket cannot turn an ordinary refusal into *Outcome unknown*. `ureq` does not retry
   `POST` on its own; a test with the loopback server asserts exactly one request per call.
-- **Proxy.** `HTTPS_PROXY` is honoured as in llm-editor.md §5.6; TLS uses rustls with the
-  platform's certificate roots (`RootCerts::PlatformVerifier`, ureq's `platform-verifier`
-  feature), as the assistant does.
+- **Proxy.** `HTTPS_PROXY` (or `https_proxy`) is honoured as in llm-editor.md §5.6, and only
+  that variable: every call is HTTPS, so `ALL_PROXY` and `HTTP_PROXY` are ignored. Loopback
+  hosts and `NO_PROXY` hosts connect directly; only `http://`/`https://` CONNECT proxies are
+  used (`ureq` is built without SOCKS). `TransportConfig::proxy_from_env` turns this off;
+  loopback tests do, so a CI runner's proxy variables cannot reroute them (review M12). TLS
+  uses rustls with the platform's certificate roots (`RootCerts::PlatformVerifier`, ureq's
+  `platform-verifier` feature), as the assistant does.
 
 ### 4.6 Schema drift
 
@@ -350,7 +368,12 @@ A dropped or renamed flag would turn a free check (and its retries) into paid ru
 3. Preflights are retried only while `NotSent` (§4.5).
 4. A preflight answer that contains job ids is treated as a started run: a ledger entry is
    written in `Running` with those ids, it is polled and imported like any run, the user is told,
-   and preflights for that tool stop until restart.
+   and preflights for that tool stop until restart. The `PreflightGuard` that enforces this is
+   owned by the app for its whole run and shared by every provider it creates, so a reconnect or
+   an account switch does not lift a block. A check reserves its tool under the same lock that
+   tests it: while one check of a tool is in flight, a second is refused (*PreflightStopped*,
+   nothing sent). The reservation is released only by a readable answer, *Not sent* or a
+   refusal; anything else, or a reservation dropped unsettled, blocks the tool (review R6).
 5. Tests: golden JSON for every quote; a fake server that ignores `get_cost` must produce exactly
    one submission per Check cost and the "started run" path, never more.
 
@@ -435,7 +458,15 @@ pub trait SecretStore: Send + Sync {
   `higgsfield/meta`), and an entry over 1,200 characters is split into numbered parts with a
   count in `meta`; all parts are written before `meta` is replaced, so a crash leaves the old or
   the new set, never a mix. The same `SecretStore` implementation serves AS-003.
-  `Secret` zeroizes on drop and has a redacting `Debug`.
+  `Secret` zeroizes on drop and has a redacting `Debug`. Clearing memory is **best effort**
+  (review SEC-8): FreeCut clears its own copies (secrets, keychain parts and their assembly
+  buffer, request bodies after sending, token and device answers after parsing, the
+  `Authorization` value it builds), but not copies made inside `ureq`, `http` or rustls, nor
+  buffers a growing `Vec` left behind while reading an answer.
+- **One `TokenManager` per provider id for the app's whole run** (review R17), shared by every
+  provider the app creates and by the sign-in and disconnect UI. The refresh lock, the count of
+  sign-in changes and the refreshed tokens the store refused all live in that one instance; a
+  second one would send the superseded refresh token again.
 - Refresh when fewer than 60 s remain, and before any paid submission when fewer than 5 minutes
   remain. A `401` on a free call triggers one refresh and one resend; a `401` on a paid
   submission triggers the refresh but **not** a resend (the run becomes *Not accepted*, CG-010).
@@ -456,19 +487,31 @@ pub trait SecretStore: Send + Sync {
 ```rust
 pub trait GenerationProvider: Send + Sync + std::fmt::Debug {
     fn id(&self) -> ProviderId;                       // "higgsfield"
-    fn connect(&self, cred: &Credential, cancel: &CancelToken) -> Result<ServiceInfo, CloudError>;
+    // H1, built. Tokens come from the provider's TokenSource (the TokenManager, §5.5),
+    // so connect takes no Credential.
+    fn connect(&self, cancel: &CancelToken) -> Result<ServiceInfo, CloudError>;
     fn catalogue(&self, cancel: &CancelToken) -> Result<Catalogue, CloudError>;
-    fn quote(&self, op: &Operation, inputs: &[RemoteInput], cancel: &CancelToken)
-        -> Result<QuoteOutcome, CloudError>;          // Quote | Question | NotAvailable
+    fn quote(&self, op: &Operation, run: &RunTag,         // inputs: RoleRefs inside `op`;
+             cancel: &CancelToken)                       // `run`: the worker's run id (R15)
+        -> Result<QuoteOutcome, CloudError>;
+    // H2, planned; the shapes below may change with the upload work.
     fn prepare_upload(&self, files: &[UploadSpec], cancel: &CancelToken)
         -> Result<Vec<UploadSlot>, CloudError>;       // presigned URL + headers + remote id
     fn confirm_upload(&self, slots: &[UploadSlot], cancel: &CancelToken)
         -> Result<Vec<RemoteInput>, CloudError>;
     fn submit(&self, op: &Operation, inputs: &[RemoteInput], answer: Option<&ServiceAnswer>,
-              cancel: &CancelToken) -> Result<SubmitOutcome, SubmitError>;
+              run: &RunTag, cancel: &CancelToken) -> Result<SubmitOutcome, SubmitError>;
     fn poll(&self, jobs: &[RemoteJobId], cancel: &CancelToken)
         -> Result<PollResult, CloudError>;            // states, result URLs, next poll delay
     fn cancel_remote(&self, job: &RemoteJobId) -> CancelSupport;  // Higgsfield: Unsupported
+}
+
+pub enum QuoteOutcome {
+    Quote(Quote),                       // credits, variants covered, adjustments
+    Question(ServiceQuestion),          // e.g. UseAllowance
+    NotAvailable(Unavailable),
+    StartedRun(StartedRun),             // the service ignored get_cost and started a run (§4.7 rule 4)
+    PossiblyStarted(PossiblyStarted),   // a check may have started a run; that tool's checks stop (§4.7)
 }
 
 pub enum SubmitOutcome {
@@ -478,13 +521,24 @@ pub enum SubmitOutcome {
 }
 pub enum SubmitError {
     NotSent(CloudError),            // safe to offer Run again without warning
-    OutcomeUnknown(CloudError),     // CG-010
+    OutcomeUnknown { cause: CloudError, job_ids: Vec<String> },  // CG-010; ids for the ledger
     Rejected(CloudError),           // the service answered with an error
 }
 ```
 
-`ScriptedProvider` (always built) implements the trait from a script for app and assistant
-tests. A second service (for example the REST key pair, or another vendor) is a second
+The Higgsfield `quote` sends its cost check through `McpClient::check_cost(tool, &QuoteRequest,
+run, cancel)`, the only path that may set `get_cost: true` (§4.7); free tools go through
+`McpClient::call_tool`, and paid tools only through `McpClient::call_paid(tool, arguments, run,
+cancel)`, each with an `&'static AllowedTool` (§6.3). `HiggsfieldProvider::new(..., guard,
+late)` and `with_endpoint(..., guard, late)` take the app's one `PreflightGuard` and `LateQueue`
+(review R6, R10, R44).
+
+`ScriptedProvider` (`freecut_cloud::provider::scripted`, feature `test-support`, enabled from
+dev-dependencies only) implements the trait from a script for app and assistant tests: each
+method returns its next scripted answer, a cancelled token wins, a missing step is an error,
+and every call is recorded. Any build of the cloud crate's tests or examples turns
+`test-support` on (its self dev-dependency), so CI also lints the crate without dev targets,
+with and without `http`, the configuration the app ships (review R41). A second service (for example the REST key pair, or another vendor) is a second
 implementation plus its own catalogue mapping; the UI, job model, ledger, recipe and disclosure
 do not change.
 
@@ -500,14 +554,29 @@ do not change.
   `image_references`, `video_references`, `audio_references`, `mask`, `input_video`,
   `input_audio`); the listing's per-media `type` field says "image" even for video inputs.
 - Cached as `<app data>/FreeCut/cloud/catalogue-<provider>.json` with its fetch time.
-- **Hidden** (a list in code, plus any model whose description marks it as restricted to the
-  service's own pipelines): `sonilo_music`, `mirelo_text_to_audio`, `inworld_text_to_speech`
+- **Shown: reviewed models only** (owner decision, review round 2). v1 offers only plain image
+  and video generation models on a reviewed list in the Higgsfield provider
+  (`provider::higgsfield::reviewed::REVIEWED_MODELS`, each entry an id and *image* or *video*).
+  Every other listed model, including any the service adds later, is hidden: with its specific
+  reason below where one applies, otherwise as *NotReviewed*. So are the pipeline and internal
+  families (`ad_multiplier*`, `hf_mult_*`, `3d_jutsu_*`, `cinematic_studio_soul_*`), `image_auto`
+  (it routes each prompt to a model of the service's choosing, so model and price are unknown
+  before the check), every audio model for v1, and a reviewed id whose output type changed. The
+  first list was built from the recorded listing (an excerpt) on 2026-10-14: image
+  `gpt_image_2`, `gpt_image_2_5`, `nano_banana_2`, `nano_banana_pro`, `seedream_v5_pro`; video
+  `seedance_2_5`, `kling3_0`, `veo3_1`, `minimax_hailuo`, `wan3_0`, `cinematic_studio_3_0`,
+  `cinematic_studio_video`. The owner confirmed it on 2026-10-14; against the full listing
+  recorded that day (45 image, 57 video, 8 audio models) it shows these 12 and nothing else.
+  Adding a model is a reviewed code change with its fixture entry.
+- **Hidden with a specific reason** (a list in code, plus any model whose description marks it
+  as restricted to the service's own pipelines): `sonilo_music`, `mirelo_text_to_audio`, `inworld_text_to_speech`
   (game pipeline only), `higgsfield_preset` (legacy recipes), `ms_image` and the other marketing
   studio models (styles chosen in the service's UI), the identity-trained `soul_*` family
   (needs identity training), `autosprite`, `clipify` (web addresses as input),
   `marketing_studio_v2_reference2video`.
 - **Defaults** (FreeCut's, re-checked per release): image `gpt_image_2_5`; video
-  `seedance_2_5` (text-to-video, frames-to-video, edit and extension modes); lip sync `sync_so`.
+  `seedance_2_5` (text-to-video, frames-to-video, edit and extension modes). Both are on the
+  reviewed list. (Lip sync, `sync_so`, is not built: owner decision on voice tools.)
 
 ### 6.3 Tool allow list
 
@@ -778,9 +847,10 @@ patterns, then falls back to `ServiceError` with the message.
 | Concurrency or rate limit | `Busy` | "Higgsfield is busy for your account. Try again in a moment." | read-only: back-off; paid: *Failed: not accepted* (the service refused it) | read-only automatic |
 | Argument validation | `InvalidRequest` | the service's message, quoted | *Failed* | — (FreeCut's own validation should prevent it) |
 | Tool missing | `NotOffered` | "Not offered by the service right now." | action disabled | after Refresh |
-| `401` or session `404` on a paid submission | `NotAccepted` | "Higgsfield did not accept the run (sign-in or session renewed). Press Run again." | *Not accepted* (CG-010) | by the user, on a fresh sheet |
+| `401` or session `404` on a paid submission | `NotAccepted` | "Higgsfield did not accept the run (sign-in or session renewed). Press Run again." | *Not accepted* (CG-010). On a paid call or a cost check the body of a `401`, `403` or session `404` is read too: one that names a job (not the request's own ids) makes the run *Outcome unknown* with that id (a cost check a started run), and nothing is renewed or resent (review R35) | by the user, on a fresh sheet |
 | Unexpected response shape | `Protocol` | "Unexpected answer from Higgsfield." + details in the log | free calls: *Failed*; a paid submission: **always** *Outcome unknown* | — |
-| Anything else | `ServiceError { message }` | the message, quoted | *Failed* | by the user |
+| JSON-RPC error on a paid submission | classified as above (credits, content, …) | the classified text | *Rejected* (*Failed*) only for codes that prove the method never ran: -32700, -32600, -32601, -32602; any other code (-32603, -32000..-32099, …) is *Outcome unknown*, reason kept (review M2). An error whose message or `data` names a job id is *Outcome unknown* with that id, whatever its code (review R5) | by the user |
+| Anything else | `ServiceError { message }` | the message, quoted | *Failed*. On a paid submission: a 4xx answer or a tool error result is *Rejected*; a 5xx is *Outcome unknown*. Any failure whose answer names a job id is *Outcome unknown* with those ids, never *Rejected* or *Not sent*: one scan (`McpError::job_ids`, `uuids_in_text`) serves every path (review R5). It reads the raw answer, every byte that arrived: any content item of a tool result (text, `resource_link`, `_meta`, structured, JSON or not), events before the response (a progress notification), a JSON-RPC error's message and `data`, an error status's body (4xx as well as 5xx, up to 64 KiB, before it is cut for the message), and the part of an answer whose read broke (review R12). Of an event stream it reads every byte but the framing: `id:`, `event:` and `retry:` lines and comments are left out, so a UUID in an event id is not a job (R38). A cost answer that names one is a started run. The scan finds a UUID at any position (`job-<id>`, `<id>-0.png`; R13), also one that overlaps another match (R40). It never counts the request's own UUIDs (media ids the service echoes in a refusal) or the nil and max UUIDs (R14) | by the user |
 
 Whether credits were charged for a failed run is reported only when the service says so.
 Messages from the service are shown as plain quoted text; no links in them are made clickable.
@@ -840,9 +910,9 @@ Messages from the service are shown as plain quoted text; no links in them are m
 | Fake MCP server | `FakeMcp` implements the `HttpTransport` trait in memory: scripted JSON-RPC exchanges, session ids, `404` session expiry, SSE responses, `401` then refresh, timeouts before and after the body is written | sans network |
 | Unknown-outcome property | For every scripted failure point of a paid submission (connect errors, each ureq timeout phase, reset after write, `401`, session `404`, concurrency refusal, unreadable answer, ledger write failure, crash after each write point), at most one submission is observed by the fake server, and the run ends in `NotSent`, `NotAccepted`, `OutcomeUnknown` or `Rejected`, never resubmitted | property test over the failure points |
 | Preflight guard | quote JSON always carries `get_cost: true`; no quote when the live schema lacks it; a server that ignores the flag yields one submission per Check cost and the "started run" path; preflights not retried after `MaybeSent` | units + fake server (§4.7) |
-| Send-state table | every `ureq::Error` variant maps to `NotSent` or `MaybeSent` as §4.5 lists | exhaustive match test |
+| Send-state table | every `ureq::Error` variant maps to `NotSent` or `MaybeSent` as §4.5 lists | table test over every variant built with FreeCut's features and every `Timeout`; `Protocol` from a loopback server |
 | Loopback integration | presigned `PUT` with progress and retry; download with `Range` resume and checksum; OAuth loopback callback with right and wrong `state` | `std::net::TcpListener` on `127.0.0.1:0` (feature `http`) |
-| Recorded fixtures | `initialize`, `tools/list`, `models_explore` listings, `get_cost` answers (all free), then one cheapest image run and one shortest video run of each operation as it is built (paid; the owner records them with their own account and explicit consent) | `crates/freecut-cloud/tests/fixtures/higgsfield/*.jsonl`, produced by `cargo run -p freecut-cloud --features http --example record`; a scrubber removes tokens, e-mails, subject ids, signed URL queries and job ids are replaced by stable fakes; reviewed before commit |
+| Recorded fixtures | `initialize`, `tools/list` and `models_explore` listings (free), recorded by `cargo run -p freecut-cloud --features http --example record`, which refuses `get_cost` and every other call on purpose (review R25, N4). The `get_cost` answers came from the probes (fixtures README). One cheapest image run and one shortest video run of each operation (paid; the owner records them with their own account and explicit consent) need a separate tool the owner approves; `record` cannot make them (review R45) | `crates/freecut-cloud/tests/fixtures/higgsfield/*.jsonl`; a scrubber removes tokens, e-mails, subject ids, signed URL queries and job ids are replaced by stable fakes; reviewed before commit |
 | Contract check (manual, not CI) | compares live `tools/list` schemas and the catalogue with the fixtures and reports drift | `--example check-contract`, free calls only |
 | App | Generate tab, run sheet, Runs page and placement driven by `ScriptedProvider`; import and placement are one undo entry (apply → undo → redo test) | `freecut-app` tests |
 | Guard | dependency edges; no networking crate in `cargo tree -p freecut-cloud` without `http` | workspace guard test |
@@ -866,7 +936,8 @@ README).
   (`cloud` feature, Preferences ▸ Cloud generation, keychain `SecretStore`, browser launch,
   loopback listener, cloud worker, a Generate tab with the Image and Video forms and **Check
   cost** but no Run).
-- **Contracts:** `McpClient::{initialize, list_tools, call_tool}`, `HttpTransport` trait,
+- **Contracts:** `McpClient::{initialize, list_tools, call_tool, call_paid, check_cost}`,
+  `HiggsfieldProvider::new(..., guard, late)`, `HttpTransport` trait,
   `Credential`, `SecretStore`, `GenerationProvider::{connect, catalogue, quote}`, `Catalogue`,
   `ModelInfo`, `Operation::{Image, Video}`, `Quote`, `CloudCmd`/`CloudEvent`, `CloudError`.
 - **Tests:** SSE and JSON-RPC units; OAuth URL and PKCE; fake-server handshake, session expiry
@@ -894,7 +965,9 @@ README).
 - **Features:** CG-004 to CG-013, CG-025, CG-026.
 - **Contracts:** `GenerationProvider::{prepare_upload, confirm_upload, submit, poll}`,
   `SubmitOutcome`, `SubmitError`, `LedgerEntry` v1, `UploadPlan`, recipe v1,
-  `TaskOwner::Cloud`.
+  `TaskOwner::Cloud`. From H1: the app-owned `LateQueue` the worker drains (R10), the
+  `RunTag` every `quote`/`submit` carries and every `LateToolResult` returns (R15), the
+  app-owned `PreflightGuard` (R6) and one `TokenManager` per provider id (R17).
 - **Tests:** unknown-outcome property test; ledger crash points (kill after each write point,
   restart, expected state); poller batching and `poll_after_seconds` clamping; upload
   confirm-only-after-all-200; download resume and checksum; recipe golden JSON; import +
@@ -905,6 +978,43 @@ README).
   Generated bin with *How it was made*; Place puts one on the timeline and Undo removes it (the
   file stays); quitting during a run and restarting resumes and imports it; a submission that
   times out after sending shows *Outcome unknown* and is never sent again on its own.
+- **Worker obligations (review round 2, R9; acceptance criteria, each with a test):**
+  - **Drain the late queue.** Late job ids can arrive up to 120 s after a cancel or after an
+    answer the client gave up on (longer across resumes, plus the 30 s verdict wait). They go
+    to the app's `LateQueue`, which the app creates once and passes to every provider, so a
+    provider may be dropped or replaced (disconnect, reconnect, account switch) without losing
+    them (R10). The worker drains it (`LateQueue::take`) on every tick and before quitting,
+    and writes every id to the ledger entry its `RunTag` names, as a paid run or a cost check
+    (`LateToolResult::{run, class}`, R15); draining once right after a cancel is not enough.
+    Acceptance tests: `late_job_ids_reach_the_app_after_the_provider_is_gone`,
+    `a_late_job_id_lands_on_the_run_that_caused_it`, and a worker test where a late answer
+    that arrives after the cancel tick still reaches the ledger.
+  - **Explain blocked checks.** Cost checks use pooled connections without the cancel gate, so
+    cancelling a check in flight ends as *PossiblyStarted* and blocks that tool's checks until
+    restart. The run sheet says so in plain words. If that proves too harsh, route checks
+    through the gated agent instead. Test: a cancelled check shows the explanation, and the
+    next check of that tool is refused without a request.
+  - **Keep `notify_cancelled` off the UI thread.** It blocks, and `TokenSource::bearer` may
+    refresh over the network under a token that cannot be cancelled. Only the cloud worker
+    calls into `freecut-cloud`. Test: the UI thread's cancel path returns without a call into
+    the client.
+  - **Job ids of a paid answer come from `ToolOutput::job_ids()`** (or `McpError::job_ids` and
+    `submit_disposition` for a failure), never from a scan of the answer by hand: it leaves out
+    the request's own UUIDs, so an echoed `medias[].value` is not recorded or polled as a job
+    (R14, R39). Test: `a_successful_paid_answer_leaves_out_the_requests_own_ids`.
+  - **One `PreflightGuard` per app run**, shared by every provider the worker creates (R6).
+  - **The catalogue reaches the UI only through the provider**: `catalogue()` from the service,
+    or `provider::higgsfield::catalogue_from_cache` for the disk cache. Both apply the reviewed
+    list; `Catalogue::from_listings` alone does not (N1).
+  - **Save refused tokens before quitting**: call `TokenManager::persist_unsaved()` and, if it
+    fails, tell the user the sign-in may need repeating (R18). It fails with
+    `PersistError::RefreshInFlight` while a refresh is in flight (`close()` and
+    `notify_cancelled` can start one during quit): wait for it, at most its 30 s limit
+    (`CallLimits::OAUTH`), and call again before warning (R42). Test: a quit during a blocked
+    refresh saves the refreshed tokens, or warns.
+  - **One `TokenManager` per provider id per app run**, the same `Arc<dyn TokenSource>` for every
+    provider and for the sign-in and disconnect UI (R17). Acceptance test:
+    `a_new_provider_on_the_same_token_manager_never_sends_the_old_token`.
 
 ### H3 — AI edit actions on clips
 
@@ -968,7 +1078,8 @@ README).
 5. **Unconfirmed protocol details:** the transport, session lifetime, token lifetimes, whether
    DCR accepts loopback redirects, the device-code host, and the exact JSON of submissions,
    `get_cost`, `jobs_wait`, `unlim_choice`, `adjustments` and `recovery_tool`. H1 and H2 record
-   them; the mapping is built against recordings, not guesses.
+   them; the mapping is built against recordings, not guesses. §15.1 lists what is settled and
+   what is still unknown.
 6. **Output formats** of background removal (alpha or matte), dubbing, voice change, upscale and
    the extension mode (whether the context section is included). Each action ships only after a
    recorded run.
@@ -1009,6 +1120,143 @@ README).
     build feature on. The owners decide whether release builds include the feature at all in
     the first release that has it (for example, on only after H2's acceptance and Higgsfield's
     answer to item 3).
+
+### 15.1 Confirmed with free calls (H1, 2026-10-14)
+
+Only free calls were made, in two sessions: the probes (discovery, one client registration,
+`models_explore`, `get_cost: true` through a connected MCP client) and the owner's signed-in
+recording with FreeCut's own transport (`--example record`: discovery, one more registration,
+the code exchange, `initialize`, `notifications/initialized`, `tools/list`, `models_explore`).
+Recordings: `crates/freecut-cloud/tests/fixtures/higgsfield/` (its README lists each source).
+
+| Question (item 5) | Finding |
+|---|---|
+| Authorization server | **Changed since 2026-10-13.** The protected-resource metadata now lists `https://clerk.higgsfield.ai` and `https://fnf-device-auth.higgsfield.ai`, not `mcp.higgsfield.ai` (whose own metadata is still served but no longer referenced). Clerk's metadata: `/oauth/authorize`, `/oauth/token`, `/oauth/token/revoke`, `/oauth/device_authorization`, `/oauth/register`, PKCE S256, `authorization_response_iss_parameter_supported: true`. §5.1's origin check therefore becomes: every sign-in endpoint is HTTPS on `higgsfield.ai` or a subdomain, the resource equals the MCP endpoint, and the issuer equals the server it was fetched for. The callback's `iss` is checked (RFC 9207). A non-standard `higgsfield_auth_hints` block names example clients; FreeCut ignores it. |
+| DCR with a loopback redirect | **Accepted.** §5.2's request → `201`, public client (`token_endpoint_auth_method: none`), redirect `http://127.0.0.1/callback` echoed. `client_id_issued_at` is in milliseconds (RFC 7591 says seconds); FreeCut does not read it. Each signed-in recording registers one more: two FreeCut registrations exist as of 2026-10-14 (see *Signed-in session*); no id is in any file. No client-metadata document is needed (item 10 closes). |
+| Loopback port | The authorize endpoint accepts `http://127.0.0.1:<any port>/callback` for that registration and continues to Higgsfield's sign-in page; an unregistered host gets `400 invalid_request`. |
+| Device code | Clerk advertises `device_authorization_endpoint`; `fnf-device-auth.higgsfield.ai` has no discovery document (404). Not exercised. FreeCut now requests the device grant at registration when it is advertised, falling back to a browser-only registration if refused (§15.2). |
+| Transport | Unauthenticated `POST`/`GET /mcp` → `401`, JSON body, `WWW-Authenticate: Bearer resource_metadata=…/oauth-protected-resource/mcp, scope="openid email offline_access"`. The authenticated framing (SSE answers, no `Mcp-Session-Id`, revision 2025-11-25) is in the signed-in rows below. |
+| `models_explore` | `{items, has_more, unlim: {available, remaining, expires_at}}`. Items: `id, name, provider_name, description, output_type, parameters[], medias[{name, type, max?, required?, roles[]}], aspect_ratios, tags, supports_unlim?` and durations as a top-level `durations` set, a top-level `duration_range`, or a `duration` parameter (`options` or `min`/`max`, one model with `min: -1`, one without `max`). Parameters: `required: "optional" | "required"`, types `string`, `number`, `bool`, `string_array`. One media group has no `roles`. Counts: 45 image, 57 video, 8 audio, each `has_more: false`; pages use `after` with `next_page_token`. New actions `search` and `recommend`, output type `3d`. |
+| `get_cost` answers | `{"cost": {"credits": 0.25, "credits_exact": 0.25}}` (image) and `{"cost": {"credits": 35, "credits_exact": 35}}` (video): JSON numbers, **no job ids** (item 14). The image check with `count: 2` answered the same figure as `count: 1`, so an estimate is taken to cover one variant and CG-005's rule limits Variants to 1. `get_cost` sits inside `params`, and `params` is `anyOf` object or JSON string. New optional fields `use_free_gens` and `preset_session_id` exist; FreeCut never sends them. |
+| Errors | An unknown model answers the tool error `Invalid request: unknown model "…". Use models_explore…` (classified as model unavailable). |
+| Signed-in session (owner, `--example record`, 2026-10-14) | Ten free exchanges through FreeCut's own transport: discovery (2), one more client registration (two FreeCut registrations now exist at Clerk; neither id is in any file), the code exchange, `initialize`, `notifications/initialized`, `tools/list` and three `models_explore` listings. The browser sign-in passed the RFC 9207 check, so Clerk sends `iss` on the redirect, and the MCP server accepted Clerk's access token (the `resource` audience works). Server `Higgsfield AI 1.0.0`; protocol **2025-11-25** negotiated (FreeCut offers it first). |
+| MCP sessions | **The server is stateless: it issued no `Mcp-Session-Id`.** FreeCut then sends no session header, a `404` is an ordinary HTTP error rather than an expired session (§4.1), and closing sends no `DELETE` (there is nothing to end); a resumed stream would carry no session id. Nothing in FreeCut depends on a session existing. |
+| Transport framing | Every answer to a request is `text/event-stream` with exactly one `event: message` and no `id:` or `retry:` lines (so no priming event and nothing to resume); `notifications/initialized` answers `202` with no body. `tools/list` returns all 157 tools in one page (no cursor); all 9 tools of FreeCut's allow list are offered, none missing. |
+| Tokens | `token_type: bearer`, `expires_in: 86399` (24 h), scope `openid email offline_access`; a refresh token and an ID token are issued. |
+| Full model listing | 45 image, 57 video and 8 audio models, each in one page; after the reviewed list (§6.2), 12 are shown. |
+
+**Still unknown:**
+
+- refresh-token rotation and revocation behaviour (needs a longer signed-in session);
+- device sign-in (needs a device-code sign-in);
+- the answer shapes of real runs (need paid runs):
+  - submissions with job ids (`generate_image` and `generate_video`);
+  - `jobs_wait`;
+  - `unlim_choice`, `adjustments` and `recovery_tool`.
+
+### 15.2 Implementation notes (H1 core, `freecut-cloud`)
+
+Deviations from the sections above, all **accepted by owner** (2026-10-14):
+
+- **Server requests (§4.1).** `ping` gets the empty result MCP requires; every other server
+  request gets `-32601`. *Accepted by owner.*
+- **Keychain entries (§5.6).** Each write uses a new generation and replaces `meta` last, which
+  is what makes "old or new set, never a mix" hold. *Accepted by owner.* Parts are named
+  `<provider>/access.<slot>.<n>` with slot = generation mod 2, so there are only two sets to
+  clear: a write clears the other slot, a delete clears both, and a damaged `meta` is swept the
+  same way; an unreadable store is an error, never "nothing stored" (review SEC-2). Writes are
+  exclusive (SEC-1).
+- **Contracts (§6.1).** A provider is built with a `TokenSource` (the `TokenManager` supplies
+  tokens), so `connect` takes no `Credential`; `quote` takes the `Operation` and the caller's `RunTag`
+  (inputs are `RoleRef`s with service media ids; review R44). `QuoteOutcome` gains `StartedRun` (§4.7 rule 4).
+  *Accepted by owner.* §6.1's body shows these signatures, and `ScriptedProvider` (feature
+  `test-support`) implements the same trait (review Q10).
+- **Cost checks after a refusal (§4.5, §4.7).** A cost check answered `401` or session `404` is
+  not resent: the sign-in or session is renewed and the user presses Check cost again.
+  *Accepted by owner.*
+
+Other notes:
+
+- **Send-state table (§4.5).** `ureq::Error` is `#[non_exhaustive]`, so no match can make a new
+  variant fail the build. Unlisted variants fall to `MaybeSent` (the safe side), `ureq` is pinned
+  `=3.4.2`, and a test lists every 3.4.2 variant built with FreeCut's features (no cookies,
+  charset, compression, json, multipart or native-tls) and every `Timeout` (review Q7);
+  `Error::Protocol`, whose payload is a ureq-proto type, comes from a loopback server that
+  sends a malformed answer.
+- **TLS.** `ureq` is built with `rustls-no-provider` and `platform-verifier`; the transport hands
+  it ring as the crypto provider (`rustls` is a direct optional dependency for that and for its
+  certificate errors). Certificates come only from the platform verifier, so `webpki-roots`
+  (bundled roots, CDLA-Permissive-2.0) is not a dependency. `webpki-root-certs` (also
+  CDLA-Permissive-2.0) stays in `Cargo.lock` only as `rustls-platform-verifier`'s wasm32
+  dependency; no FreeCut target builds it.
+- **A failed handshake before a call** reports that call as not sent; a session `404` on a paid
+  call or preflight is *not accepted* even if opening the new session then fails. A `404` to
+  `initialize` or `notifications/initialized` ends the handshake: it never starts another one
+  (review R1; before the fix it recursed until the stack overflowed).
+- **The call class comes from the allow list (review R2).** `McpClient::call_tool` takes an
+  `&'static AllowedTool`, which only `freecut-cloud`'s allow list can create, and reads the
+  class and timeouts from it; an unlisted tool cannot be named. Since review R15 `call_tool`
+  takes free tools only; a paid tool goes through `McpClient::call_paid(tool, arguments, run)`,
+  and cost checks only through `McpClient::check_cost(tool, &QuoteRequest, run)`, for tools that
+  offer one. `run` is the caller's `RunTag` (the worker's ledger id); a late answer carries it
+  and the call class (`LateToolResult::{run, class}`), so its job ids land on the right run even
+  with two runs of one tool in flight. The provider does not expose its MCP client (only
+  `server_info()` for the debug view). §14's H1 contract `McpClient::{initialize, list_tools,
+  call_tool}` gains `call_paid` and `check_cost`.
+- **Cost checks fail closed (§4.7, review M1).** A check whose answer is lost, unreadable or of
+  an unknown shape (anything but `cost`, `unlim_choice` or `recovery_tool`) is
+  `QuoteOutcome::PossiblyStarted`: that tool's checks stop until restart, and the caller records
+  it like a run with an unknown outcome. "Lost" uses the paid-call rule: whatever
+  `submit_disposition` would call *Outcome unknown*. Refusals stay errors. UUIDs in an answer
+  still give `StartedRun` with those ids for the ledger.
+- **Cancelling paid calls (§4.4, review M3).** A paid request gets an agent of its own (fresh
+  connection) whose connector chain ends in a cancel gate: after TCP and TLS, right before the
+  request is written, the gate checks the token, and a cancel there is *not sent*. Paid calls and
+  cost checks also carry a late sink: if the caller stopped before the end of the answer,
+  because its token fired or because it gave up on a part it could not read (bad JSON, an
+  oversized or broken event, a failed resume; review R4), the helper thread reads the answer to
+  its end and the MCP client queues it as a `LateToolResult` with every UUID in it. The queue
+  (`LateQueue`) belongs to the app: it is passed into every provider, as the `PreflightGuard`
+  is, so an answer that arrives after its provider was dropped or replaced still reaches the
+  ledger (review R10). The helper waits for the caller's verdict (read to the end,
+  or stopped) before deciding; an answer whose response the caller already has is not queued,
+  nor a refusal status that names no job. The bytes the caller did read are scanned too: an
+  unreadable answer is *Outcome unknown* with the ids it named
+  (`SubmitError::OutcomeUnknown { job_ids }`), and a cost check that named ids is a
+  `StartedRun`. A cancel keeps them too (`McpError::Cancelled { job_ids }`), also one that
+  lands while a broken stream is being resumed; a transport error that ends a body after the
+  token fired counts as stopped, so the rest of that answer still goes to the late sink
+  (review R37). The queue is in memory: until the ledger exists (H2), a late answer is kept
+  only while FreeCut runs; the worker drains it on every tick and before quitting (R9).
+- **Refreshed tokens the keychain refuses (§5.6, review SEC-3, R7)** are kept in memory and
+  used: the stored refresh token may already be dead after rotation, and it is not sent again
+  while FreeCut runs. The write is retried on every `bearer()` call (without waiting on a write
+  in progress) and before each refresh, and `TokenManager::persist_unsaved()` retries it on
+  demand: the worker calls it before quitting (review R18). It does not report success while a
+  refresh is in flight, whose new tokens may not be stored yet (R42). A new sign-in drops them,
+  and so does a disconnect, but only once its delete has succeeded. Whether the sign-in changed
+  during a refresh is told by an in-memory count of sign-in changes, never by reading the store
+  again after the network call: a keychain that locks meanwhile (sleep, screen lock) cannot make
+  the new tokens get lost. The limit: if FreeCut quits before any write succeeds, the next start
+  reads the superseded refresh token from the store and sends it; on a server with reuse
+  detection that can end the sign-in.
+- **Stream resumption (§4.1, review F4).** Implemented rather than offering only 2025-06-18:
+  `GET` + `Last-Event-ID`, the server's `retry`, at most 5 resumes, the same late sink as the
+  request, the answer's own session id during `initialize`.
+- **Device sign-in (§5.2, §5.4).** Registration asks for the device grant only when the server
+  advertises a device endpoint and grant; if that registration is refused, FreeCut registers
+  again without it (browser sign-in stays the main path) and reports whether *Use a code
+  instead* is available.
+- **Pure helpers always built.** PKCE (`sha2`, `base64`, `getrandom`) and URL handling (`url`) are
+  not behind `http`; only `ureq` and `rustls` are.
+- **Catalogue hiding** adds `dubbing`, `voice_change` and `sync_so` (listed as video models; the
+  voice tools are not built), and, until the owner reviews them, `ad_multiplier*`, `hf_mult_*`,
+  `3d_jutsu_*`, `cinematic_studio_soul_*` and `image_auto` (it routes each prompt to a model of
+  the service's choosing, so model and price are not known up front). On the 2026-10-14
+  catalogue this leaves 31 image, 45 video and 5 audio models.
+- **Next.** The first `record` run has happened (the signed-in rows of §15.1); the rest of
+  "Still unknown" needs paid runs. Left: the owner's re-run of `record` after review R21-R24 and
+  R36, the review of that recording, then Phase B in the order of review round 4 (review R45).
 
 ---
 
