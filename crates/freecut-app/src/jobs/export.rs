@@ -1019,7 +1019,12 @@ pub fn part_path(target: &Path, n: u32) -> PathBuf {
 }
 
 fn sync_file(path: &Path) -> io::Result<()> {
-    std::fs::File::open(path)?.sync_all()
+    // Windows FlushFileBuffers requires GENERIC_WRITE. Reopen the completed
+    // file for writing without creating or truncating it, then make it durable.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)?
+        .sync_all()
 }
 
 /// Best effort: makes the rename durable on Unix. Windows can't open a

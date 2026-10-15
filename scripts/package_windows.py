@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import struct
+import subprocess
 import tomllib
 import zipfile
 from pathlib import Path
@@ -61,6 +62,7 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / 'target/windows-dist')
     args = parser.parse_args()
     version = tomllib.loads((ROOT / 'Cargo.toml').read_text())['workspace']['package']['version']
+    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     output = args.output.resolve()
     folder = output / f'FreeCut-{version}-windows-x64'
     archive = output / f'{folder.name}-portable.zip'
@@ -99,8 +101,9 @@ def main():
         p = args.ffmpeg / name
         if p.is_file():
             shutil.copy2(p, licenses / ('FFmpeg-' + p.name))
-    if (args.ffmpeg / 'doc').is_dir():
-        shutil.copytree(args.ffmpeg / 'doc', licenses / 'FFmpeg-build')
+    legal = args.ffmpeg / 'doc/legal.html'
+    if legal.is_file():
+        shutil.copy2(legal, licenses / 'FFmpeg-legal.html')
     (folder / 'FreeCut-CPU.cmd').write_bytes(
         b'@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\n'
         b'set "FREECUT_LOW_MEMORY=1"\r\n'
@@ -119,18 +122,21 @@ def main():
         'User media, exports and caches need additional disk space.\n'
         'Unsigned test build. See Licenses and SOURCE.txt.\n', encoding='utf-8')
     (folder / 'SOURCE.txt').write_text(
-        'FreeCut source: https://github.com/arystambek-dimash/FreeCut-app\n'
+        'FreeCut source: https://github.com/arystambek-dimash/FreeCut-app/tree/' + commit + '\n'
         'Build scripts: scripts/ and .github/workflows/windows-package.yml\n'
         'FFmpeg distribution and build recipes: ' + spec['provider'] + '\n'
         'Pinned FFmpeg archive: ' + spec['url'] + '\n'
         'SHA-256: ' + spec['sha256'] + '\n', encoding='utf-8')
     manifest = {'version': version, 'architecture': 'x86_64', 'minimum_windows': '10 22H2',
                 'cpu_target': 'x86-64 baseline; no mandatory AVX/AVX2 in Rust code',
+                'source_commit': commit,
+                'compiler': subprocess.check_output(['rustc', '-vV'], text=True).strip(),
+                'rustflags': os.environ.get('RUSTFLAGS', ''),
                 'software_ui': 'Direct3D 12 WARP; FXC', 'ffmpeg': spec,
                 'system_dlls': sorted(system),
                 'files': [{'name': p.name, 'bytes': p.stat().st_size} for p in bundled.values()]}
-    manifest['installed_logical_bytes'] = sum(p.stat().st_size for p in folder.rglob('*') if p.is_file())
     (folder / 'build-info.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    manifest['installed_logical_bytes'] = sum(p.stat().st_size for p in folder.rglob('*') if p.is_file())
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for p in sorted(folder.rglob('*')):
             if p.is_file():

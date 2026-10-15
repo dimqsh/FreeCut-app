@@ -30,17 +30,13 @@ jobs:
           python-version: '3.13'
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: 'true'
       - name: Install pinned FFmpeg and import libraries
-        run: ./scripts/setup_windows_ffmpeg.ps1
+        run: ./scripts/setup_windows_ffmpeg.ps1 -Destination "$env:RUNNER_TEMP/freecut-ffmpeg"
       - run: cargo fmt --all -- --check
       - name: Build Windows x64 release
         run: cargo build -p freecut-app --release --target x86_64-pc-windows-msvc --locked
-      - name: Check compact render and editing flow
-        run: |
-          cargo test -p freecut-render --target x86_64-pc-windows-msvc --lib -- --test-threads=1
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test -p freecut-app --target x86_64-pc-windows-msvc e2e:: -- --test-threads=1
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Package portable application
         run: python scripts/package_windows.py --ffmpeg "$env:FFMPEG_DIR"
       - name: Verify WARP startup under memory limit
@@ -70,6 +66,12 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode)" }
           ./scripts/check_windows_cpu.ps1 -Package $installed
           Copy-Item target/windows-check/cpu-result.json target/windows-check/installed-cpu-result.json
+      - name: Check compact render and editing flow
+        run: |
+          cargo test -p freecut-render --target x86_64-pc-windows-msvc --lib -- --test-threads=1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo test -p freecut-app --target x86_64-pc-windows-msvc e2e:: -- --test-threads=1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
