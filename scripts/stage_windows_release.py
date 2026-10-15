@@ -37,6 +37,13 @@ def main():
             raise RuntimeError(f'{kind}: unexpected memory limit or peak')
         checks[kind] = result
     tag = 'v' + info['version'] + '-windows-preview'
+    # An existing tag is authoritative. target_commitish is ignored by GitHub
+    # for such tags, and supplying it can unnecessarily require workflow scope.
+    obj = json.loads(gh('api', f'repos/{args.repo}/git/ref/tags/{tag}'))['object']
+    while obj['type'] == 'tag':
+        obj = json.loads(gh('api', f"repos/{args.repo}/git/tags/{obj['sha']}"))['object']
+    if obj['type'] != 'commit' or obj['sha'] != info['source_commit']:
+        raise RuntimeError('Push the version tag to the verified source commit before staging')
     notes = f'''Preliminary Windows x64 build. Target: Windows 10 22H2 and Windows 11.
 
 Download the setup EXE for a per-user installation, or extract the entire portable ZIP.
@@ -64,17 +71,17 @@ SHA-256 files, package provenance and CPU-check results are attached.
         (temp / 'notes.md').write_text(notes)
         (temp / 'Windows-CPU-checks.json').write_text(json.dumps(checks, indent=2) + '\n')
         assets.append(temp / 'Windows-CPU-checks.json')
-        existing = subprocess.run(['gh', 'release', 'view', tag, '--repo', args.repo,
-                                   '--json', 'isDraft,targetCommitish,assets'], capture_output=True, text=True)
+        existing = subprocess.run(['gh', 'api', f'repos/{args.repo}/releases/tags/{tag}'],
+                                  capture_output=True, text=True)
         uploaded = {}
         if existing.returncode == 0:
             release = json.loads(existing.stdout)
-            if not release['isDraft'] or release['targetCommitish'] != info['source_commit']:
+            if not release['draft']:
                 raise RuntimeError('Refusing to modify a published or different release')
             uploaded = {a['name']: a.get('digest') for a in release['assets']}
         else:
             gh('release', 'create', tag, '--repo', args.repo, '--draft', '--prerelease',
-               '--target', info['source_commit'], '--title', f"FreeCut {info['version']} — Windows CPU preview",
+               '--verify-tag', '--title', f"FreeCut {info['version']} — Windows CPU preview",
                '--notes-file', str(temp / 'notes.md'))
         for asset in assets:
             with asset.open('rb') as stream:

@@ -7,6 +7,11 @@ on:
         type: string
         required: false
         default: ''
+      stage_release:
+        description: 'Upload verified assets into an existing draft release; never publishes it'
+        type: boolean
+        required: false
+        default: false
   push:
     branches: ['codex/windows-release']
 permissions:
@@ -95,7 +100,7 @@ jobs:
     runs-on: windows-2022
     permissions:
       actions: read
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -127,3 +132,10 @@ jobs:
         with:
           name: Windows-clean-runtime-checks
           path: verified-package/windows-check/*cpu-result.json
+      - name: Upload verified assets into the draft release
+        if: ${{ inputs.stage_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_RUN: ${{ inputs.artifact_run }}
+        shell: pwsh
+        run: python scripts/stage_windows_release.py --run-id "$env:PACKAGE_RUN" --artifacts verified-package --repo "$env:GITHUB_REPOSITORY"
