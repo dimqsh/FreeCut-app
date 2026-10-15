@@ -107,6 +107,7 @@ pub(crate) fn detach_audio(mut tx: Tx<'_>, seq: SeqId, ids: &[ClipId]) -> Result
     }
 
     let mut created = Vec::with_capacity(eligible.len());
+    let mut detached = std::collections::BTreeSet::new();
     for (target, asset, source, stream, audio) in eligible {
         let video = &target.clip;
         // A video already linked to streams added as clips (AU-038) keeps
@@ -116,6 +117,7 @@ pub(crate) fn detach_audio(mut tx: Tx<'_>, seq: SeqId, ids: &[ClipId]) -> Result
             Some(link) => link,
             None => tx.ids.link()?,
         };
+        detached.insert(link);
         let id = tx.ids.clip()?;
         let mut sound = Clip::new(
             id,
@@ -149,6 +151,37 @@ pub(crate) fn detach_audio(mut tx: Tx<'_>, seq: SeqId, ids: &[ClipId]) -> Result
             clip: Arc::new(sound),
         })?;
         created.push(id);
+    }
+    // Splitting a video linked to an added stream keeps the link on both
+    // pieces. Once only one piece is detached, the other still plays its
+    // own sound and cannot belong to the detached-sound relation. Match
+    // the file reader's invariant now, so reopening doesn't repair the edit.
+    let stray = scan(tx.seq(seq)?, |clip| {
+        clip.link.is_some_and(|link| detached.contains(&link))
+            && clip.audio.detached().is_none()
+            && !matches!(
+                clip.content,
+                ClipContent::Media {
+                    kind: MediaKind::Audio,
+                    ..
+                }
+            )
+    });
+    for (slot, track, before) in stray {
+        policy::require_unlocked(
+            tx.seq(seq)?
+                .track_at(slot)
+                .ok_or(EditError::StaleTrack(track))?,
+            slot,
+        )?;
+        let mut after = (*before).clone();
+        after.link = None;
+        tx.push(Change::ReplaceClip {
+            seq,
+            track,
+            before,
+            after: Arc::new(after),
+        })?;
     }
     let count = u32::try_from(created.len()).unwrap_or(u32::MAX);
     tx.select(created);
