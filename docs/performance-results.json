@@ -906,77 +906,194 @@
     "version": "0.1.0",
     "architecture": "arm64",
     "minimum_macos": "15.0",
-    "signing": "ad-hoc; local development bundle; not notarized",
-    "binary_bytes": 39648528,
-    "bundled_libraries": [
+    "source_commit": "79d120197dffeae1e465152e4e333b66cfef3175",
+    "source_dirty": false,
+    "source_url": "https://github.com/dimqsh/FreeCut-app/tree/79d120197dffeae1e465152e4e333b66cfef3175",
+    "compiler": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "libraries": [
       {
         "name": "libdav1d.7.dylib",
-        "bytes": 776096
+        "sha256": "9116c6baf136d46fbe3172eea84b8a5b795f687e2b69ab0aa47ee46266fbc8a3"
       },
       {
-        "name": "libavcodec.62.28.101.dylib",
-        "bytes": 9724592
+        "name": "libavcodec.63.1.101.dylib",
+        "sha256": "c290eda6a6c49cffa966e406a0db0debbff44c10163aa5a881669e525535a185"
       },
       {
-        "name": "libavformat.62.12.101.dylib",
-        "bytes": 2325520
+        "name": "libavformat.63.1.101.dylib",
+        "sha256": "d829181495767deb6ae63308b86fdd14d40cbb5c5079b29cc37ce9b94b45eee6"
       },
       {
-        "name": "libavutil.60.26.101.dylib",
-        "bytes": 639552
+        "name": "libavutil.61.1.101.dylib",
+        "sha256": "f4b7356a8d9bb0aba0a69bb90df759c89e9e83c824a0870ab9796dbd4fa53dd2"
       },
       {
-        "name": "libswresample.6.3.101.dylib",
-        "bytes": 103008
+        "name": "libswresample.7.1.101.dylib",
+        "sha256": "28711803ee73c0bba30741b8fb60f33d45772497b768ee636d0e834e930eb95d"
       },
       {
-        "name": "libswscale.9.5.101.dylib",
-        "bytes": 600576
+        "name": "libswscale.10.1.101.dylib",
+        "sha256": "60e530575bd6d8ab7d6546a87472af447055bf66bf662acb29e3b7c7dc02f28d"
       },
       {
         "name": "libmp3lame.0.dylib",
-        "bytes": 285296
+        "sha256": "a3881f1f0a3620f03e63e086abeb0af1fe7adcd9c7ce77fc5801309b96f60ba3"
       },
       {
         "name": "libvpx.12.dylib",
-        "bytes": 1736496
+        "sha256": "70b45d43337984bde0a847d8e2ddd2fde99805f2aca157dc4b3bbe978001e531"
+      },
+      {
+        "name": "libmpg123.0.dylib",
+        "sha256": "d72d9a0a4cd6e2007d9f0b8c357444fe198b349ea1153ccafc91e31b47e774fc"
       },
       {
         "name": "libcrypto.3.dylib",
-        "bytes": 4842512
+        "sha256": "48c160c3aaa46cb69e5874370d820c2bc8be0712f6ee690fa10581ad966474a7"
       },
       {
         "name": "libssl.3.dylib",
-        "bytes": 883152
+        "sha256": "a53b324db78c1146ff9ce68700f952e3997f4a1965ee6c6a802f6d3bdcd625ad"
       },
       {
         "name": "libopus.0.dylib",
-        "bytes": 355760
+        "sha256": "d555add3bcf3df0522d0fdc9bb4754901f76a92f49571c8756be7c43058c6028"
       },
       {
-        "name": "libSvtAv1Enc.4.1.0.dylib",
-        "bytes": 2867184
+        "name": "libSvtAv1Enc.4.2.0.dylib",
+        "sha256": "9d4f99e94fd9fc7278aa5ef5bc2aebcbdf50d4e3cdff3a67f5fcb70d758f11bd"
       },
       {
         "name": "libx264.165.dylib",
-        "bytes": 1256304
+        "sha256": "b0e1a1bcfc1ca6ac85fb4086d5a33aad30acecd9f75f9f08b4424ef3c17a289d"
       },
       {
-        "name": "libx265.216.dylib",
-        "bytes": 7505104
+        "name": "libx265.217.dylib",
+        "sha256": "987017f52966c7a1b8401de33ffadf4efc06c58ed99e231745998890ab5afd3f"
+      },
+      {
+        "name": "liblzma.5.dylib",
+        "sha256": "7a9e58053dfa9296d25076c886b47b6c29ad5e6ae8031789a5bf86b641aa63af"
       }
     ],
-    "installed_logical_bytes": 73789701,
-    "installed_allocated_kib": 72144,
-    "dmg_bytes": 35002509,
-    "dmg_sha256": "2e4c54abca99101be039ec9a76c0cf1b2f594ae1cf757059d72d020243f116f5",
+    "signing": "ad-hoc; local development bundle; not notarized",
+    "binary_bytes": 39898288,
+    "bundled_libraries": [
+      {
+        "name": "libdav1d.7.dylib",
+        "bytes": 864608
+      },
+      {
+        "name": "libavcodec.63.1.101.dylib",
+        "bytes": 9849344
+      },
+      {
+        "name": "libavformat.63.1.101.dylib",
+        "bytes": 2391360
+      },
+      {
+        "name": "libavutil.61.1.101.dylib",
+        "bytes": 661568
+      },
+      {
+        "name": "libswresample.7.1.101.dylib",
+        "bytes": 121600
+      },
+      {
+        "name": "libswscale.10.1.101.dylib",
+        "bytes": 723248
+      },
+      {
+        "name": "libmp3lame.0.dylib",
+        "bytes": 250000
+      },
+      {
+        "name": "libvpx.12.dylib",
+        "bytes": 1782464
+      },
+      {
+        "name": "libmpg123.0.dylib",
+        "bytes": 289888
+      },
+      {
+        "name": "libcrypto.3.dylib",
+        "bytes": 4888816
+      },
+      {
+        "name": "libssl.3.dylib",
+        "bytes": 906320
+      },
+      {
+        "name": "libopus.0.dylib",
+        "bytes": 375824
+      },
+      {
+        "name": "libSvtAv1Enc.4.2.0.dylib",
+        "bytes": 3108528
+      },
+      {
+        "name": "libx264.165.dylib",
+        "bytes": 1281664
+      },
+      {
+        "name": "libx265.217.dylib",
+        "bytes": 7701744
+      },
+      {
+        "name": "liblzma.5.dylib",
+        "bytes": 185472
+      }
+    ],
+    "installed_logical_bytes": 75650083,
+    "installed_allocated_kib": 73984,
+    "dmg_bytes": 35935283,
+    "dmg_sha256": "6f6e572e3f9591193af0753175dc3a23a9fc84bbc656222aea21f102e8cd5d59",
     "dependency_check": "Only bundled libraries and macOS system libraries",
+    "release_url": "https://github.com/dimqsh/FreeCut-app/releases/tag/v0.1.0-macos-preview",
     "verification": {
-      "signature_verified": true,
-      "alive_after_12_seconds": true,
-      "ps_cpu_rss_kib": "0.0  66224",
-      "bundled_libraries_loaded": 14,
-      "homebrew_libraries_loaded": false
+      "source_commit": "79d120197dffeae1e465152e4e333b66cfef3175",
+      "dmg_sha256": "6f6e572e3f9591193af0753175dc3a23a9fc84bbc656222aea21f102e8cd5d59",
+      "build_run": "https://github.com/dimqsh/FreeCut-app/actions/runs/38740223037",
+      "os": "27.0.1",
+      "architecture": "arm64",
+      "window_created": true,
+      "new_project_and_title_created": true,
+      "process_closed_after_quit": true,
+      "codesign_deep_strict": "passed",
+      "dmg_integrity": "passed",
+      "loaded_bundled_libraries": 16,
+      "external_homebrew_libraries_loaded": 0,
+      "process_cpu_rss_kib_time_after_export": "0.0  71280   0:05.42",
+      "export_smoke": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "width": 1920,
+            "height": 1080,
+            "r_frame_rate": "30/1",
+            "nb_read_frames": "90"
+          }
+        ],
+        "format": {
+          "duration": "3.000000",
+          "size": "21368"
+        }
+      },
+      "export_picture_contains_light_title_and_dark_background": true,
+      "source_workspace_validation": {
+        "passed": 2242,
+        "failed": 0,
+        "ignored": 9,
+        "local_ffmpeg": "8.1.1; separate source validation from the hosted FFmpeg 9 package"
+      },
+      "mode": "Metal UI; CPU media compositing and export",
+      "limitations": [
+        "Physical runtime test on Apple M3 Pro/macOS 27.0.1; minimum macOS 15 not separately exercised",
+        "Not a physical 2 GB RAM test; not a CPU-only UI build",
+        "Export smoke used a text-only 3-second project; not a guarantee for every media codec/project"
+      ]
     }
   },
   "windows_package": {
@@ -1124,6 +1241,83 @@
         "adapter": "Microsoft Basic Render Driver (WARP); selector accepts DeviceType::Cpu only",
         "normal_exit": true
       }
+    }
+  },
+  "macos_initial_local_package": {
+    "version": "0.1.0",
+    "architecture": "arm64",
+    "minimum_macos": "15.0",
+    "signing": "ad-hoc; local development bundle; not notarized",
+    "binary_bytes": 39648528,
+    "bundled_libraries": [
+      {
+        "name": "libdav1d.7.dylib",
+        "bytes": 776096
+      },
+      {
+        "name": "libavcodec.62.28.101.dylib",
+        "bytes": 9724592
+      },
+      {
+        "name": "libavformat.62.12.101.dylib",
+        "bytes": 2325520
+      },
+      {
+        "name": "libavutil.60.26.101.dylib",
+        "bytes": 639552
+      },
+      {
+        "name": "libswresample.6.3.101.dylib",
+        "bytes": 103008
+      },
+      {
+        "name": "libswscale.9.5.101.dylib",
+        "bytes": 600576
+      },
+      {
+        "name": "libmp3lame.0.dylib",
+        "bytes": 285296
+      },
+      {
+        "name": "libvpx.12.dylib",
+        "bytes": 1736496
+      },
+      {
+        "name": "libcrypto.3.dylib",
+        "bytes": 4842512
+      },
+      {
+        "name": "libssl.3.dylib",
+        "bytes": 883152
+      },
+      {
+        "name": "libopus.0.dylib",
+        "bytes": 355760
+      },
+      {
+        "name": "libSvtAv1Enc.4.1.0.dylib",
+        "bytes": 2867184
+      },
+      {
+        "name": "libx264.165.dylib",
+        "bytes": 1256304
+      },
+      {
+        "name": "libx265.216.dylib",
+        "bytes": 7505104
+      }
+    ],
+    "installed_logical_bytes": 73789701,
+    "installed_allocated_kib": 72144,
+    "dmg_bytes": 35002509,
+    "dmg_sha256": "2e4c54abca99101be039ec9a76c0cf1b2f594ae1cf757059d72d020243f116f5",
+    "dependency_check": "Only bundled libraries and macOS system libraries",
+    "verification": {
+      "signature_verified": true,
+      "alive_after_12_seconds": true,
+      "ps_cpu_rss_kib": "0.0  66224",
+      "bundled_libraries_loaded": 14,
+      "homebrew_libraries_loaded": false
     }
   }
 }
