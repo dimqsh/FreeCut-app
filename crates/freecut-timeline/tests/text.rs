@@ -540,3 +540,56 @@ fn conforming_keeps_text_data() {
     .unwrap();
     assert_eq!(text_of(&fx, a).content.as_str(), "keep");
 }
+
+// ------------------------------------------------------------- paste style
+
+/// TX-020: Paste style puts another clip's whole style (layer switches
+/// included) on the targets in one undo step; their content and layout
+/// stay, and Fixture::apply checks undo and redo.
+#[test]
+fn paste_style_copies_the_whole_style_and_keeps_content_and_layout() {
+    let mut fx = Fixture::new();
+    let a = insert_text(&mut fx, InsertTarget::FirstFree, 0, 20);
+    let b = insert_text(&mut fx, InsertTarget::FirstFree, 20, 20);
+    style(&mut fx, vec![a], TextStyleEdit::Bold(true)).unwrap();
+    style(
+        &mut fx,
+        vec![a],
+        TextStyleEdit::Size(RefPx::from_hundredths(9_600)),
+    )
+    .unwrap();
+    style(
+        &mut fx,
+        vec![a],
+        TextStyleEdit::SetLayer {
+            layer: freecut_timeline::model::TextLayerKind::Outline,
+            on: true,
+        },
+    )
+    .unwrap();
+    content(&mut fx, b, "Keep me").unwrap();
+    layout(&mut fx, vec![b], TextLayoutEdit::Align(HAlign::Right)).unwrap();
+    let source = text_of(&fx, a).style.clone();
+    let before = text_of(&fx, b);
+    assert_ne!(before.style, source);
+
+    style(
+        &mut fx,
+        vec![b],
+        TextStyleEdit::Paste(Box::new(source.clone())),
+    )
+    .unwrap();
+    let after = text_of(&fx, b);
+    assert_eq!(after.style, source);
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.layout, before.layout);
+    assert_eq!(
+        fx.editor.history().undo_label().unwrap().op,
+        OpKind::SetTextStyle
+    );
+    // Pasting the same style again changes nothing.
+    assert!(matches!(
+        style(&mut fx, vec![b], TextStyleEdit::Paste(Box::new(source))).unwrap(),
+        Committed::NoOp
+    ));
+}

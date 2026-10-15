@@ -1429,7 +1429,7 @@ fn check_link_edit(op: &Op, before: &Document, after: &Document) -> Result<(), T
 /// The `which` values of `Op::SetText` below the style edits.
 const TEXT_OPS: u8 = 13;
 /// How many round-2 style edits `style_edit` makes.
-const STYLE_EDITS: u8 = 64;
+const STYLE_EDITS: u8 = 65;
 
 /// A style edit of kind `k` (`0..STYLE_EDITS`) from the raw value `v`,
 /// often out of range so the clamps are exercised.
@@ -1584,6 +1584,15 @@ fn style_edit(k: u8, v: i32) -> TextStyleEdit {
         60 => E::BubbleSpikeDepth(pm),
         61 => [E::BubbleJitter(pm), E::BubbleSeed(v as u32)][pick(2)].clone(),
         62 => [E::BubbleLobe(pm), E::BubbleTrail(n)][pick(2)].clone(),
+        64 => {
+            // Paste style (TX-020): another clip's whole style.
+            let mut pasted = freecut_timeline::model::TextClipData::default().style;
+            pasted.bold = b;
+            pasted.letter_spacing = spm;
+            pasted.stroke.on = !b;
+            pasted.stroke.value.color = c;
+            E::Paste(Box::new(pasted))
+        }
         _ => E::Curve(spm),
     }
 }
@@ -1655,6 +1664,18 @@ fn check_text_edit(
                         old.layer_on(*other)
                     };
                     prop_assert_eq!(new.layer_on(*other), want, "{:?} after {:?}", other, edit);
+                }
+            }
+            // Paste style (TX-020) brings the source's switches with it.
+            TextStyleEdit::Paste(pasted) => {
+                for layer in LAYERS {
+                    prop_assert_eq!(
+                        new.layer_on(layer),
+                        pasted.clone().clamped().layer_on(layer),
+                        "{:?} after {:?}",
+                        layer,
+                        edit
+                    );
                 }
             }
             _ => {

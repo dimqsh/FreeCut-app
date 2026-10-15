@@ -70,6 +70,9 @@ pub struct Project {
     media_revision: u64,
     /// The format version the project was upgraded from when opened.
     pub upgraded_from: Option<u32>,
+    /// The style **Copy style** took from a text clip (TX-020), for
+    /// **Paste style**. Not saved with the project.
+    pub style_clipboard: Option<Box<freecut_timeline::model::TextStyle>>,
     /// Sentences about what the last edits did that the user should know
     /// (an import with several audio streams, AU-038); the app shows and
     /// clears them.
@@ -148,6 +151,7 @@ impl Project {
             saving: false,
             media_revision: 0,
             upgraded_from: None,
+            style_clipboard: None,
             notes: Vec::new(),
             edit_lock: None,
             color_job: None,

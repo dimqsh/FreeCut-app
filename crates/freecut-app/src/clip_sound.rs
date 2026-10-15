@@ -25,6 +25,10 @@ pub enum ClipCommand {
     AddStream(usize),
     /// Move out-of-sync linked sound back in sync (TL-030).
     Resync,
+    /// Copy the one selected text clip's style (TX-020).
+    CopyStyle,
+    /// Paste the copied style onto every selected text clip (TX-020).
+    PasteStyle,
 }
 
 /// The one sound command a selection offers: detach when any clip can

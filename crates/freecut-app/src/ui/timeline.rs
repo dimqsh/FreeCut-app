@@ -2083,7 +2083,37 @@ fn clip_menu(ui: &mut egui::Ui, project: &Project, selection: &[ClipId], out: &m
     if clip_streams::can_resync(doc, doc.root(), selection) {
         item(ui, "Resync", "", Ok(ClipCommand::Resync));
     }
+    // TX-020: Copy style and Paste style, for text clips.
+    let texts = text_clips(doc, selection);
+    if !texts.is_empty() {
+        ui.separator();
+        let copy = match texts.len() {
+            1 => Ok(ClipCommand::CopyStyle),
+            _ => Err("Select one text clip to copy its style"),
+        };
+        item(ui, "Copy style", "", copy);
+        let paste = match project.style_clipboard {
+            Some(_) => Ok(ClipCommand::PasteStyle),
+            None => Err("Copy a text clip's style first"),
+        };
+        item(ui, "Paste style", "", paste);
+    }
     stream_menus(ui, project, selection, out);
+}
+
+/// The text clips among `selection`, in selection order.
+pub(crate) fn text_clips(
+    doc: &freecut_timeline::model::Document,
+    selection: &[ClipId],
+) -> Vec<ClipId> {
+    selection
+        .iter()
+        .copied()
+        .filter(|id| {
+            doc.clip(*id)
+                .is_some_and(|c| matches!(c.content, ClipContent::Text(_)))
+        })
+        .collect()
 }
 
 /// "Sound source ▸" and "Add stream as clip ▸" (AU-038).

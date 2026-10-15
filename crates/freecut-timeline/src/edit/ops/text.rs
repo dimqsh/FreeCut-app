@@ -129,6 +129,10 @@ pub enum TextStyleEdit {
     /// The curve amount, clamped to −1000..=1000 (TX-016). The Curve layer's
     /// switch is [`TextStyleEdit::SetLayer`].
     Curve(SignedPerMille),
+    /// **Paste style** (TX-020): the whole clip-level style of another clip,
+    /// with its layers' switches. Content, layout, animations and the
+    /// target's per-range spans stay as they are.
+    Paste(Box<TextStyle>),
 }
 
 impl TextStyleEdit {
@@ -137,6 +141,9 @@ impl TextStyleEdit {
         if let E::SetLayer { layer, on } = self {
             return style.with_layer(*layer, *on).clamped();
         }
+        if let E::Paste(pasted) = self {
+            return pasted.as_ref().clone().clamped();
+        }
         let mut s = style.clone();
         let stroke = &mut s.stroke.value;
         let glow = &mut s.glow.value;
@@ -144,7 +151,7 @@ impl TextStyleEdit {
         let bx = &mut s.background.value;
         let bu = &mut s.bubble.value;
         match self {
-            E::SetLayer { .. } => {}
+            E::SetLayer { .. } | E::Paste(_) => {}
             E::Font(font) => s.font.clone_from(font),
             E::Size(size) => s.size = *size,
             E::Fill(fill) => s.fill.clone_from(fill),

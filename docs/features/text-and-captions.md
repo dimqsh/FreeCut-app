@@ -438,6 +438,8 @@ Affected clips show a warning badge on the timeline and in the inspector. The ex
 - Default style uses a font that has since been removed: new text renders with fallback and a missing-font badge.
 - Corrupt import file: an error is shown and nothing is imported.
 - Name collision: a suffix such as " (2)" is added.
+
+*FreeCut build note (2026-10-14):* **Copy style** and **Paste style** are in the timeline clip menu, shown when the selection holds a text clip. Copy needs exactly one selected text clip; Paste is disabled until a style is copied and applies to every selected text clip (other clips are left alone) as one undo step (`TextStyleEdit::Paste`, `OpKind::SetTextStyle`). The copied style is the whole clip-level `TextStyle`, with its layer switches; content, layout, animations and the target's spans stay. The clipboard lives with the open project and is not saved. Keyframes the target already has on style properties keep overriding the pasted static values. Not built yet: TL-034's Paste attributes dialog, Save look and My looks for text, and Set as default.
 - Deleting a saved style is permanent (there is no trash), so it asks for confirmation.
 - There are no premium materials, so any style can be saved.
 - A preset saved with **Text** applied to several selected clips: the content is applied only when one clip is selected. With several, the content part is skipped and a hint says so, so a click never overwrites many texts at once.

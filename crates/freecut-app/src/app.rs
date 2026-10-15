@@ -1453,6 +1453,47 @@ impl FreeCutApp {
                     self.say(e);
                 }
             }
+            ClipCommand::CopyStyle => self.copy_text_style(),
+            ClipCommand::PasteStyle => self.paste_text_style(),
+        }
+    }
+
+    /// TX-020: keeps the one selected text clip's style for Paste style.
+    fn copy_text_style(&mut self) {
+        let Some(p) = &mut self.project else { return };
+        let texts = ui::timeline::text_clips(p.doc(), &p.selection);
+        let [clip] = texts[..] else {
+            return self.say("Select one text clip to copy its style");
+        };
+        let style = p
+            .doc()
+            .clip(clip)
+            .and_then(|c| c.content.text())
+            .map(|t| Box::new(t.style.clone()));
+        if let Some(style) = style {
+            p.style_clipboard = Some(style);
+            self.say("Style copied");
+        }
+    }
+
+    /// TX-020: puts the copied style on every selected text clip, as one
+    /// undo step. Other selected clips are left alone.
+    fn paste_text_style(&mut self) {
+        let Some(p) = &mut self.project else { return };
+        let Some(style) = p.style_clipboard.clone() else {
+            return self.say("Copy a text clip's style first");
+        };
+        let clips = ui::timeline::text_clips(p.doc(), &p.selection);
+        if clips.is_empty() {
+            return self.say("Select a text clip to paste the style onto");
+        }
+        let req = EditRequest::SetTextStyle {
+            seq: p.doc().root(),
+            clips,
+            edit: freecut_timeline::edit::TextStyleEdit::Paste(style),
+        };
+        if let Err(e) = p.apply(&req, Coalesce::Never) {
+            self.say(e);
         }
     }
 
@@ -4344,6 +4385,58 @@ mod tests {
         assert_eq!(app.inspector.props.content_focus_requested(), Some(a));
         let p = app.project.as_ref().unwrap();
         assert_eq!(p.playhead, p.doc().clip(a).unwrap().start());
+    }
+
+    /// TX-020: Copy style takes one text clip's style; Paste style puts it
+    /// on every selected text clip as one undo step.
+    #[test]
+    fn copy_style_and_paste_style_move_a_text_look() {
+        use freecut_timeline::edit::{EditRequest, TextStyleEdit};
+
+        let frames = Frames::new();
+        let mut app = FreeCutApp::with_sound(
+            &frames.ctx,
+            Sound::without_device(),
+            FontRegistry::bundled(),
+        );
+        let mut project = Project::new(ProjectSettings::new_default().unwrap()).unwrap();
+        let a = ui::text::add_text_at_playhead(&mut project).unwrap();
+        project.playhead = project.doc().clip(a).unwrap().range.end();
+        let b = ui::text::add_text_at_playhead(&mut project).unwrap();
+        let big = freecut_timeline::model::RefPx::from_hundredths(9_600);
+        let bold = EditRequest::SetTextStyle {
+            seq: project.doc().root(),
+            clips: vec![a],
+            edit: TextStyleEdit::Size(big),
+        };
+        project.apply(&bold, Coalesce::Never).unwrap();
+        app.project = Some(project);
+        let style = |app: &FreeCutApp, c| {
+            let p = app.project.as_ref().unwrap();
+            p.doc()
+                .clip(c)
+                .unwrap()
+                .content
+                .text()
+                .unwrap()
+                .style
+                .clone()
+        };
+
+        // Nothing copied yet: paste does nothing.
+        app.project.as_mut().unwrap().selection = vec![b];
+        app.run_command(ClipCommand::PasteStyle);
+        assert_ne!(style(&app, b).size, big);
+
+        app.project.as_mut().unwrap().selection = vec![a];
+        app.run_command(ClipCommand::CopyStyle);
+        app.project.as_mut().unwrap().selection = vec![b];
+        app.run_command(ClipCommand::PasteStyle);
+        assert_eq!(style(&app, b), style(&app, a));
+        assert_eq!(style(&app, b).size, big);
+
+        app.undo();
+        assert_ne!(style(&app, b).size, big, "one undo takes the paste back");
     }
 
     #[test]
