@@ -171,6 +171,12 @@ impl PropsState {
         self.focus_content = Some(clip);
     }
 
+    /// The clip whose content field takes focus when it is next drawn.
+    #[cfg(test)]
+    pub(crate) fn content_focus_requested(&self) -> Option<ClipId> {
+        self.focus_content
+    }
+
     pub fn text_draft(&self) -> Option<TextDraft> {
         self.content.as_ref().and_then(ContentSession::draft)
     }

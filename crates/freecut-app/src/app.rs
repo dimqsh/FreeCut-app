@@ -1700,6 +1700,25 @@ impl FreeCutApp {
         }
     }
 
+    /// TX-002: with exactly one text clip selected, focuses its content
+    /// field with all the text selected. The playhead moves into the clip
+    /// when it is outside, so the player shows the text being edited.
+    fn edit_selected_text(&mut self) {
+        let Some(p) = &mut self.project else { return };
+        let [clip] = p.selection[..] else { return };
+        let Some(start) = p.doc().clip(clip).and_then(|c| {
+            matches!(c.content, freecut_timeline::model::ClipContent::Text(_))
+                .then(|| (!c.range.contains(p.playhead)).then(|| c.start()))
+        }) else {
+            return;
+        };
+        self.stop_playback();
+        if let (Some(start), Some(p)) = (start, &mut self.project) {
+            p.playhead = start;
+        }
+        self.inspector.props.edit_content(clip);
+    }
+
     fn undo(&mut self) {
         let result = self.project.as_mut().map(Project::undo);
         if let Some(Err(e)) = result {
@@ -1944,6 +1963,11 @@ impl FreeCutApp {
             } else {
                 self.start_take(None);
             }
+        }
+        // TX-002: Enter on one selected text clip edits its content, as a
+        // double-click does (the recorder panel keeps Enter while open).
+        if !self.recorder.open && key(Key::Enter, Modifiers::NONE) {
+            self.edit_selected_text();
         }
         // Snapping, the magnet and Follow main track (TL-028, TL-005, TL-029).
         if key(Key::N, Modifiers::SHIFT) {
@@ -4286,6 +4310,40 @@ mod tests {
 
         app.say("Snapping off");
         assert_eq!(app.toasts.messages(), ["Snapping off"]);
+    }
+
+    /// TX-002: Enter on one selected text clip opens its content for
+    /// editing and brings the playhead into the clip; with no clip or two
+    /// clips selected it does nothing.
+    #[test]
+    fn enter_edits_the_one_selected_text_clip() {
+        let mut frames = Frames::new();
+        let mut app = FreeCutApp::with_sound(
+            &frames.ctx,
+            Sound::without_device(),
+            FontRegistry::bundled(),
+        );
+        let mut project = Project::new(ProjectSettings::new_default().unwrap()).unwrap();
+        let a = ui::text::add_text_at_playhead(&mut project).unwrap();
+        let end = project.doc().clip(a).unwrap().range.end();
+        project.playhead = end;
+        let b = ui::text::add_text_at_playhead(&mut project).unwrap();
+        let after = Tick::from_raw(end.raw() * 4);
+        project.playhead = after;
+        project.selection = Vec::new();
+        app.project = Some(project);
+
+        press(&mut app, &mut frames, Key::Enter, Modifiers::NONE);
+        assert_eq!(app.inspector.props.content_focus_requested(), None);
+        app.project.as_mut().unwrap().selection = vec![a, b];
+        press(&mut app, &mut frames, Key::Enter, Modifiers::NONE);
+        assert_eq!(app.inspector.props.content_focus_requested(), None);
+
+        app.project.as_mut().unwrap().selection = vec![a];
+        press(&mut app, &mut frames, Key::Enter, Modifiers::NONE);
+        assert_eq!(app.inspector.props.content_focus_requested(), Some(a));
+        let p = app.project.as_ref().unwrap();
+        assert_eq!(p.playhead, p.doc().clip(a).unwrap().start());
     }
 
     #[test]
